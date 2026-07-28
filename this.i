@@ -62,7 +62,8 @@ Operator layer over a stock keripy witness = goal:
             pin. Chose the current commit (366d8107) over heti's older de59bc7d because the reconciled
             baseline is current-with-upstream and we build against it — accepting a small gated bump
             to heti's pin, gated on re-running heti's 100%-branch-coverage suite against 366d8107 as
-            the oracle. Status: pending Daniel's approval to modify the sibling heti repo.
+            the oracle. Resolved 2026-07-27: heti bumped (heti@2c4247c), suite green (57 passed,
+            100% branch). witness pins keri@366d8107 to match.
 
     v1 is read-only audit and inspection = decision:
       id: t3k6ps
