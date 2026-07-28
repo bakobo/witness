@@ -1,0 +1,120 @@
+"""WitnessReader — read-only liveness and identity over a real witness LMDB, plus the
+unavailable and no-identity failure paths."""
+
+import os
+
+import keri
+import pytest
+from keri.app import habbing
+
+from witness import reader as reader_mod
+from witness.config import ControlPlaneConfig
+from witness.errors import DbUnavailable, IdentityUnavailable
+from witness.reader import WitnessReader, _select_witness_hab
+
+
+@pytest.fixture(scope="module")
+def witness_db(tmp_path_factory):
+    """Build a persistent witness DB (non-transferable hab), then close it so it can be
+    reopened read-only."""
+    head = str(tmp_path_factory.mktemp("witkeri"))
+    hby = habbing.Habery(
+        name="testwit", base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    hab = hby.makeHab(name="wit", transferable=False)
+    info = {"pre": hab.pre, "alias": hab.name, "db_path": hby.db.path, "head": head}
+    hby.close()
+    return info
+
+
+@pytest.fixture
+def reader(witness_db):
+    cfg = ControlPlaneConfig(
+        name="testwit", host="127.0.0.1", port=1, base="", head_dir_path=witness_db["head"]
+    )
+    return WitnessReader(cfg)
+
+
+def test_health_reports_ok_when_the_db_opens(reader):
+    assert reader.health() == {"status": "ok"}
+
+
+def test_info_reports_the_witness_identity(reader, witness_db):
+    info = reader.info()
+    assert info == {
+        "aid": witness_db["pre"],
+        "alias": witness_db["alias"],
+        "keripy_version": keri.__version__,
+        "db_path": witness_db["db_path"],
+    }
+    assert isinstance(keri.__version__, str) and keri.__version__
+
+
+@pytest.fixture
+def unopenable_config(tmp_path):
+    """A config whose database directory holds a corrupt (non-LMDB) data.mdb, so any read-only
+    open fails deterministically — the transient 'witness not readable' condition."""
+    name = "corruptwit"
+    dbdir = tmp_path / "keri" / "db" / name  # resolved path for base=""
+    dbdir.mkdir(parents=True)
+    (dbdir / "data.mdb").write_bytes(b"this is not a valid lmdb file" * 16)
+    (dbdir / "lock.mdb").write_bytes(b"\x00" * 128)
+    return ControlPlaneConfig(
+        name=name, host="127.0.0.1", port=1, base="", head_dir_path=str(tmp_path)
+    )
+
+
+def test_health_raises_dbunavailable_when_the_db_cannot_open(unopenable_config):
+    with pytest.raises(DbUnavailable):
+        WitnessReader(unopenable_config).health()
+
+
+def test_info_raises_dbunavailable_when_the_db_cannot_open(unopenable_config):
+    with pytest.raises(DbUnavailable):
+        WitnessReader(unopenable_config).info()
+
+
+def test_health_reports_unavailable_and_creates_nothing_when_db_missing(tmp_path):
+    """A missing witness DB must report unavailable AND must not create a phantom env — the
+    read-only isolation guarantee. (Opening a missing read-only Baser otherwise creates one.)"""
+    head = tmp_path / "empty_head"  # does not exist
+    cfg = ControlPlaneConfig(
+        name="ghostwit", host="127.0.0.1", port=1, base="", head_dir_path=str(head)
+    )
+    with pytest.raises(DbUnavailable):
+        WitnessReader(cfg).health()
+    assert not head.exists()  # nothing was created on disk
+
+
+def test_info_reports_unavailable_when_db_missing_with_default_head():
+    """Covers the default-head (head_dir_path=None) resolution branch: a uniquely-named DB
+    exists under neither the primary nor the ~/.keri alt head, so it is reported unavailable."""
+    cfg = ControlPlaneConfig(
+        name="ghostwit-" + os.urandom(6).hex(), host="127.0.0.1", port=1, base="",
+        head_dir_path=None,
+    )
+    with pytest.raises(DbUnavailable):
+        WitnessReader(cfg).info()
+
+
+def test_info_raises_identityunavailable_when_no_witness_hab_is_present(reader, monkeypatch):
+    monkeypatch.setattr(reader_mod, "_select_witness_hab", lambda items: None)
+    with pytest.raises(IdentityUnavailable):
+        reader.info()
+
+
+class _FakeHab:
+    def __init__(self, mid):
+        self.mid = mid
+
+
+def test_select_witness_hab_skips_group_habs_and_returns_the_first_local_hab():
+    group = _FakeHab(mid="EGroup")
+    local = _FakeHab(mid=None)
+    chosen = _select_witness_hab([("k1", group), ("k2", local)])
+    assert chosen is local
+
+
+def test_select_witness_hab_returns_none_when_there_is_no_local_hab():
+    assert _select_witness_hab([]) is None
+    assert _select_witness_hab([("k1", _FakeHab(mid="EGroup"))]) is None
