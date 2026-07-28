@@ -98,6 +98,18 @@ Operator layer over a stock keripy witness = goal:
             plane is its own process) when the web-console or mutation phase makes those needs
             concrete.
 
+        P0 serves GET /healthz and GET /info  unauthenticated = decision:
+          id: h5n2rk
+          why: >
+            /healthz (200 {"status":"ok"}, 503 when the witness LMDB will not open) is a liveness
+            probe and must be unauthenticated; /info returns low-sensitivity witness identity
+            ({aid, alias, keripy_version, db_path}). RFC 9421 auth (@s6v3qm) is deferred to P1,
+            landing on the first endpoint that exposes witnessed KEL/receipt data. Rejected
+            authenticating P0 because it forces the heti request-signing path before any sensitive
+            data is served, and liveness probes cannot sign. Accepted tradeoff: the identity fields
+            in /info are readable without auth. These response shapes are frozen external contracts
+            once shipped; changing them needs a new node.
+
     Authenticate with RFC 9421 message signatures via heti = decision:
       id: s6v3qm
       why: >
@@ -115,3 +127,14 @@ Operator layer over a stock keripy witness = goal:
         witnessed state, and the auth dependency heti is Python; a different language would
         reimplement keripy's LMDB schema and CESR parsing. Driving constraint: Python >=3.14 (the
         keripy and heti floor).
+
+    One witness CLI with subcommands per process role = decision:
+      id: g3w6px
+      why: >
+        A single installable `witness` package exposes one CLI with subcommands — `witness
+        control-plane` (the reader, P0) and later `witness run` (the launcher) — mirroring keripy's
+        own `kli <subcommand>` model, so operators install and discover one entry point. Rejected
+        separate console scripts per process (`witness-cp`, `witness-run`), which fragment discovery
+        and docs. The two processes stay independently deployable (separate invocations / containers);
+        sharing a CLI package does not couple their runtime. Accepted tradeoff: one package ships
+        both roles even on a host that runs only one.
