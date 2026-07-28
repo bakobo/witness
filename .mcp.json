@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "glossary": {
+      "type": "stdio",
+      "command": "/home/daniel/code/me/glossary-mcp/.venv/bin/glossary-mcp-server",
+      "env": {
+        "GLOSSARY_PATH": "/home/daniel/code/bakobo/glossary"
+      }
+    }
+  }
+}
