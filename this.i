@@ -84,6 +84,20 @@ Operator layer over a stock keripy witness = goal:
             future changes-since-root sync index). Accepted tradeoff: no independent or tamper-evident
             audit store yet.
 
+        Use falcon for the v1 control-plane HTTP surface = decision:
+          id: r3v6np
+          why: >
+            The read-only v1 surface is a handful of GET endpoints served by a separate process off
+            keripy's hio loop; falcon is already a transitive dependency (via keripy), sync WSGI fits
+            synchronous LMDB reads, and it adds no new stack. Rejected FastAPI/Starlette for v1
+            because its real advantages — auto OpenAPI, pydantic validation, async — accrue only to
+            phases not yet committed (a web console; mutating POST bodies at P4), so adopting it now
+            is speculative generality (rule of three, directive #8). Accepted tradeoff: OpenAPI and
+            request validation are hand-rolled if needed in v1. Re-evaluation trigger recorded as
+            tick ~6cy6: revisit FastAPI (possibly for the UI/mutation surface only, since the control
+            plane is its own process) when the web-console or mutation phase makes those needs
+            concrete.
+
     Authenticate with RFC 9421 message signatures via heti = decision:
       id: s6v3qm
       why: >
