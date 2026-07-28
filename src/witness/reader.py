@@ -38,7 +38,7 @@ def _db_dir_candidates(config):
     ]
 
 
-def _resolve_existing_db(config):
+def _resolve_existing_db(config):  # ~5s3e — keripy readonly open creates a phantom env on a missing DB
     """Return the witness DB directory that actually holds an LMDB file, or ``None``.
 
     A read-only ``Baser`` open of a *missing* DB does not fail — keripy creates an empty env
