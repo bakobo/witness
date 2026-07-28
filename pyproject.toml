@@ -1,0 +1,41 @@
+[project]
+name = "witness"
+version = "0.0.0"
+description = "Bakobo's operator layer over a stock keripy witness — observe a running witness without forking keripy."
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Bakobo" }]
+dependencies = [
+    "keri @ git+https://github.com/bakobo/keripy@366d81071aea7be5b8ad35acbed815e1255224d5",
+    "falcon",
+    "waitress",
+]
+
+[project.scripts]
+witness = "witness.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# witness pins keripy to a git commit; hatchling needs this to allow the direct reference.
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/witness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=witness --cov-branch --cov-report=term-missing --cov-fail-under=100"
+
+[tool.coverage.run]
+branch = true
+source = ["witness"]
