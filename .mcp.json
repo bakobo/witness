@@ -2,9 +2,12 @@
   "mcpServers": {
     "glossary": {
       "type": "stdio",
-      "command": "/home/daniel/code/me/glossary-mcp/.venv/bin/glossary-mcp-server",
+      "command": "uvx",
+      "args": [
+        "glossary-mcp==0.1.0"
+      ],
       "env": {
-        "GLOSSARY_PATH": "/home/daniel/code/bakobo/glossary"
+        "GLOSSARY_PATH": "${CLAUDE_PROJECT_DIR:-.}/../glossary"
       }
     }
   }
