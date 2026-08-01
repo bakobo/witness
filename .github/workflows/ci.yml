@@ -13,6 +13,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      # witness depends on private intra-org repos (heti) by git SHA. The Bakobo Dependency
+      # Reader App mints a short-lived, contents:read-only token so `uv sync` can fetch them.
+      # client-id is a public identifier, not a credential; only the private key is secret.
+      - name: Mint a token for private intra-org dependencies
+        id: dep-reader
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: Iv23liAQRlNEpCyR1RXt
+          private-key: ${{ secrets.DEP_READER_PRIVATE_KEY }}
+          owner: bakobo
+          repositories: heti
+      - name: Authenticate git for private intra-org dependencies
+        env:
+          TOKEN: ${{ steps.dep-reader.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+      # Isolates "the credential is broken" from "dependency resolution is broken", which
+      # `uv sync` alone cannot distinguish.
+      - name: Verify private dependency access
+        run: git ls-remote https://github.com/bakobo/heti HEAD > /dev/null
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
