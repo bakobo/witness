@@ -12,7 +12,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # persist-credentials:false is load-bearing, not hygiene. When true, checkout writes
+      # `http.https://github.com/.extraheader` carrying the repo-scoped GITHUB_TOKEN, and that
+      # header beats the credentials the insteadOf rewrite below embeds in the URL — so every
+      # github.com fetch authenticates as a token that cannot see heti ("Repository not found").
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       # witness depends on private intra-org repos (heti) by git SHA. The Bakobo Dependency
       # Reader App mints a short-lived, contents:read-only token so `uv sync` can fetch them.
