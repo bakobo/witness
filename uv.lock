@@ -259,6 +259,14 @@ wheels = [
 ]
 
 [[package]]
+name = "heti"
+version = "0.0.0"
+source = { git = "https://github.com/bakobo/heti?rev=cd83690286c47241460fa6e2dc81a59abb452d16#cd83690286c47241460fa6e2dc81a59abb452d16" }
+dependencies = [
+    { name = "keri" },
+]
+
+[[package]]
 name = "hio"
 version = "0.7.19"
 source = { registry = "https://pypi.org/simple" }
@@ -750,6 +758,7 @@ version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "falcon" },
+    { name = "heti" },
     { name = "keri" },
     { name = "waitress" },
 ]
@@ -763,6 +772,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "falcon" },
+    { name = "heti", git = "https://github.com/bakobo/heti?rev=cd83690286c47241460fa6e2dc81a59abb452d16" },
     { name = "keri", git = "https://github.com/bakobo/keripy?rev=366d81071aea7be5b8ad35acbed815e1255224d5" },
     { name = "waitress" },
 ]
