@@ -195,3 +195,21 @@ def test_two_witnessed_controllers_are_both_enumerable_and_independent(witnessin
     assert first == list(range(len(witnessing_db["saids"])))
     assert second == list(range(len(witnessing_db["saids2"])))
     assert witnessing_db["controller_pre"] != witnessing_db["controller2_pre"]
+
+
+def test_a_fully_witnessed_event_carries_every_witnesss_signature(fully_witnessed_db):
+    """Under toad=2 the witness's own wigs store holds the full witness set once receipts have
+    been exchanged, each signature indexed by its position in the controller's witness list.
+
+    A receipts endpoint has to render this, and the single-witness fixture cannot produce it —
+    there, wigs holds exactly one signature at index 0 and the shape looks deceptively simple.
+    """
+    rdb = _reopen(fully_witnessed_db)
+    try:
+        wigers = rdb.wigs.get(
+            keys=(fully_witnessed_db["controller_pre"], fully_witnessed_db["said"])
+        )
+    finally:
+        rdb.close()
+    assert len(wigers) == fully_witnessed_db["toad"]
+    assert sorted(w.index for w in wigers) == [0, 1]

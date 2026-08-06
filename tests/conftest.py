@@ -12,7 +12,7 @@ event construction would share bugs with the first and hide them in both.
 
 import pytest
 from keri.app import habbing
-from keri.core import Kevery, Parser
+from keri.core import Kevery, Parser, messagize, receipt
 
 
 @pytest.fixture(scope="module")
@@ -84,4 +84,70 @@ def witnessing_db(tmp_path_factory):
     }
     ctl_hby.close()
     wit_hby.close()
+    return facts
+
+
+@pytest.fixture(scope="module")
+def fully_witnessed_db(tmp_path_factory):
+    """A witness LMDB holding a controller event receipted by TWO witnesses under toad=2.
+
+    Kept separate from :func:`witnessing_db` because getting a *full* witness set into one
+    witness's own wigs store needs the receipt-exchange round trip: each witness receipts
+    independently, the controller collects both, and the combined receipt goes back out. A
+    receipts endpoint sees this shape in any real deployment, and it is not the shape a
+    single-witness fixture produces.
+    """
+    head = str(tmp_path_factory.mktemp("fullywitnessed"))
+
+    wit1_hby = habbing.Habery(
+        name="fullywitnessed", base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    wit1_hab = wit1_hby.makeHab(name="wit1", transferable=False)
+    wit1_kvy = Kevery(db=wit1_hab.db, lax=False, local=False)
+
+    wit2_hby = habbing.Habery(name="wit2", base="", temp=True, bran="zyxwvutsrqp0987654321")
+    wit2_hab = wit2_hby.makeHab(name="wit2", transferable=False)
+    wit2_kvy = Kevery(db=wit2_hab.db, lax=False, local=False)
+
+    ctl_hby = habbing.Habery(name="ctl3", base="", temp=True, bran="mnopqrstuvw1122334455")
+    ctl_hab = ctl_hby.makeHab(
+        name="ctl3", transferable=True, wits=[wit1_hab.pre, wit2_hab.pre], toad=2
+    )
+    ctl_kvy = Kevery(db=ctl_hab.db, lax=False, local=False)
+
+    icp = ctl_hab.msgOwnInception(framed=True)
+
+    # Each witness accepts the event and emits its own receipt.
+    receipts = []
+    for hab, kvy in ((wit1_hab, wit1_kvy), (wit2_hab, wit2_kvy)):
+        Parser().parse(ims=bytearray(icp), kvy=kvy, local=True)
+        receipts.append(hab.processCues(kvy.cues))
+
+    # The controller collects both receipts, so its wigs hold the full set.
+    for rct in receipts:
+        Parser().parse(ims=bytearray(rct), kvy=ctl_kvy, local=True)
+
+    said = ctl_hab.kever.serder.said
+    wigers = ctl_hab.db.wigs.get(keys=(ctl_hab.pre, said))
+
+    # Send the combined receipt back so our witness holds every witness's signature, not just
+    # its own — the state a fully-witnessed event actually reaches.
+    combined = messagize(
+        serder=receipt(pre=ctl_hab.pre, sn=ctl_hab.kever.sn, said=said),
+        wigers=wigers,
+        framed=True,
+    )
+    Parser().parse(ims=bytearray(combined), kvy=wit1_kvy, local=True)
+
+    facts = {
+        "head": head,
+        "name": "fullywitnessed",
+        "controller_pre": ctl_hab.pre,
+        "said": said,
+        "witness_pres": [wit1_hab.pre, wit2_hab.pre],
+        "toad": 2,
+    }
+    ctl_hby.close()
+    wit2_hby.close()
+    wit1_hby.close()
     return facts
