@@ -50,12 +50,23 @@ def witnessing_db(tmp_path_factory):
             Parser().parse(ims=bytearray(rct), kvy=wit_kvy, local=True)
         return rct
 
-    _witness(ctl_hab.msgOwnInception(framed=True))
-    saids.append(ctl_hab.kever.serder.said)
+    def _incept_and_rotate(hab, rotations):
+        """Witness a controller's inception plus `rotations` rotations; return its event SAIDs."""
+        said_list = []
+        _witness(hab.msgOwnInception(framed=True))
+        said_list.append(hab.kever.serder.said)
+        for sn in range(1, rotations + 1):
+            hab.rotate()
+            _witness(hab.msgOwnEvent(sn=sn))
+            said_list.append(hab.kever.serder.said)
+        return said_list
 
-    ctl_hab.rotate()
-    _witness(ctl_hab.msgOwnEvent(sn=1))
-    saids.append(ctl_hab.kever.serder.said)
+    saids = _incept_and_rotate(ctl_hab, rotations=1)
+
+    # A second controller, with a longer history, so an index has more than one member and
+    # ordering assertions have something to order.
+    ctl2_hab = ctl_hby.makeHab(name="ctl2", transferable=True, wits=[wit_hab.pre], toad=1)
+    saids2 = _incept_and_rotate(ctl2_hab, rotations=2)
 
     facts = {
         "head": head,
@@ -64,6 +75,11 @@ def witnessing_db(tmp_path_factory):
         "witness_alias": wit_hab.name,
         "controller_pre": ctl_hab.pre,
         "saids": saids,
+        "controller2_pre": ctl2_hab.pre,
+        "saids2": saids2,
+        # An AID that is well-formed and syntactically valid but which this witness has never
+        # seen. The absent-AID path is what every data endpoint has to get right.
+        "unwitnessed_pre": "EAAAAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "db_path": wit_hby.db.path,
     }
     ctl_hby.close()

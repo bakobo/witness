@@ -124,3 +124,74 @@ def test_a_moved_accessor_fails_closed_rather_than_reading_as_empty(witnessing_d
             monkey.undo()
     finally:
         rdb.close()
+
+
+# --- The absent-AID path, and the boundaries an endpoint has to respect -------------------
+
+
+def test_an_unwitnessed_aid_reads_as_empty_everywhere_rather_than_raising(witnessing_db):
+    """The single most important characterization for a data endpoint.
+
+    Asking about an AID this witness has never seen must be a *normal* answer, not an exception.
+    It reads as empty across every store — which means calling code cannot distinguish "never
+    witnessed" from "read nothing" on the evidence of a single accessor, and must therefore
+    decide absence deliberately rather than inferring it.
+    """
+    absent = witnessing_db["unwitnessed_pre"]
+    rdb = _reopen(witnessing_db)
+    try:
+        fels = list(rdb.fels.getAllItemIter(keys=absent))
+        count = rdb.fels.cnt(keys=absent)
+        state = rdb.states.get(keys=absent)
+        kel = list(rdb.clonePreIter(pre=absent, fn=0))
+        wigs = rdb.wigs.get(keys=(absent, witnessing_db["saids"][0]))
+    finally:
+        rdb.close()
+    assert fels == []
+    assert count == 0
+    assert state is None
+    assert kel == []
+    assert wigs == []
+
+
+def test_fels_count_is_the_honest_test_for_whether_an_aid_is_witnessed(witnessing_db):
+    """Given the above, `fels.cnt` is the discriminator an endpoint should use: non-zero for a
+    witnessed AID, zero for an absent one, and it raises rather than lying if fels ever moves."""
+    rdb = _reopen(witnessing_db)
+    try:
+        witnessed = rdb.fels.cnt(keys=witnessing_db["controller_pre"])
+        witnessed2 = rdb.fels.cnt(keys=witnessing_db["controller2_pre"])
+        absent = rdb.fels.cnt(keys=witnessing_db["unwitnessed_pre"])
+    finally:
+        rdb.close()
+    assert witnessed == len(witnessing_db["saids"])
+    assert witnessed2 == len(witnessing_db["saids2"])
+    assert absent == 0
+
+
+def test_clonepreiter_past_the_end_of_a_kel_yields_nothing_and_does_not_raise(witnessing_db):
+    """Paging past the end is a normal request, not an error — an endpoint offering `fn` as a
+    cursor needs the empty tail rather than an exception."""
+    rdb = _reopen(witnessing_db)
+    try:
+        beyond = list(rdb.clonePreIter(pre=witnessing_db["controller_pre"], fn=99))
+        last = list(rdb.clonePreIter(pre=witnessing_db["controller_pre"],
+                                     fn=len(witnessing_db["saids"]) - 1))
+    finally:
+        rdb.close()
+    assert beyond == []
+    assert len(last) == 1
+
+
+def test_two_witnessed_controllers_are_both_enumerable_and_independent(witnessing_db):
+    """An index endpoint reads every witnessed AID, and each carries its own ordinal sequence
+    starting at zero — the second controller's ordinals do not continue the first's."""
+    rdb = _reopen(witnessing_db)
+    try:
+        first = [on for _k, on, _s in rdb.fels.getAllItemIter(keys=witnessing_db["controller_pre"])]
+        second = [on for _k, on, _s in rdb.fels.getAllItemIter(keys=witnessing_db["controller2_pre"])]
+    finally:
+        rdb.close()
+    assert first == list(range(len(witnessing_db["saids"])))
+    assert second == list(range(len(witnessing_db["saids2"])))
+    assert witnessing_db["controller_pre"] != witnessing_db["controller2_pre"]
