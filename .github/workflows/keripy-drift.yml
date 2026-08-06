@@ -1,0 +1,87 @@
+name: keripy drift canary
+
+# The half of w7c4mz's bargain that did not exist yet.
+#
+# w7c4mz accepts riding semi-internal keripy accessors unforked, on the strength of a commit pin
+# plus contract tests. Together those catch drift — but only at the moment somebody bumps the pin,
+# which could be months after upstream moved and long after the cheap time to react. This job runs
+# the suite against keripy `main` on a schedule so drift surfaces while it is still small.
+#
+# A FAILURE HERE IS NOT A BROKEN BUILD. It means upstream moved under us. Nothing on main is
+# affected: the pin is unchanged and ci.yml still gates every push. Read the failure, then decide
+# whether to follow keripy or record why not.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Mint a token for private intra-org dependencies
+        id: dep-reader
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: Iv23liAQRlNEpCyR1RXt
+          private-key: ${{ secrets.DEP_READER_PRIVATE_KEY }}
+          owner: bakobo
+          repositories: heti
+      - name: Authenticate git for private intra-org dependencies
+        env:
+          TOKEN: ${{ steps.dep-reader.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+
+      # An override rather than an edit to the keri line, because heti pins keripy too (f5j3wc).
+      # Repointing only witness's pin would make the two disagree, and the job would fail on
+      # resolution rather than on drift — a false signal wearing the right colour.
+      - name: Repoint keripy at main, for heti's pin as well as ours
+        run: |
+          cat >> pyproject.toml <<'EOF'
+
+          [tool.uv]
+          override-dependencies = ["keri @ git+https://github.com/bakobo/keripy@main"]
+          EOF
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+          enable-cache: false
+
+      - name: Resolve and install against keripy main
+        run: |
+          uv lock
+          uv sync
+
+      - name: Report how far the pin has fallen behind
+        run: |
+          pinned=$(git show HEAD:pyproject.toml | sed -n 's|.*keripy@\([0-9a-f]\{40\}\).*|\1|p')
+          resolved=$(python3 -c "
+          import tomllib
+          lock = tomllib.load(open('uv.lock','rb'))
+          keri = [p for p in lock['package'] if p['name'] == 'keri']
+          print(keri[0]['source']['git'].split('#')[-1])
+          ")
+          echo "pinned   : $pinned"
+          echo "main     : $resolved"
+          if [ "$pinned" = "$resolved" ]; then
+            echo "No drift: keripy main is still at the pinned commit."
+          else
+            echo "::notice::keripy main has moved from $pinned to $resolved."
+          fi
+
+      # No coverage gate here. Coverage measures src/witness, which this job does not change, so
+      # a coverage failure could only be noise dressed up as a drift signal.
+      - name: Run the suite against keripy main
+        run: uv run --no-sync pytest --no-cov -q
