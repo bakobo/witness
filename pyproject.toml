@@ -9,7 +9,11 @@ authors = [{ name = "Bakobo" }]
 dependencies = [
     "keri @ git+https://github.com/bakobo/keripy@366d81071aea7be5b8ad35acbed815e1255224d5",
     # heti pins the same keri commit (f5j3wc); the two must never diverge or `keri` cannot resolve.
-    "heti @ git+https://github.com/bakobo/heti@cd83690286c47241460fa6e2dc81a59abb452d16",
+    # SSH because heti is private and every Bakobo developer already has SSH keys, so a fresh
+    # clone needs no credential setup. CI has no SSH key and instead rewrites this to an HTTPS
+    # URL carrying a GitHub App token (.github/workflows/ci.yml). keripy stays HTTPS: it is
+    # public, so anonymous HTTPS resolves it for anyone, with or without a Bakobo account.
+    "heti @ git+ssh://git@github.com/bakobo/heti@cd83690286c47241460fa6e2dc81a59abb452d16",
     "falcon",
     "waitress",
 ]
