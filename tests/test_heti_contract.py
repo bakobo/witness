@@ -86,6 +86,6 @@ def test_verify_rejects_a_transferable_aid_rather_than_best_effort_checking_it()
 def test_error_matching_is_prefix_based_so_witness_can_handle_whole_branches():
     """error-codes.md:94 puts the matcher in one place precisely so repos do not reimplement it.
     witness will match on prefixes rather than enumerate leaves."""
-    assert heti_errors.matches("e.env.witness-db.r", "e.env.")
+    assert heti_errors.matches("e.env.witness.db.r", "e.env.")
     assert not heti_errors.matches("e.input.range.f", "e.env.")
     assert heti_errors.matches("e.input.range.f", "e.*.f")
