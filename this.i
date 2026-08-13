@@ -110,6 +110,28 @@ Operator layer over a stock keripy witness = goal:
             in /info are readable without auth. These response shapes are frozen external contracts
             once shipped; changing them needs a new node.
 
+        The whole control-plane surface conforms to the org standards  including what shipped = decision:
+          id: zzbdxa
+          why: >
+            Every control-plane route conforms to bakobo/dev's url-design, http-errors, error-codes
+            and error-handling standards, and that includes /healthz and /info, whose shapes
+            @h5n2rk froze. This is the new node @h5n2rk requires to change them. All four standards
+            were written after @h5n2rk and each claims every Bakobo HTTP surface, so the freeze and
+            the standards cannot both stand. Chose to re-cut rather than grandfather because
+            witness is private, at 0.0.0, with no external consumer, so the freeze protects nobody
+            today and protects more with every consumer it acquires — and because two endpoints of
+            one 130-line service currently disagree about where an error lives (/healthz nests it
+            under "error", /info does not), which is the sibling-inconsistency error-handling.md
+            names in its rubric. Rejected conforming only new routes: that buys a permanent
+            exception to a standard claiming universality, in exchange for avoiding a rename no
+            consumer exists to notice. Scope, stated because it is easy to over-read: this binds
+            the CONTROL PLANE, which is Bakobo's own invention. The keripy-facing witness interface
+            — receipting, OOBI, whatever keripy defines a witness to serve — is not Bakobo's to
+            restyle and stays exactly as keripy specifies it, per @w7c4mz. Accepted tradeoff: the
+            standards take the /v<major>/<component>/ path segment from the glossary, and `witness`
+            is not a lemma yet, so the error envelope can land now while the path rename waits on
+            minting it.
+
     Authenticate with RFC 9421 message signatures via heti = decision:
       id: s6v3qm
       why: >
