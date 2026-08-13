@@ -35,9 +35,11 @@ class DbUnavailable(WitnessError):
 
 
 class IdentityUnavailable(WitnessError):
-    """The witness database opened but has no witness identity yet.
+    """The witness database opened but holds no witness identity.
 
-    Transient: the witness may still be initializing, so retrying later could succeed.
+    Either the witness has not been incepted yet, in which case retrying succeeds once it is, or
+    the configured keystore belongs to somebody else, in which case it never will. ~2lmg records
+    that these want separate codes and opposite dispositions; today they share one.
     """
 
     code = "witness.identity.unavailable"
