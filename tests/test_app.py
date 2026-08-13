@@ -35,7 +35,7 @@ class _NoIdentityReader:
         return {"status": "ok"}
 
     def info(self):
-        raise IdentityUnavailable("The witness database opened but has no witness identity yet.")
+        raise IdentityUnavailable("The witness database opened but holds no witness identity.")
 
 
 @pytest.fixture
@@ -91,6 +91,6 @@ def test_info_returns_503_error_body_when_identity_is_missing():
     assert resp.status == falcon.HTTP_503
     assert resp.json == {
         "code": "witness.identity.unavailable",
-        "message": "The witness database opened but has no witness identity yet.",
+        "message": "The witness database opened but holds no witness identity.",
         "retryable": True,
     }

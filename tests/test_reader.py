@@ -103,9 +103,16 @@ def test_info_raises_identityunavailable_when_no_witness_hab_is_present(reader, 
         reader.info()
 
 
+# Real qb64 prefixes. A witness AID is ALWAYS non-transferable (a 'B' prefix): a transferable
+# witness would need witnesses of its own, which does not terminate. ~2lmg
+_NONTRANSFERABLE = "BMf2Nt2hPB_703-Y6mfxMX41KA2JFaxBQOffe7pVkzxy"
+_TRANSFERABLE = "EF-IpWnScgYcmeXE-ph7pObTIrW-gB9HkNaJRxCSrl8K"
+
+
 class _FakeHab:
-    def __init__(self, mid):
+    def __init__(self, mid, hid=_NONTRANSFERABLE):
         self.mid = mid
+        self.hid = hid
 
 
 def test_select_witness_hab_skips_group_habs_and_returns_the_first_local_hab():
@@ -118,3 +125,39 @@ def test_select_witness_hab_skips_group_habs_and_returns_the_first_local_hab():
 def test_select_witness_hab_returns_none_when_there_is_no_local_hab():
     assert _select_witness_hab([]) is None
     assert _select_witness_hab([("k1", _FakeHab(mid="EGroup"))]) is None
+
+
+def test_select_witness_hab_skips_a_transferable_hab():
+    """A transferable AID cannot be a witness's own identity, so it is never selected even
+    though it is local rather than a group hab."""
+    transferable = _FakeHab(mid=None, hid=_TRANSFERABLE)
+    assert _select_witness_hab([("k1", transferable)]) is None
+
+
+def test_select_witness_hab_prefers_the_nontransferable_hab_over_a_transferable_one():
+    transferable = _FakeHab(mid=None, hid=_TRANSFERABLE)
+    witness = _FakeHab(mid=None, hid=_NONTRANSFERABLE)
+    chosen = _select_witness_hab([("k1", transferable), ("k2", witness)])
+    assert chosen is witness
+
+
+def test_info_refuses_a_controllers_keystore_instead_of_reporting_its_aid(tmp_path):
+    """The bug ~2lmg names, against a real keystore rather than a fake.
+
+    Pointed at a controller's keystore -- a transferable AID, not a witness at all -- /info
+    reported that controller's AID as the witness's identity. The control plane exists to report
+    what this witness is; reporting somebody else's identity is worse than reporting nothing.
+    """
+    head = str(tmp_path / "controllerstore")
+    hby = habbing.Habery(
+        name="notawitness", base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    controller = hby.makeHab(name="alice", transferable=True)
+    hby.close()
+
+    cfg = ControlPlaneConfig(
+        name="notawitness", host="127.0.0.1", port=1, base="", head_dir_path=head
+    )
+    with pytest.raises(IdentityUnavailable) as caught:
+        WitnessReader(cfg).info()
+    assert controller.pre not in str(caught.value)

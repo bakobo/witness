@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 import keri
+from keri.core import coring
 from keri.db import basing
 
 from .errors import DbUnavailable, IdentityUnavailable
@@ -52,13 +53,30 @@ def _resolve_existing_db(config):  # ~5s3e — keripy readonly open creates a ph
     return None
 
 
-def _select_witness_hab(items):
-    """Return the first local (non-group) hab record from ``items``, or ``None`` if there is none.
+def _is_witness_hab(hr):
+    """Whether ``hr`` can be this witness's own identity.
 
-    ``items`` yields ``(keys, habitat_record)`` pairs; a group hab has a non-``None`` ``mid``.
+    Two things disqualify a hab. A group hab is a multisig identity rather than a single
+    controller's, and carries a non-``None`` ``mid``. A **transferable** hab cannot be a witness
+    at all: a transferable AID's key state is established by its own witnesses, so a transferable
+    witness would depend on witnesses of its own and the definition would not terminate. Every
+    witness AID is therefore non-transferable, and the prefix says so.
+    """
+    if hr.mid is not None:
+        return False
+    return not coring.Prefixer(qb64=hr.hid).transferable
+
+
+def _select_witness_hab(items):
+    """Return the first hab record from ``items`` that could be this witness's own identity, or
+    ``None`` if there is none.
+
+    ``items`` yields ``(keys, habitat_record)`` pairs. Selecting nothing is the honest answer for
+    a keystore that belongs to somebody else: reporting another controller's AID as this
+    witness's identity is worse than reporting no identity at all.
     """
     for _keys, hr in items:
-        if hr.mid is None:
+        if _is_witness_hab(hr):
             return hr
     return None
 
@@ -104,7 +122,7 @@ class WitnessReader:
             hab = _select_witness_hab(rdb.habs.getTopItemIter())
             if hab is None:
                 raise IdentityUnavailable(
-                    "The witness database opened but has no witness identity yet."
+                    "The witness database opened but holds no witness identity."
                 )
             return {
                 "aid": hab.hid,
