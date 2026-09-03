@@ -1,0 +1,18 @@
+# Everything the build does not need. Keeping this tight is not just speed: the build context is
+# what a leaked layer would contain, and .venv/ and .tick/ have no business in an image.
+.git
+.github
+.venv
+.tick
+.ignored
+.pytest_cache
+.coverage
+htmlcov
+**/__pycache__
+**/*.pyc
+docs
+reviews
+tests
+this.i
+Dockerfile
+.dockerignore
