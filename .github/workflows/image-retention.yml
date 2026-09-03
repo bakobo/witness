@@ -1,0 +1,81 @@
+name: Image retention
+
+# @lnk24kwp sets a retention policy from the start, because the realistic risk at 53 MB
+# compressed with shared layers is untended accumulation rather than per-pull cost.
+#
+# Deleting a published image is irreversible and infra deploys by DIGEST, so a deleted version is
+# a rollback that no longer exists. ops.md §1's principle 7 gates exactly this class of act: the
+# default is to act, and only irreversible high-blast-radius acts meet a gate. So the schedule
+# only ever REPORTS, and deletion requires someone to dispatch this workflow with apply=true.
+#
+# Policy: keep every version carrying a v* release tag, forever. Keep the KEEP most recent of the
+# rest. Implemented with `gh api` rather than actions/delete-package-versions, whose latest
+# release (v5.0.0) still runs on the deprecated node20 runtime.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Actually delete. Leave false to report only."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  retention:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      KEEP: "30"
+      PACKAGE: witness
+      OWNER: ${{ github.repository_owner }}
+      APPLY: ${{ inputs.apply }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Select versions beyond the retention window
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
+            > versions.json
+          # Keep anything tagged v*; of the remainder, keep the KEEP most recent by creation.
+          jq --argjson keep "${KEEP}" '
+            [ .[] | {id, created_at, tags: (.metadata.container.tags // [])} ]
+            | sort_by(.created_at) | reverse
+            | (map(select(.tags | any(startswith("v"))))) as $released
+            | (map(select(.tags | any(startswith("v")) | not))) as $rest
+            | {
+                released: ($released | length),
+                kept: ($rest[:$keep] | length),
+                doomed: $rest[$keep:]
+              }
+          ' versions.json > plan.json
+          jq -r '"released kept forever: \(.released)\nrecent kept: \(.kept)\nover the window: \(.doomed | length)"' plan.json
+          jq -r '.doomed[] | "  would delete \(.id) (\(.created_at)) tags=\(.tags | join(","))"' plan.json
+
+      - name: Delete
+        if: inputs.apply
+        run: |
+          set -euo pipefail
+          # First apply run also answers whether GITHUB_TOKEN's packages:write is sufficient for
+          # deletion, or whether this needs the dependency-reader App instead. It fails loudly
+          # rather than silently skipping, which is the point.
+          for id in $(jq -r '.doomed[].id' plan.json); do
+            echo "deleting version ${id}"
+            gh api -X DELETE "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
+          done
+
+      - name: Say what was not done
+        if: ${{ !inputs.apply }}
+        run: |
+          {
+            echo "### Retention: report only"
+            echo
+            echo "Nothing was deleted. Re-run this workflow with \`apply=true\` to act on the plan above."
+          } >> "$GITHUB_STEP_SUMMARY"

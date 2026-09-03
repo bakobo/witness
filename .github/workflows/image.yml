@@ -1,0 +1,139 @@
+name: Image
+
+# Builds the witness image, proves it works, and publishes it to GHCR (@lypmcw7f, @lnk24kwp).
+#
+# The image is built HERE rather than in bakobo/infra because this repo owns the keripy pin, so
+# building anywhere else lets the image and the pin drift — the exact problem containerizing is
+# meant to close. infra consumes an immutable digest, which the summary below surfaces.
+#
+# Deliberately uses no docker/* actions. Everything is `docker buildx` and `gh api` in shell,
+# which means fewer third-party actions to pin and audit, and no dependency on an action whose
+# runtime has been deprecated. The two actions used here carry the same SHAs as ci.yml.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # persist-credentials:false is load-bearing, not hygiene — see the note in ci.yml. A
+      # persisted extraheader carrying the repo-scoped GITHUB_TOKEN beats the URL credentials the
+      # insteadOf rewrite embeds, and every fetch then authenticates as a token that cannot see heti.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Mint a token for private intra-org dependencies
+        id: dep-reader
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: Iv23liAQRlNEpCyR1RXt
+          private-key: ${{ secrets.DEP_READER_PRIVATE_KEY }}
+          owner: bakobo
+          repositories: heti
+
+      # Interpolation happens here, into env, rather than inside a run: body, so nothing from the
+      # event can be spliced into a shell command.
+      - name: Resolve image name and tags
+        id: names
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${OWNER}/witness"
+          # sha-<full-commit> on every build: the audit trail from an image back to the tree that
+          # holds the keripy pin. A release tag adds its semver. No `latest`, ever — a floating
+          # tag is precisely the drift @lnk24kwp exists to make unavailable.
+          tags="sha-${SHA}"
+          if [[ "${REF}" == refs/tags/v* ]]; then
+            tags="${tags} ${REF#refs/tags/}"
+          fi
+          {
+            echo "image=${image}"
+            echo "tags=${tags}"
+            echo "primary=${image}:sha-${SHA}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build the image
+        env:
+          GH_TOKEN: ${{ steps.dep-reader.outputs.token }}
+          PRIMARY: ${{ steps.names.outputs.primary }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # --load puts the result in the local daemon so the oracle below can actually run it.
+          # The token is a BuildKit secret, so it never lands in a layer or in `docker history`.
+          docker buildx build \
+            --secret id=gh_token,env=GH_TOKEN \
+            --build-arg "SOURCE_REVISION=${SHA}" \
+            --load \
+            -t "${PRIMARY}" \
+            .
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Authenticate git for private intra-org dependencies
+        env:
+          TOKEN: ${{ steps.dep-reader.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+
+      - name: Sync dependencies
+        run: uv sync
+
+      # The oracle that would actually have caught something. Beyond "it builds and answers
+      # health", it asserts the control plane's LMDB reader is REGISTERED in the lock table
+      # (@v27j7uvo): an unregistered reader opens, answers, and returns wrong data only when the
+      # witness happens to be recycling pages, so every cheaper check passes on a broken image.
+      - name: Run the image oracle
+        env:
+          WITNESS_IMAGE: ${{ steps.names.outputs.primary }}
+        run: uv run pytest tests/test_image_smoke.py -v --no-cov
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "${TOKEN}" | docker login ghcr.io -u "${ACTOR}" --password-stdin
+
+      - name: Push and report the digest
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+          PRIMARY: ${{ steps.names.outputs.primary }}
+          TAGS: ${{ steps.names.outputs.tags }}
+        run: |
+          set -euo pipefail
+          for tag in ${TAGS}; do
+            docker tag "${PRIMARY}" "${IMAGE}:${tag}"
+            docker push "${IMAGE}:${tag}"
+          done
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${PRIMARY}")"
+          # infra deploys by digest, never by tag, so the digest is the output that matters.
+          {
+            echo "### Image published"
+            echo
+            echo '```'
+            echo "${digest}"
+            echo '```'
+            echo
+            echo "Tags: ${TAGS}"
+          } >> "$GITHUB_STEP_SUMMARY"
