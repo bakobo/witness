@@ -161,3 +161,37 @@ def test_info_refuses_a_controllers_keystore_instead_of_reporting_its_aid(tmp_pa
     with pytest.raises(IdentityUnavailable) as caught:
         WitnessReader(cfg).info()
     assert controller.pre not in str(caught.value)
+
+
+def test_open_yields_a_genuinely_readonly_environment(reader):
+    """@k3p7wr claims the control plane "physically cannot ... corrupt" the witness data. That is
+    a property of the LMDB environment, not of our restraint, so assert the property.
+
+    keripy makes this easy to get wrong: ``Baser(reopen=True, readonly=True)`` silently discards
+    the flag. ``LMDBer.__init__`` consumes ``readonly`` and sets ``self.readonly``, then hands the
+    remaining kwargs to ``Filer.__init__``, which calls ``reopen()`` without it — and
+    ``LMDBer.reopen``'s ``readonly=False`` default then overwrites the value that was just set,
+    because its ``if readonly is not None`` guard can never be False. The environment comes back
+    read-WRITE while ``Baser.readonly`` reads False, so nothing complains. Same root cause as
+    ~5s3e, seen from the other side: a flag that never reaches ``lmdb.open`` cannot prevent
+    creation either.
+    """
+    rdb = reader._open()
+    try:
+        assert rdb.env.flags()["readonly"] is True
+        with pytest.raises(Exception) as excinfo:
+            with rdb.env.begin(write=True):
+                pass  # pragma: no cover - the begin() above is what raises
+        assert "read-only" in str(excinfo.value).lower()
+    finally:
+        rdb.close()
+
+
+def test_open_still_registers_in_the_lock_table(reader):
+    """@v27j7uvo: a reader that is not in the lock table reads pages the writer is recycling.
+    Read-only must not be bought by losing registration — num_readers stays non-zero."""
+    rdb = reader._open()
+    try:
+        assert rdb.env.info()["num_readers"] >= 1
+    finally:
+        rdb.close()

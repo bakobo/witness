@@ -95,14 +95,23 @@ class WitnessReader:
                 "not be running yet."
             )
         try:
-            return basing.Baser(
+            # Opened in two steps deliberately. `Baser(reopen=True, readonly=True)` looks correct
+            # and silently opens the environment read-WRITE: LMDBer.__init__ consumes `readonly`
+            # and sets self.readonly, then Filer.__init__ calls reopen() without it, and
+            # LMDBer.reopen's `readonly=False` default overwrites what was just set — its
+            # `if readonly is not None` guard can never be False. Passing the flag to reopen()
+            # directly is the only way it reaches lmdb.open. @k3p7wr's "physically cannot corrupt"
+            # is a property of the environment, not of our restraint, so it has to be real; ~5s3e
+            # is the same defect seen from the other side.
+            rdb = basing.Baser(
                 name=self._config.name,
                 base=self._config.base,
                 temp=False,
                 headDirPath=self._config.head_dir_path,
-                reopen=True,
-                readonly=True,
+                reopen=False,
             )
+            rdb.reopen(readonly=True)
+            return rdb
         except Exception as exc:
             raise DbUnavailable(
                 "The witness database could not be opened for reading; the witness may not be "
