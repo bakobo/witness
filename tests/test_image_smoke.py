@@ -122,7 +122,7 @@ def test_both_processes_run_in_the_one_container(witness_container):
         'for p in /proc/[0-9]*; do tr "\\0" " " < $p/cmdline; echo; done',
     ).stdout
 
-    assert "kli witness start" in cmdlines
+    assert "witness run" in cmdlines
     assert "witness control-plane" in cmdlines
     pid1 = _docker("exec", container, "sh", "-c", 'tr "\\0" " " < /proc/1/cmdline').stdout
     assert "witness supervise" in pid1
@@ -150,3 +150,45 @@ def test_the_control_plane_reader_is_registered_and_readonly(witness_container):
         "it and reads can silently return wrong data"
     )
     assert state["readonly"] is True
+
+
+def test_the_running_witness_publishes_telemetry(witness_container):
+    """@vxt7feoi and ~2x3n. The segment has to exist, name the real keripy doers, and show the
+    loop turning — a witness that publishes a stuck tick count is exactly the wedge this is for."""
+    container, port = witness_container
+    _await_healthz(container, port)
+
+    def snapshot():
+        probe = _docker(
+            "exec", container, "python", "-c",
+            "import json; from witness.telemetry import SegmentReader;"
+            f"print(json.dumps(SegmentReader('{_KERI_HOME}/telemetry').read()))",
+        ).stdout
+        return json.loads(probe.strip().splitlines()[-1])
+
+    first = snapshot()
+    names = [doer["name"] for doer in first["doers"]]
+
+    assert "TelemetryDoer" in names
+    assert "HaberyDoer" in names, f"the stock keripy doers should be named, got {names}"
+    assert first["ticks"] > 0
+
+    time.sleep(2)
+    assert snapshot()["ticks"] > first["ticks"], "the loop is not turning"
+
+
+def test_the_telemetry_segment_is_not_writable_through_the_reader(witness_container):
+    """The kernel-enforced read-only mapping @a24p3kbw could not get for LMDB, which needs a
+    writable lock file. A purpose-built segment has no lock protocol, so here it is real."""
+    container, port = witness_container
+    _await_healthz(container, port)
+
+    result = _docker(
+        "exec", container, "python", "-c",
+        "from witness.telemetry import SegmentReader;"
+        f"r = SegmentReader('{_KERI_HOME}/telemetry');"
+        "\ntry:\n    r._map[0:1] = b'x'\n    print('WRITABLE')\nexcept (TypeError, OSError) as e:\n"
+        "    print('refused:', type(e).__name__)",
+    ).stdout
+
+    assert "refused" in result, result

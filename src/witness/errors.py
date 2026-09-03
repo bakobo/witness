@@ -54,3 +54,25 @@ class InvalidArguments(WitnessError):
 
     code = "witness.config.invalid"
     retryable = False
+
+
+class TelemetryUnavailable(WitnessError):
+    """The witness's telemetry segment could not be read.
+
+    Transient: the witness may not be running yet, or a read raced a write and lost. Both resolve
+    on their own, so retrying is the right response.
+    """
+
+    code = "witness.telemetry.unavailable"
+    retryable = True
+
+
+class TelemetryIncompatible(WitnessError):
+    """The telemetry segment exists but this build cannot read it.
+
+    Permanent: the segment carries a layout this build does not know, or is not ours at all.
+    Retrying cannot help; the two sides have to be brought to the same version.
+    """
+
+    code = "witness.telemetry.incompatible"
+    retryable = False

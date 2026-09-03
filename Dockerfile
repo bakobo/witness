@@ -90,14 +90,17 @@ USER 1001
 EXPOSE 5631 5632 5633
 
 # The supervisor is PID 1: it forwards SIGTERM to both children and enforces the asymmetric
-# failure policy (@c7v3kp — an auxiliary crash must never take the witness down). Commands are
-# opaque strings so this CMD is the only thing that changes when the runner moves from
-# `kli witness start` to `witness run` (@n5r2vq).
+# failure policy (@c7v3kp — an auxiliary crash must never take the witness down).
+#
+# The runner is `witness run`, the launcher (@n5r2vq): keripy's own setupWitness doers unchanged,
+# in a Doist that also carries the telemetry doer (@vxt7feoi). Because the supervisor takes
+# commands as opaque strings, this line is the only thing that changed when it moved off
+# `kli witness start` — no code, no rebuild of the supervisor.
 #
 # The control plane binds 0.0.0.0 here rather than its 127.0.0.1 default, and that is not a
 # loosening: inside a container, loopback means "reachable only from this container", which no
 # operator can use. The confinement moves out to the host, where `-p 127.0.0.1:5633:5633` gives
 # the same property @h5n2rk wanted. Publishing it on 0.0.0.0 at the host is the mistake to avoid.
 ENTRYPOINT ["witness", "supervise"]
-CMD ["--essential", "kli witness start --name witness --alias witness --http 5631 --tcp 5632", \
+CMD ["--essential", "witness run --name witness --alias witness --http 5631 --tcp 5632", \
      "--auxiliary", "witness control-plane --name witness --host 0.0.0.0 --port 5633"]

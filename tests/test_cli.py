@@ -64,3 +64,21 @@ def test_main_returns_zero_for_the_control_plane(monkeypatch):
     monkeypatch.setattr(server_mod, "serve", lambda app, host, port: None)
 
     assert cli.main(["control-plane", "--name", "w", "--port", "5621"]) == 0
+
+
+def test_main_dispatches_run_and_returns_its_exit_code(monkeypatch):
+    from witness import runner as runner_mod
+
+    seen = {}
+
+    class FakeRunner:
+        def __init__(self, cfg):
+            seen["cfg"] = cfg
+
+        def run(self):
+            return 7
+
+    monkeypatch.setattr(runner_mod, "WitnessRunner", FakeRunner)
+
+    assert cli.main(["run", "--name", "wit"]) == 7
+    assert seen["cfg"].name == "wit"

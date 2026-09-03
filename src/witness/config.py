@@ -15,6 +15,8 @@ from .supervisor import ProcessSpec
 
 _MIN_PORT = 1
 _MAX_PORT = 65535
+#: Beside the keystore, so it shares the volume's lifetime and needs no extra mount.
+_DEFAULT_TELEMETRY_PATH = "/usr/local/var/keri/telemetry"
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,21 @@ class ControlPlaneConfig:
     port: int
     base: str = ""
     head_dir_path: str | None = None
+
+
+@dataclass(frozen=True)
+class RunnerConfig:
+    """Resolved configuration for the witness runner process (``witness run``)."""
+
+    name: str
+    alias: str
+    base: str
+    passcode: str | None
+    config_dir: str | None
+    config_file: str | None
+    tcp_port: int
+    http_port: int
+    telemetry_path: str
 
 
 @dataclass(frozen=True)
@@ -70,7 +87,45 @@ def _build_parser() -> _RaisingParser:
         default=[],
         help="A command that is restarted if it exits, never taking the witness down. Repeatable.",
     )
+    run = sub.add_parser("run", help="Run the keripy witness with in-loop telemetry.")
+    run.add_argument("--name", default="witness", help="The witness keystore/database name.")
+    run.add_argument("--alias", default=None, help="The hab alias. Defaults to --name.")
+    run.add_argument("--base", default="", help="The keystore base subdirectory.")
+    run.add_argument("--passcode", default=None, help="Keystore passcode, if it is encrypted.")
+    run.add_argument("--config-dir", default=None, help="Configuration directory override.")
+    run.add_argument("--config-file", default=None, help="Configuration filename override.")
+    # keripy's own defaults, taken from `kli witness start`'s argparse rather than from
+    # runWitness()'s signature, which has the two the other way round.
+    run.add_argument("--http", default=5631, type=int, help="Witness HTTP port. Default 5631.")
+    run.add_argument("--tcp", default=5632, type=int, help="Witness CESR/TCP port. Default 5632.")
+    run.add_argument(
+        "--telemetry-path",
+        default=_DEFAULT_TELEMETRY_PATH,
+        help=f"Where to publish the telemetry segment. Default {_DEFAULT_TELEMETRY_PATH}.",
+    )
     return parser
+
+
+def _port(value, flag):
+    if not _MIN_PORT <= value <= _MAX_PORT:
+        raise InvalidArguments(
+            f"The {flag} value must be between {_MIN_PORT} and {_MAX_PORT}, but was {value}."
+        )
+    return value
+
+
+def _runner_config(ns) -> RunnerConfig:
+    return RunnerConfig(
+        name=ns.name,
+        alias=ns.alias if ns.alias is not None else ns.name,
+        base=ns.base,
+        passcode=ns.passcode,
+        config_dir=ns.config_dir,
+        config_file=ns.config_file,
+        tcp_port=_port(ns.tcp, "--tcp"),
+        http_port=_port(ns.http, "--http"),
+        telemetry_path=ns.telemetry_path,
+    )
 
 
 def _control_plane_config(ns) -> ControlPlaneConfig:
@@ -99,4 +154,6 @@ def parse_args(argv):
     ns = _build_parser().parse_args(argv)
     if ns.subcommand == "supervise":
         return ns.subcommand, _supervisor_config(ns)
+    if ns.subcommand == "run":
+        return ns.subcommand, _runner_config(ns)
     return ns.subcommand, _control_plane_config(ns)
