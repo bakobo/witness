@@ -36,3 +36,31 @@ def test_serve_delegates_to_waitress(monkeypatch):
     server_mod.serve(sentinel, "1.2.3.4", 9)
 
     assert calls == {"app": sentinel, "host": "1.2.3.4", "port": 9}
+
+
+def test_main_dispatches_supervise_and_returns_its_exit_code(monkeypatch):
+    from witness import supervisor as supervisor_mod
+
+    seen = {}
+
+    class FakeSupervisor:
+        def __init__(self, specs):
+            seen["specs"] = specs
+
+        def install_signal_handlers(self):
+            seen["handlers"] = True
+
+        def run(self):
+            return 4
+
+    monkeypatch.setattr(supervisor_mod, "Supervisor", FakeSupervisor)
+
+    assert cli.main(["supervise", "--essential", "kli witness start"]) == 4
+    assert seen["handlers"] is True
+    assert seen["specs"][0].argv == ("kli", "witness", "start")
+
+
+def test_main_returns_zero_for_the_control_plane(monkeypatch):
+    monkeypatch.setattr(server_mod, "serve", lambda app, host, port: None)
+
+    assert cli.main(["control-plane", "--name", "w", "--port", "5621"]) == 0

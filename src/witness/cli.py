@@ -1,19 +1,26 @@
 """The ``witness`` command-line entry point.
 
-Wires the ``control-plane`` subcommand: parse arguments, build the read-only reader and the
-falcon app over it, then serve. Serving is delegated to :mod:`witness.server` (a mockable seam).
+Wires two subcommands. ``control-plane`` parses arguments, builds the read-only reader and the
+falcon app over it, then serves; serving is delegated to :mod:`witness.server` (a mockable seam).
+``supervise`` runs the witness runner and the control plane together inside one container
+(@a24p3kbw) and returns the exit code the container should carry.
 """
 
 from __future__ import annotations
 
-from . import config, server
+from . import config, server, supervisor
 from .app import make_app
 from .reader import WitnessReader
 
 
-def main(argv=None):
-    """Parse arguments, build the reader and app, and serve the control plane."""
-    _subcommand, cfg = config.parse_args(argv)
+def main(argv=None) -> int:
+    """Dispatch the requested subcommand and return its process exit code."""
+    subcommand, cfg = config.parse_args(argv)
+    if subcommand == "supervise":
+        sup = supervisor.Supervisor(cfg.specs)
+        sup.install_signal_handlers()
+        return sup.run()
     reader = WitnessReader(cfg)
     app = make_app(reader)
     server.serve(app, cfg.host, cfg.port)
+    return 0

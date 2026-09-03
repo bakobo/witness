@@ -56,3 +56,40 @@ def test_in_range_port_boundaries_are_accepted():
     _sub, high = config.parse_args(["control-plane", "--name", "w", "--port", "65535"])
     assert low.port == 1
     assert high.port == 65535
+
+
+def test_parses_the_supervise_subcommand():
+    subcommand, cfg = config.parse_args(
+        [
+            "supervise",
+            "--essential", "kli witness start --name testwit",
+            "--auxiliary", "witness control-plane --name testwit --port 5621",
+        ]
+    )
+    assert subcommand == "supervise"
+    assert [spec.name for spec in cfg.specs] == ["essential", "auxiliary-1"]
+    assert cfg.specs[0].argv == ("kli", "witness", "start", "--name", "testwit")
+    assert cfg.specs[0].essential is True
+    assert cfg.specs[1].essential is False
+
+
+def test_supervise_accepts_repeated_auxiliaries():
+    _subcommand, cfg = config.parse_args(
+        ["supervise", "--essential", "a", "--auxiliary", "b", "--auxiliary", "c"]
+    )
+    assert [spec.name for spec in cfg.specs] == ["essential", "auxiliary-1", "auxiliary-2"]
+
+
+def test_supervise_without_auxiliaries_is_allowed():
+    _subcommand, cfg = config.parse_args(["supervise", "--essential", "a"])
+    assert len(cfg.specs) == 1
+
+
+def test_supervise_missing_essential_fails_closed():
+    with pytest.raises(InvalidArguments):
+        config.parse_args(["supervise", "--auxiliary", "b"])
+
+
+def test_supervise_blank_command_fails_closed():
+    with pytest.raises(InvalidArguments):
+        config.parse_args(["supervise", "--essential", "   "])
