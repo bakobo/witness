@@ -16,7 +16,7 @@ jobs:
       # `http.https://github.com/.extraheader` carrying the repo-scoped GITHUB_TOKEN, and that
       # header beats the credentials the insteadOf rewrite below embeds in the URL — so every
       # github.com fetch authenticates as a token that cannot see heti ("Repository not found").
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
@@ -25,7 +25,7 @@ jobs:
       # client-id is a public identifier, not a credential; only the private key is secret.
       - name: Mint a token for private intra-org dependencies
         id: dep-reader
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: Iv23liAQRlNEpCyR1RXt
           private-key: ${{ secrets.DEP_READER_PRIVATE_KEY }}
@@ -47,7 +47,7 @@ jobs:
         run: git ls-remote ssh://git@github.com/bakobo/heti HEAD > /dev/null
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           python-version: "3.14"
           enable-cache: true
