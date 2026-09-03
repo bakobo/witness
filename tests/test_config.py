@@ -93,3 +93,24 @@ def test_supervise_missing_essential_fails_closed():
 def test_supervise_blank_command_fails_closed():
     with pytest.raises(InvalidArguments):
         config.parse_args(["supervise", "--essential", "   "])
+
+
+def test_parses_the_run_subcommand_with_keripy_port_defaults():
+    subcommand, cfg = config.parse_args(["run", "--name", "wit"])
+    assert subcommand == "run"
+    # kli's argparse defaults, not runWitness()'s signature, which has these reversed.
+    assert (cfg.http_port, cfg.tcp_port) == (5631, 5632)
+    assert cfg.alias == "wit", "alias defaults to name rather than to keripy's literal 'witness'"
+
+
+def test_run_accepts_an_explicit_alias_and_ports():
+    _subcommand, cfg = config.parse_args(
+        ["run", "--name", "w", "--alias", "other", "--http", "1", "--tcp", "2"]
+    )
+    assert (cfg.alias, cfg.http_port, cfg.tcp_port) == ("other", 1, 2)
+
+
+@pytest.mark.parametrize("flag", ["--http", "--tcp"])
+def test_run_rejects_an_out_of_range_port(flag):
+    with pytest.raises(InvalidArguments):
+        config.parse_args(["run", "--name", "w", flag, "70000"])
