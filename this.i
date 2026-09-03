@@ -94,6 +94,63 @@ Operator layer over a stock keripy witness = goal:
         loop. Rejected requiring stock `kli witness start` (leaves no seam for control) and forking
         keripy to embed control (upstream drift). Accepted tradeoff: operators adopt our entrypoint
         instead of kli.
+      children:
+
+        In-loop telemetry publishes to a segment the control plane maps read-only = decision:
+          id: vxt7feoi
+          why: >
+            Two signals are worth having and neither is reachable from outside the process: loop
+            lag, which infra named its highest-value alert because it measures the harm directly,
+            and per-doer timings, which is ~2x3n — witnesses have wedged in production, black-box
+            probing says only THAT the loop stalled, and naming the doer is what a fix or an
+            upstream report needs. Rejected hio's Boss/Crew multidoing first, per reuse-before-build
+            and ~5gsx: Bosser spawns Crewer CHILD PROCESSES that talk UXD memos, which is the right
+            shape for sending commands INTO the loop and the wrong one here — it would make the
+            control plane a child of the witness, require it to run a Doist instead of waitress, and
+            put socket servicing on the loop every pass. Rejected writing telemetry into keripy's
+            own LMDB: that adds write churn to the witness's store at loop frequency, against a
+            100 MB map ceiling. Chose a fixed-size mmap segment with a seqlock: the writer stores
+            into already-mapped memory with no syscall and no allocation of consequence, and a torn
+            read is detected rather than believed. The pleasing part is that the kernel-enforced
+            read-only mapping @a24p3kbw could NOT have for LMDB — because LMDB needs a writable
+            lock file — is available here, since a purpose-built telemetry segment has no lock
+            protocol at all. Accepted tradeoff: a second, bespoke IPC surface to version, and the
+            witness process now contains Bakobo code on its hot path.
+          children:
+
+            In-loop code publishes and never computes  and a test freezes that = constraint:
+              id: e3uji3mv
+              why: >
+                The whole argument for the separate-process control plane was that it cannot stall
+                the witness BY CONSTRUCTION (@c7v3kp, @k3p7wr). A doer on the Doist gives that up
+                and replaces it with a matter of care, which is the position this repo spent a year
+                avoiding. The containment is that the in-loop surface stays frozen at publishing:
+                no I/O, no syscalls, no LMDB, no imports at call time, no unbounded iteration, and
+                no branching on anything a remote party controls. Enforced by a test that parses
+                the in-loop module's AST and fails on any call outside an allowlist, because the
+                failure mode is not one bad commit — it is "just one more small doer", repeated,
+                until the process is in-process by accretion without anyone deciding to. A note in
+                a docstring would not have stopped that; a red test does. Accepted tradeoff: the
+                allowlist has to be widened deliberately, in a commit that says why, which is
+                exactly the friction being bought.
+
+            Per-doer timings wrap deeds rather than patch hio = decision:
+              id: vpu373to
+              why: >
+                Doist.enter() returns the deeds deque of (dog, retyme, doer) triples, so overriding
+                only enter() and replacing each dog with a transparent timing generator leaves every
+                doer object untouched — identity, .tock, .done, .opts, .temp — and reproduces none
+                of upstream's scheduling logic, so the drift surface against a keripy or hio bump is
+                three lines. Rejected subclassing Doist.recur (copies ~40 lines of upstream that
+                will drift) and rejected wrapping the doer OBJECTS (hio both reads and writes
+                doer.done, including via doer.__func__ for bound methods, so a proxy has to be
+                perfect in two directions). Verified transparent on Python 3.14: send() passes the
+                yielded tock through, close() returns the inner generator's value — which is what
+                Doist.exit assigns to doer.done — and StopIteration.value propagates. The forensic
+                payload is a "currently executing doer" slot stored BEFORE each send: when the loop
+                wedges, that field already names the culprit, which a duration-only scheme records
+                too late to be useful. Accepted tradeoff: one extra generator frame per doer per
+                pass, and a wrapper whose correctness the witness now depends on.
 
     keripy stays an unforked upstream-tracking dependency = decision:
       id: w7c4mz
