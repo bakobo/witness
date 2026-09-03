@@ -11,6 +11,7 @@ import argparse
 from dataclasses import dataclass
 
 from .errors import InvalidArguments
+from .supervisor import ProcessSpec
 
 _MIN_PORT = 1
 _MAX_PORT = 65535
@@ -25,6 +26,13 @@ class ControlPlaneConfig:
     port: int
     base: str = ""
     head_dir_path: str | None = None
+
+
+@dataclass(frozen=True)
+class SupervisorConfig:
+    """Resolved configuration for the in-image supervisor: the processes it runs, in order."""
+
+    specs: tuple[ProcessSpec, ...]
 
 
 class _RaisingParser(argparse.ArgumentParser):
@@ -45,21 +53,50 @@ def _build_parser() -> _RaisingParser:
     )
     cp.add_argument("--host", default="127.0.0.1", help="The host/interface to bind.")
     cp.add_argument("--port", required=True, type=int, help="The TCP port to bind.")
+    sup = sub.add_parser(
+        "supervise", help="Run the witness runner and the control plane in one container."
+    )
+    # Commands are opaque strings rather than structured flags so the image supplies them as CMD
+    # arguments, and so the runner can move from `kli witness start` to `witness run` (@n5r2vq)
+    # without a code change here.
+    sup.add_argument(
+        "--essential",
+        required=True,
+        help="The command whose exit ends the container (the witness runner).",
+    )
+    sup.add_argument(
+        "--auxiliary",
+        action="append",
+        default=[],
+        help="A command that is restarted if it exits, never taking the witness down. Repeatable.",
+    )
     return parser
 
 
-def parse_args(argv):
-    """Parse ``argv`` into ``(subcommand, ControlPlaneConfig)`` or raise InvalidArguments."""
-    ns = _build_parser().parse_args(argv)
+def _control_plane_config(ns) -> ControlPlaneConfig:
     if not _MIN_PORT <= ns.port <= _MAX_PORT:
         raise InvalidArguments(
             f"The --port value must be between {_MIN_PORT} and {_MAX_PORT}, but was {ns.port}."
         )
-    config = ControlPlaneConfig(
+    return ControlPlaneConfig(
         name=ns.name,
         host=ns.host,
         port=ns.port,
         base=ns.base,
         head_dir_path=ns.head_dir_path,
     )
-    return ns.subcommand, config
+
+
+def _supervisor_config(ns) -> SupervisorConfig:
+    specs = [ProcessSpec.from_command("essential", ns.essential, essential=True)]
+    for index, command in enumerate(ns.auxiliary, start=1):
+        specs.append(ProcessSpec.from_command(f"auxiliary-{index}", command, essential=False))
+    return SupervisorConfig(specs=tuple(specs))
+
+
+def parse_args(argv):
+    """Parse ``argv`` into ``(subcommand, config)`` or raise InvalidArguments."""
+    ns = _build_parser().parse_args(argv)
+    if ns.subcommand == "supervise":
+        return ns.subcommand, _supervisor_config(ns)
+    return ns.subcommand, _control_plane_config(ns)
