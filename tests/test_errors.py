@@ -26,6 +26,8 @@ ALL = [
     errors.TelemetryNotConfigured,
     errors.RunnerNotRunning,
     errors.ControllerUnknown,
+    errors.MigrationRequired,
+    errors.DatabaseTooNew,
 ]
 
 # sorter . descriptor . at least one sub-descriptor . disposition
@@ -103,6 +105,8 @@ def test_an_envelope_omits_correlation_members_it_was_not_given():
         (errors.TelemetryNotConfigured, 501),
         (errors.RunnerNotRunning, 503),
         (errors.ControllerUnknown, 404),
+        (errors.MigrationRequired, 500),
+        (errors.DatabaseTooNew, 500),
     ],
 )
 def test_the_status_follows_the_codes_prefix(kind, status):
@@ -148,3 +152,11 @@ def test_situational_values_are_carried_as_args_for_clients_that_render_their_ow
 def test_args_is_omitted_when_an_error_has_no_situational_values():
     """An empty list in the envelope is noise; RFC 9457 members are optional for a reason."""
     assert "args" not in errors.DbUnavailable("Nothing to say.").problem()
+
+
+def test_an_upgrade_that_needs_an_operator_is_never_reported_as_retryable():
+    """~7hrf. Both upgrade refusals are permanent and need a person: one needs `kli migrate run`,
+    the other needs a restore. Marked retryable — as they were, hidden behind DbUnavailable — an
+    alert backs off and waits forever for a condition that will never clear on its own."""
+    assert errors.MigrationRequired.retryable is False
+    assert errors.DatabaseTooNew.retryable is False

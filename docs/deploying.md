@@ -70,4 +70,28 @@ That makes it a 300-second sliding window that drains on its own once a flood st
 
 ## Upgrading
 
-The image carries the keripy pin, so an upgrade is a digest change and a container restart over the same volume. Two things are not yet proven and should be before the first one that matters: bringing a new image up on an older image's LMDB without re-incepting, and whether a `kli migrate run` step is ever needed between pins. Neither has been exercised here.
+An upgrade is a digest change and a container replacement over the same volume. What happens next depends entirely on whether the new image's keripy agrees with the version recorded in the database, so there are three cases and they are not symmetric.
+
+**Same keripy pin — the ordinary case.** Replace the container, keep the volume. The witness keeps its AID, its KEL and every receipt, and goes on witnessing. This is exercised end to end by `tests/test_image_upgrade.py`, which starts a container, gets a controller's inception accepted, replaces the container entirely, and then checks both that the state survived *and* that the new container still accepts a further event — the second being the part that separates "the data is on disk" from "the witness works".
+
+**A keripy pin that moves forward past a migration.** keripy records a version in the database and refuses to open one that is behind the library, so the witness will not start. The control plane reports `e.self.config.migration.f` — permanent, not retryable, because no amount of waiting clears it:
+
+```
+docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
+    ghcr.io/bakobo/witness@sha256:<new-digest> migrate run --name witness
+```
+
+Then start the container. `kli migrate list` shows what is outstanding and `kli migrate show` what has run.
+
+**Going backwards — which mostly does not work.** Once a migration has run, the previous image cannot be deployed on that volume: keripy raises rather than opening it, and the control plane reports `e.self.config.rollback.f`. This is correct behaviour — the alternative is a newer database being read by code that does not understand it — but it makes an upgrade across a migration a **one-way door**, and infra's rollback plan cannot be "redeploy the previous digest".
+
+So: **take a volume backup before any upgrade that changes the keripy pin**, and treat restoring it as the rollback path. Within a pin, rollback is just redeploying the previous digest and is free.
+
+```
+docker run --rm -v witness-data:/usr/local/var/keri -v "$PWD":/backup alpine \
+    tar czf /backup/witness-$(date +%F).tar.gz -C /usr/local/var/keri .
+```
+
+Stop the container first. LMDB is crash-safe, so a copy taken while the witness is running is *recoverable* rather than corrupt, but it may be missing the last transactions — and for a witness, a missing receipt is a receipt a controller believes it has.
+
+**Not yet proven:** no upgrade across an actual migration has been rehearsed, because the pin has not moved since this repo started building images. The mechanism above is verified — the version check, both refusals, and the same-pin replacement all have tests — but the migration itself has only been read, not run. Rehearse it in sandbox before the first real pin bump.

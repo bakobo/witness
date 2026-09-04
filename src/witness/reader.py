@@ -18,6 +18,7 @@ import os
 import time
 
 import keri
+from keri import kering
 from keri.core import coring
 from keri.db import basing
 
@@ -26,8 +27,10 @@ import witness as _witness_package
 from . import vitals
 from .errors import (
     ControllerUnknown,
+    DatabaseTooNew,
     DbUnavailable,
     ForeignKeystore,
+    MigrationRequired,
     TelemetryNotConfigured,
     WitnessError,
     WitnessNotIncepted,
@@ -142,29 +145,32 @@ class WitnessReader:
                 "The witness database was not found at the configured location; the witness may "
                 "not be running yet."
             )
+        # Opened in two steps deliberately. `Baser(reopen=True, readonly=True)` looks correct and
+        # silently opens the environment read-WRITE: LMDBer.__init__ consumes `readonly` and sets
+        # self.readonly, then Filer.__init__ calls reopen() without it, and LMDBer.reopen's
+        # `readonly=False` default overwrites what was just set — its `if readonly is not None`
+        # guard can never be False. Passing the flag to reopen() directly is the only way it
+        # reaches lmdb.open. @k3p7wr's "physically cannot corrupt" is a property of the
+        # environment, not of our restraint, so it has to be real; ~5s3e is the same defect seen
+        # from the other side.
+        rdb = basing.Baser(
+            name=self._config.name,
+            base=self._config.base,
+            temp=False,
+            headDirPath=self._config.head_dir_path,
+            reopen=False,
+        )
         try:
-            # Opened in two steps deliberately. `Baser(reopen=True, readonly=True)` looks correct
-            # and silently opens the environment read-WRITE: LMDBer.__init__ consumes `readonly`
-            # and sets self.readonly, then Filer.__init__ calls reopen() without it, and
-            # LMDBer.reopen's `readonly=False` default overwrites what was just set — its
-            # `if readonly is not None` guard can never be False. Passing the flag to reopen()
-            # directly is the only way it reaches lmdb.open. @k3p7wr's "physically cannot corrupt"
-            # is a property of the environment, not of our restraint, so it has to be real; ~5s3e
-            # is the same defect seen from the other side.
-            rdb = basing.Baser(
-                name=self._config.name,
-                base=self._config.base,
-                temp=False,
-                headDirPath=self._config.head_dir_path,
-                reopen=False,
-            )
             rdb.reopen(readonly=True)
-            return rdb
         except Exception as exc:
-            raise DbUnavailable(
-                "The witness database could not be opened for reading; the witness may not be "
-                "running yet."
-            ) from exc
+            # Close before re-raising. keripy validates the schema AFTER lmdb.open has succeeded,
+            # so an environment we never closed stays registered in py-lmdb's per-process table
+            # and every later open fails with "already open in this process" instead of the real
+            # reason. The control plane opens per request, so without this the true cause was
+            # visible only in the very first request anyone made (~7hrf).
+            rdb.close()
+            raise _classify_open_failure(exc) from exc
+        return rdb
 
     def _telemetry(self):
         """The telemetry segment reader, or None when this control plane serves no telemetry."""
@@ -321,6 +327,32 @@ class WitnessReader:
             return {"aid": hab.hid, "alias": hab.name}
         finally:
             rdb.close()
+
+
+def _classify_open_failure(exc):
+    """Turn keripy's open-time refusal into an error that names the operator's next move.
+
+    keripy distinguishes the two upgrade directions by exception TYPE, which is what this matches
+    on rather than message text: ``DatabaseError`` from ``Baser.reload`` when the database is
+    behind the library and migrations are outstanding, and ``ConfigurationError`` when it is
+    ahead. tests/test_keripy_contract.py pins both, so an upstream change that reshuffles them
+    fails loudly here rather than silently collapsing back to "the witness may not be running".
+    """
+    if isinstance(exc, kering.ConfigurationError):
+        return DatabaseTooNew(
+            "This witness database was written by a newer keripy than this build carries, so it "
+            "cannot be opened. Deploy the newer image again, or roll the volume back by "
+            "restoring the backup taken before the upgrade."
+        )
+    if isinstance(exc, kering.DatabaseError):
+        return MigrationRequired(
+            "This witness database is behind the keripy this build carries and will not open "
+            "until its migrations have run. Run `kli migrate run --name <keystore>` against the "
+            "volume, then start the witness again."
+        )
+    return DbUnavailable(
+        "The witness database could not be opened for reading; the witness may not be running yet."
+    )
 
 
 def _key_states(rdb):

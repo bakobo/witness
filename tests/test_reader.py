@@ -13,6 +13,8 @@ from witness import telemetry
 from witness.config import ControlPlaneConfig
 from witness.errors import (
     ControllerUnknown,
+    DatabaseTooNew,
+    MigrationRequired,
     TelemetryNotConfigured,
     DbUnavailable,
     ForeignKeystore,
@@ -394,3 +396,69 @@ def test_a_keystore_with_no_identities_at_all_is_pending_not_foreign(tmp_path):
 
     assert caught.value.retryable is True
     assert caught.value.status == 409
+
+
+# ------------------------------------------------------------------------------------------
+# Upgrading across keripy pins (~7hrf)
+# ------------------------------------------------------------------------------------------
+
+
+def _db_at_version(tmp_path, name, version):
+    """A witness database whose recorded keripy version has been moved, as a pin bump moves it."""
+    head = str(tmp_path / name)
+    hby = habbing.Habery(
+        name=name, base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    hby.makeHab(name="w", transferable=False)
+    hby.close()
+    writable = basing.Baser(name=name, base="", temp=False, headDirPath=head, reopen=False)
+    writable.reopen(readonly=False)
+    writable.version = version
+    writable.close()
+    return ControlPlaneConfig(name=name, host="127.0.0.1", port=1, base="", head_dir_path=head)
+
+
+def test_a_database_awaiting_migration_says_so_and_says_it_is_permanent(tmp_path):
+    """~7hrf. Bumping the keripy pin forward leaves the volume behind the library, and keripy
+    then refuses to open it at all. Reported as "the witness may not be running yet" — which was
+    both wrong and RETRYABLE — an operator or an alert would back off and wait forever for a
+    condition that only `kli migrate run` clears."""
+    config = _db_at_version(tmp_path, "behind", "1.1.0")
+
+    with pytest.raises(MigrationRequired) as caught:
+        WitnessReader(config).health()
+
+    assert caught.value.retryable is False
+    assert "migrate" in str(caught.value).lower()
+
+
+def test_a_database_written_by_a_newer_keripy_refuses_to_open(tmp_path):
+    """The rollback direction, and the one nobody writes down: once a migration has run, deploying
+    the previous image on the same volume does not work. keripy refuses rather than corrupting,
+    which is the right behaviour and a hard constraint on how infra rolls back."""
+    config = _db_at_version(tmp_path, "ahead", "9.9.9")
+
+    with pytest.raises(DatabaseTooNew) as caught:
+        WitnessReader(config).health()
+
+    assert caught.value.retryable is False
+    assert "restore" in str(caught.value).lower() or "roll" in str(caught.value).lower()
+
+
+def test_a_failed_open_does_not_leak_the_environment_into_the_next_request(tmp_path):
+    """The failure that made the above hard to diagnose. keripy raises AFTER lmdb.open succeeds,
+    so a Baser we never closed stayed registered in py-lmdb's per-process table; every later
+    request then failed with "already open in this process" instead of the real reason. The
+    control plane opens per request, so the true cause was visible only in the very first one."""
+    config = _db_at_version(tmp_path, "leaky", "1.1.0")
+    reader = WitnessReader(config)
+
+    causes = []
+    for _attempt in range(3):
+        with pytest.raises(MigrationRequired) as caught:
+            reader.health()
+        causes.append(type(caught.value.__cause__).__name__)
+
+    assert causes == ["DatabaseError"] * 3, (
+        f"the reason changed between requests: {causes} — an environment leaked"
+    )
