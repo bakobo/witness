@@ -228,3 +228,51 @@ def test_states_yields_its_key_as_a_one_element_tuple(witnessing_db):
     assert isinstance(keys, tuple)
     assert len(keys) == 1
     assert isinstance(keys[0], str)
+
+
+def _versioned_copy(tmp_path, name, version):
+    """A witness database whose recorded keripy version has been moved, as a pin bump moves it."""
+    from keri.app import habbing
+
+    head = str(tmp_path / name)
+    hby = habbing.Habery(
+        name=name, base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    hby.makeHab(name="w", transferable=False)
+    hby.close()
+    writable = basing.Baser(name=name, base="", temp=False, headDirPath=head, reopen=False)
+    writable.reopen(readonly=False)
+    writable.version = version
+    writable.close()
+    return head
+
+
+def test_a_database_behind_the_library_raises_databaseerror(tmp_path):
+    """reader._classify_open_failure matches on TYPE rather than message text, so the two upgrade
+    directions have to stay distinguishable by type. If keripy ever collapses them, the control
+    plane silently goes back to telling an operator the witness may not be running yet."""
+    from keri import kering
+
+    head = _versioned_copy(tmp_path, "behind", "1.1.0")
+    rdb = basing.Baser(name="behind", base="", temp=False, headDirPath=head, reopen=False)
+    try:
+        with pytest.raises(kering.DatabaseError):
+            rdb.reopen(readonly=True)
+    finally:
+        rdb.close()
+
+
+def test_a_database_ahead_of_the_library_raises_configurationerror(tmp_path):
+    """And the two must stay DIFFERENT types: one is fixed by running a migration, the other only
+    by restoring a backup, and telling an operator to do the wrong one costs a witness."""
+    from keri import kering
+
+    head = _versioned_copy(tmp_path, "ahead", "9.9.9")
+    rdb = basing.Baser(name="ahead", base="", temp=False, headDirPath=head, reopen=False)
+    try:
+        with pytest.raises(kering.ConfigurationError) as caught:
+            rdb.reopen(readonly=True)
+    finally:
+        rdb.close()
+
+    assert not isinstance(caught.value, kering.DatabaseError)

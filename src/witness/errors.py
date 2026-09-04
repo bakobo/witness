@@ -178,3 +178,29 @@ class RunnerNotRunning(WitnessError):
     code = "e.env.runner.unavailable.r"
     title = "The witness process is not running."
     status = 503
+
+
+class MigrationRequired(WitnessError):
+    """The database is behind the keripy this build carries, and keripy will not open it.
+
+    Permanent, and that matters more than it looks: reported as a retryable "the witness may not
+    be running yet", an operator or an alert backs off and waits forever for a condition only
+    ``kli migrate run`` clears. Naming the action is the whole value of this class.
+    """
+
+    code = "e.self.config.migration.f"
+    title = "The witness database needs a keripy migration before it can be used."
+    status = 500
+
+
+class DatabaseTooNew(WitnessError):
+    """The database was written by a newer keripy than this build carries.
+
+    The rollback direction. keripy refuses rather than corrupting, which is correct and is a hard
+    constraint on how a deployment goes backwards: once a migration has run, the previous image
+    cannot be redeployed on the same volume and a restore from backup is the only way back.
+    """
+
+    code = "e.self.config.rollback.f"
+    title = "The witness database was written by a newer keripy than this build."
+    status = 500
