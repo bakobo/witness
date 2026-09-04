@@ -1,5 +1,6 @@
 # GET /info accepts a non-witness keystore: _select_witness_hab only rejects GROUP habs (mid is not None), never transferable ones. Pointed at a controller's keystore it reports that controller's transferable AID as the witness identity (demonstrated 2026-08-06). A witness AID is always non-transferable — a transferable one would need witnesses of its own. Guard with Prefixer(qb64=hr.hid).transferable. Also splits IdentityUnavailable in two: no hab at all (pending, retryable) vs habs present but none is a witness (misconfiguration, final).
 kind: todo
 created: 2026-08-06T23:33Z
+closed: 2026-09-04T00:29Z
 
 - 2026-09-04T00:29Z Closed 2026-09-04: the transferable guard shipped earlier (7f66561), and the remaining ask — splitting the identity failure in two — landed with the taxonomy re-cut. No habs at all is now WitnessNotIncepted (e.state.pending.r, 409, retryable: the witness simply has not incepted). Habs present but none a witness is ForeignKeystore (e.self.config.keystore.f, 500, permanent: the keystore belongs to another controller). Tested both ways in test_reader.py.
