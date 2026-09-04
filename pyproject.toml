@@ -16,6 +16,11 @@ dependencies = [
     "heti @ git+ssh://git@github.com/bakobo/heti@cd83690286c47241460fa6e2dc81a59abb452d16",
     "falcon",
     "waitress",
+    # ops.md §7 mandates the OpenTelemetry SDK in code Bakobo writes, with OTLP on the wire
+    # (@wea6qjmk). Both live only in the control-plane process, which @c7v3kp already establishes
+    # cannot affect the witness, and export stays off unless a collector endpoint is configured.
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-http",
 ]
 
 [project.scripts]
