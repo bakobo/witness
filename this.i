@@ -96,6 +96,38 @@ Operator layer over a stock keripy witness = goal:
         instead of kli.
       children:
 
+        Escrow processing is paced at 1 Hz by substituting one doer at launch = decision:
+          id: zj3h2pzh
+          why: >
+            Measured: a witness sustains at least 131 legitimate events per second with ZERO loop
+            lag, while five unanswerable queries per second cost it 0.077 s of lag. It is not slow;
+            it has one pathology. Legitimate ingest is O(1) per event, but escrow processing is
+            O(escrow depth) per loop PASS, and hio runs that pass 32 times a second — so at a depth
+            of 300 the witness performs ~9,600 escrow-entry visits per second against 131 real
+            events. The escrow outweighs the entire legitimate load by roughly seventy to one, and
+            @znm5uppx addressed only one of the two terms.
+            hio decides the cadence from what a doer YIELDS: Doist.recur reads a falsy yield as
+            "rerun next pass". keripy's WitnessStart.escrowDo ends its loop with a bare `yield`, so
+            it runs every pass. Note that setting the doer's `.tock` does NOT change this, which is
+            the obvious thing to try — escrowDo yields its tock only on its first yield and bare
+            yields forever after, so the attribute delays the first run and nothing else. Verified.
+            So the launcher REPLACES that one entry in WitnessStart.doers with a generator that
+            calls the same four escrow methods and yields an interval. Measured: 32 passes per
+            second becomes 1. Nothing in keripy is edited, no class is patched, and no module is
+            monkeypatched — DoDoer.doers is a settable property read at enter time, and the object
+            was handed to us by setupWitness. Combined with @znm5uppx the escrow term falls by
+            about 160x from stock.
+            Be honest about what this is, because it is a step past @n5r2vq's "add doers": it
+            SUBSTITUTES one, so this repo now decides when keripy's escrows run. The reproduction
+            is six lines and is guarded by a contract test that parses keripy's own escrowDo and
+            fails if the set of calls it makes ever changes — because a fifth escrow added upstream
+            would otherwise be silently dropped, and a witness that stops draining an escrow is a
+            witness that stops receipting some class of event. Rejected setting a class attribute
+            (there is none), rejected forking keripy (@w7c4mz), and rejected leaving it upstream-only
+            (the fix is wanted now and the change is ours to make safely). Accepted tradeoff: an
+            escrowed event resolves up to one interval later — a second, against a 60-second
+            escrow lifetime — and `--escrow-interval 0` restores stock behaviour exactly.
+
         The query-not-found escrow is held for 60 seconds  not 300 = decision:
           id: znm5uppx
           why: >
