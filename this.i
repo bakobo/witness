@@ -218,6 +218,29 @@ Operator layer over a stock keripy witness = goal:
             in /info are readable without auth. These response shapes are frozen external contracts
             once shipped; changing them needs a new node.
 
+        Metrics leave over OTLP  and only when an endpoint is configured = decision:
+          id: wea6qjmk
+          why: >
+            ops.md §7 is explicit — OpenTelemetry SDK inside code Bakobo writes, a Collector on
+            every host, OTLP on the wire, a hosted backend — and infra asked for these signals in
+            those terms. So the control plane exposes escrow depth, loop lag, database usage and
+            process vitals as OTel observable gauges rather than as a scrape endpoint. Rejected
+            hand-rolled Prometheus text, which is what the Provenant witness does and what an
+            earlier draft of this repo's agenda copied from it: it is cheaper and it is against the
+            standard, and adopting another org's answer because it was nearby is how a convention
+            gets laundered. §7's own split also lands the right way round here — the control plane
+            is code Bakobo writes and gets application metrics; the keripy witness is a third-party
+            process we merely run, so what we publish about IT is host metrics and black-box
+            probes, which is exactly what these gauges are. Observable (callback) instruments, not
+            counters we increment, because the values already live in LMDB and the telemetry
+            segment: reading them at export time is one pass rather than a shadow copy that can
+            disagree with the source. Export is off unless an OTLP endpoint is configured, so the
+            image runs with no collector and the witness never blocks on one; a callback that
+            raises is dropped rather than propagated, because a witness that is down is the very
+            thing the metrics are meant to report. Accepted tradeoff: two more packages in the
+            certified closure of a security-sensitive image, justified by their living only in the
+            control-plane process, which @c7v3kp already says cannot affect the witness.
+
         The whole control-plane surface conforms to the org standards  including what shipped = decision:
           id: zzbdxa
           why: >

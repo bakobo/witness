@@ -82,3 +82,15 @@ def test_main_dispatches_run_and_returns_its_exit_code(monkeypatch):
 
     assert cli.main(["run", "--name", "wit"]) == 7
     assert seen["cfg"].name == "wit"
+
+
+def test_the_control_plane_starts_metric_export(monkeypatch):
+    from witness import metrics as metrics_mod
+
+    seen = {}
+    monkeypatch.setattr(metrics_mod, "configure", lambda reader: seen.setdefault("reader", reader))
+    monkeypatch.setattr(server_mod, "serve", lambda app, host, port: None)
+
+    cli.main(["control-plane", "--name", "w", "--port", "5621"])
+
+    assert seen["reader"] is not None
