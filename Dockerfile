@@ -78,9 +78,12 @@ RUN apt-get update \
 # Filer creates its tree with mode 0o1700 owned by the running uid, so both processes must run as
 # the SAME uid: the control plane could not otherwise even read data.mdb, let alone register in
 # lock.mdb, which @a24p3kbw requires it to do.
+# /backup exists and is owned for the same reason: Docker copies a pre-created directory's
+# ownership onto a fresh NAMED volume mounted over it, so `-v backups:/backup` just works. A bind
+# mount from the host does not inherit that, so a host directory must be chowned to 1001 itself.
 RUN useradd --uid 1001 --user-group --create-home --shell /usr/sbin/nologin witness \
-    && mkdir -p /usr/local/var/keri \
-    && chown -R 1001:1001 /usr/local/var/keri
+    && mkdir -p /usr/local/var/keri /backup \
+    && chown -R 1001:1001 /usr/local/var/keri /backup
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}" \

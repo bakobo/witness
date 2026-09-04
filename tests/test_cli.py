@@ -2,6 +2,8 @@
 configured host/port; and server.serve delegates to waitress. Both are exercised without binding
 a socket by monkeypatching the serve seams."""
 
+import json
+
 import falcon
 import waitress
 
@@ -99,3 +101,18 @@ def test_the_control_plane_starts_metric_export(monkeypatch):
 
     assert seen["reader"] is not None
     assert seen["counter"] is not None, "export needs the request counter the app is counting into"
+
+
+def test_main_dispatches_backup_and_prints_the_manifest(monkeypatch, capsys, tmp_path):
+    from witness import backup as backup_mod
+
+    seen = {}
+    monkeypatch.setattr(
+        backup_mod, "back_up",
+        lambda cfg: seen.setdefault("cfg", cfg) and None or {"name": cfg.name, "stores": {}},
+    )
+
+    assert cli.main(["backup", "--name", "wit", "--to", str(tmp_path / "b")]) == 0
+
+    assert seen["cfg"].destination == str(tmp_path / "b")
+    assert json.loads(capsys.readouterr().out)["name"] == "wit"

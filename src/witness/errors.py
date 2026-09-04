@@ -204,3 +204,15 @@ class DatabaseTooNew(WitnessError):
     code = "e.self.config.rollback.f"
     title = "The witness database was written by a newer keripy than this build."
     status = 500
+
+
+class BackupIncomplete(WitnessError):
+    """A backup could not be taken in full, so none was written.
+
+    Permanent and deliberately loud. A backup that quietly omits a store is discovered during a
+    restore, which is the one moment when the alternative is already gone.
+    """
+
+    code = "e.self.resource.backup.f"
+    title = "I could not take a complete backup, so I took none."
+    status = 500

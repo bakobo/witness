@@ -13,6 +13,7 @@ the Doist can be ours. Everything above that line is reproduced rather than rein
 from __future__ import annotations
 
 from keri.app import Configer, Habery, HaberyDoer, Keeper, indirecting
+from keri.core.eventing import Kevery
 from keri.cli.common import setupHby
 
 from . import inloop, telemetry
@@ -77,6 +78,12 @@ class WitnessRunner:
         self._doist_factory = doist_factory
 
     def run(self) -> int:
+        # @znm5uppx. Set before setupWitness builds its Kevery, because keripy reads this off the
+        # CLASS — which is keripy's own configuration idiom (Baser.MapSize has the same shape), so
+        # this configures an unforked dependency rather than patching one. Sustained escrow depth
+        # is the attacker's request rate times this number, and the measured cost is linear in
+        # depth (docs/escrow-load.md).
+        Kevery.TimeoutQNF = self._config.escrow_timeout
         hby = self._open_habery(self._config)
         doers = self._build_doers(self._config, hby)
         writer, telemetry_doer = self._open_telemetry(doers)

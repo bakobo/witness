@@ -74,6 +74,8 @@ Two things follow that the arithmetic alone did not give. **Degradation starts u
 
 So a per-source rate limit is worth having and is not sufficient. A limit loose enough for legitimate traffic — a witness serves KELs to strangers on demand — still admits one source at 1 req/s, and a hundred sources at 0.01 req/s each is invisible to it.
 
+**The image already shortens the window.** `witness run --escrow-timeout` defaults to **60 seconds** where keripy's own default is 300 (`@znm5uppx`), which cuts the sustained depth of a given attack rate fivefold. Raise it if a controller population genuinely queries ahead of its own events; lower it to trade more of that tolerance for less exposure.
+
 **Alert on `witness.loop.lag` above 0.05 s sustained for a minute**, which is where the measurement puts the onset of noticeable delay, and read `witness.escrow.depth{store="query_not_found"}` alongside it: lag rising with a flat escrow depth is something else, such as a slow disk.
 
 `/v1/witness/health` will **not** tell you. It reports `ok` at 0.33 s of lag, because health answers "is this witness working" and a degraded witness is working. That split is deliberate and pinned by a test.
@@ -95,13 +97,37 @@ Then start the container. `kli migrate list` shows what is outstanding and `kli 
 
 **Going backwards — which mostly does not work.** Once a migration has run, the previous image cannot be deployed on that volume: keripy raises rather than opening it, and the control plane reports `e.self.config.rollback.f`. This is correct behaviour — the alternative is a newer database being read by code that does not understand it — but it makes an upgrade across a migration a **one-way door**, and infra's rollback plan cannot be "redeploy the previous digest".
 
-So: **take a volume backup before any upgrade that changes the keripy pin**, and treat restoring it as the rollback path. Within a pin, rollback is just redeploying the previous digest and is free.
+So: **take a backup before any upgrade that changes the keripy pin**, and treat restoring it as the rollback path. Within a pin, rollback is just redeploying the previous digest and is free.
+
+### Backing up
+
+`witness backup` takes a **transactionally consistent** snapshot of every store using LMDB's own `env.copy`, from a read-only environment, **while the witness keeps running and keeps receipting**:
 
 ```
-docker run --rm -v witness-data:/usr/local/var/keri -v "$PWD":/backup alpine \
-    tar czf /backup/witness-$(date +%F).tar.gz -C /usr/local/var/keri .
+docker run -d --name witness -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
+    ghcr.io/bakobo/witness@sha256:<digest>
+docker exec witness witness backup --name witness --to /backup/$(date +%F)
 ```
 
-Stop the container first. LMDB is crash-safe, so a copy taken while the witness is running is *recoverable* rather than corrupt, but it may be missing the last transactions — and for a witness, a missing receipt is a receipt a controller believes it has.
+It prints a manifest, which is also written beside the copy. The manifest records the keripy version the backup was taken with, which is what makes the one-way door above checkable in advance rather than at restore time.
+
+Two things it does that a `tar` of the volume does not. It is consistent rather than merely crash-recoverable — a tar taken while the witness runs may be missing the last transactions, and for a witness a missing receipt is a receipt a controller believes it has. And it copies **every** store: the signing keys live in the keystore, a separate LMDB from the event database, so a backup of `db` alone restores a witness that holds every event it ever receipted and cannot sign a single new one. `witness backup` refuses outright rather than writing a partial backup, because a partial backup is discovered during a restore.
+
+Use a **named volume** for `/backup`. The image pre-creates and owns that directory, so Docker gives a fresh named volume the right ownership; a host bind mount does not inherit that and must be `chown 1001:1001` first.
+
+### Restoring
+
+Restore is a directory copy, which is why the backup mirrors the layout of the keri home. There is deliberately no `witness restore` subcommand: it would write into the witness's own volume, which is the one direction this design avoids, and a copy is something an operator can read before running it.
+
+```
+docker rm -f witness
+docker volume rm witness-data && docker volume create witness-data
+docker run --rm -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
+    --entrypoint sh ghcr.io/bakobo/witness@sha256:<digest> \
+    -c 'cp -a /backup/<date>/. /usr/local/var/keri/'
+docker run -d --name witness -v witness-data:/usr/local/var/keri ... 
+```
+
+Exercised end to end by `tests/test_image_upgrade.py`, which backs up a running witness, **destroys the volume**, restores from the backup alone, and then checks not only that the AID and witnessed key state came back but that the restored witness accepts and receipts a **new** event — the assertion that proves the signing keys came with it.
 
 **Not yet proven:** no upgrade across an actual migration has been rehearsed, because the pin has not moved since this repo started building images. The mechanism above is verified — the version check, both refusals, and the same-pin replacement all have tests — but the migration itself has only been read, not run. Rehearse it in sandbox before the first real pin bump.
