@@ -16,7 +16,7 @@ from keri.app import Configer, Habery, HaberyDoer, Keeper, indirecting
 from keri.core.eventing import Kevery
 from keri.cli.common import setupHby
 
-from . import inloop, telemetry
+from . import escrows, inloop, telemetry
 
 #: hio's own default, and what ``directing.runController`` uses. Named here because the telemetry
 #: doer measures lag against it: a pass that takes longer than a tock is a pass running behind.
@@ -86,6 +86,10 @@ class WitnessRunner:
         Kevery.TimeoutQNF = self._config.escrow_timeout
         hby = self._open_habery(self._config)
         doers = self._build_doers(self._config, hby)
+        # @zj3h2pzh. Substituted after setupWitness has built its doers and before the Doist
+        # enters, which is the only window in which WitnessStart.doers is both complete and not
+        # yet read.
+        escrows.pace(doers, self._config.escrow_interval)
         writer, telemetry_doer = self._open_telemetry(doers)
         doers.append(telemetry_doer)
         doist = self._doist_factory(limit=0.0, tock=TOCK, real=True, doers=doers, sink=writer)

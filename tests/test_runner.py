@@ -269,3 +269,40 @@ def test_the_default_escrow_timeout_is_well_below_keripys():
 
     assert cfg.escrow_timeout == 60
     assert cfg.escrow_timeout < Kevery.TimeoutQNF or Kevery.TimeoutQNF == 60
+
+
+def test_the_escrow_sweep_is_paced_after_the_doers_are_built(config, monkeypatch):
+    """@zj3h2pzh. The substitution has exactly one valid window: after setupWitness has built
+    WitnessStart.doers and before the Doist enters and reads them."""
+    seen = {}
+    monkeypatch.setattr(
+        runner.escrows, "pace",
+        lambda doers, interval: seen.update(doers=list(doers), interval=interval),
+    )
+    FakeDoist.instances.clear()
+    marker = inloop.doing.Doer()
+
+    runner.WitnessRunner(
+        config,
+        open_habery=lambda cfg: None,
+        build_doers=lambda cfg, hby, **_k: [marker],
+        doist_factory=FakeDoist,
+    ).run()
+
+    assert seen["doers"] == [marker], "pacing must see the stock doers, before ours are appended"
+    assert seen["interval"] == config.escrow_interval
+
+
+def test_the_default_escrow_interval_is_far_inside_the_escrow_lifetime():
+    """A sweep interval approaching the escrow timeout would let entries expire unswept, which
+    trades a cost problem for a correctness one."""
+    _subcommand, cfg = config_mod.parse_args(["run", "--name", "w"])
+
+    assert cfg.escrow_interval == 1.0
+    assert cfg.escrow_interval * 10 < cfg.escrow_timeout
+
+
+def test_stock_escrow_behaviour_can_be_restored_from_the_command_line():
+    _subcommand, cfg = config_mod.parse_args(["run", "--name", "w", "--escrow-interval", "0"])
+
+    assert cfg.escrow_interval == 0
