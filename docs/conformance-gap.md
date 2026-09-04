@@ -1,9 +1,15 @@
 # Conformance gap: the shipped surface against the org standards
 
-*Written 2026-08-06. **Nothing here is decided.** It exists so that one question — whether
+> **Status: resolved and implemented, 2026-09-04.** `this.i` `@zzbdxa` decided to re-cut rather
+> than grandfather, and the surface now conforms: paths are `/v1/witness/<noun>`, errors are
+> RFC 9457 problem documents, and the codes follow the taxonomy. `~2lmg` was closed on the way, by
+> splitting the identity failure into a pending witness and a foreign keystore. This document is
+> kept as the evidence behind that decision rather than as a live proposal — the analysis is what
+> `@zzbdxa` was decided against, and deleting it would leave the node's reasoning unsupported.
+
+*Written 2026-08-06, when nothing here was decided. It existed so that one question — whether
 `h5n2rk`'s freeze on `/healthz` and `/info` survives contact with org standards written after
-them — can be adjudicated against evidence rather than against a summary of it. Until that is
-settled in `this.i`, treat every proposal below as a proposal.*
+them — could be adjudicated against evidence rather than against a summary of it.*
 
 The four standards in force, all in `~/code/bakobo/dev/standards/`: `url-design.md` (namespace),
 `http-errors.md` (the HTTP binding), `error-codes.md` (identity and taxonomy), `error-handling.md`

@@ -315,24 +315,46 @@ def test_loop_reports_the_segment_when_one_is_configured(reader, witness_db, tmp
     assert [d["name"] for d in loop["doers"]] == ["OnlyDoer"]
 
 
-def test_health_is_degraded_while_the_loop_sits_inside_a_doer(reader, witness_db, tmp_path):
-    """The wedge detector. A witness stuck inside one doer still opens its database perfectly,
-    which is why the old probe would have stayed green through the failure that has happened."""
-    path = tmp_path / "telemetry"
-    writer = telemetry.SegmentWriter.create(str(path), names=["Stuck"])
-    writer.publish_tick(ticks=7, wall=1.0, lag=0.0)
-    writer.mark_enter(0, now=1.0)  # entered and never left
-    cfg = ControlPlaneConfig(
+def _telemetry_config(witness_db, path):
+    return ControlPlaneConfig(
         name="testwit", host="127.0.0.1", port=1, base="",
         head_dir_path=witness_db["head"], telemetry_path=str(path),
     )
+
+
+def test_health_is_degraded_when_one_doer_has_held_the_loop_too_long(witness_db, tmp_path):
+    """The wedge detector. A witness stuck inside one doer still opens its database perfectly,
+    which is why a database-only probe stays green through the failure that has happened."""
+    path = tmp_path / "telemetry"
+    writer = telemetry.SegmentWriter.create(str(path), names=["Stuck"])
+    writer.publish_tick(ticks=7, wall=1.0, lag=0.0)
+    writer.mark_enter(0, now=1000.0)  # entered and never left
     try:
-        health = WitnessReader(cfg).health()
+        health = WitnessReader(_telemetry_config(witness_db, path)).health(now=1060.0)
     finally:
         writer.close()
 
     assert health["status"] == "degraded"
     assert "Stuck" in health["reason"]
+    assert "60.0s" in health["reason"]
+
+
+def test_a_doer_merely_executing_is_not_a_wedge(witness_db, tmp_path):
+    """Caught against a live witness: `current_doer` is set most of the time on a healthy loop,
+    because sampling catches it inside *some* doer. An earlier version treated any non-null
+    current_doer as a wedge and called a perfectly healthy witness degraded. Duration is what
+    distinguishes the two, so duration is what is measured."""
+    path = tmp_path / "telemetry"
+    writer = telemetry.SegmentWriter.create(str(path), names=["Busy"])
+    writer.publish_tick(ticks=306, wall=1.0, lag=0.0)
+    writer.mark_enter(0, now=1000.0)
+    try:
+        health = WitnessReader(_telemetry_config(witness_db, path)).health(now=1000.002)
+    finally:
+        writer.close()
+
+    assert health["status"] == "ok"
+    assert health["ticks"] == 306
 
 
 def test_health_stays_ok_when_the_witness_publishes_no_telemetry(reader, witness_db, tmp_path):
