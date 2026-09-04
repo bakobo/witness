@@ -250,3 +250,21 @@ def test_home_of_a_store_that_is_not_there_is_none(tmp_path):
     )
 
     assert paths.home(basing.Baser, config) is None
+
+
+def test_the_keystore_is_copied_last_so_a_tear_cannot_be_the_harmful_kind():
+    """env.copy is atomic per ENVIRONMENT and says nothing across two, so three copies are three
+    instants. The unrecoverable direction is a key history referencing a key the keystore lacks —
+    a party that signs perfectly and can never rotate again — which arises only when the database
+    snapshot is newer than the keystore's. Taking the keystore last makes that impossible; the
+    reverse ordering, which this code originally had, makes it possible.
+
+    Pinned as an ordering test because nothing else about the code would look wrong if someone
+    tidied the tuple into alphabetical order.
+    """
+    labels = [label for label, _klas, _required in backup._STORES]
+
+    assert labels[-1] == "keystore", (
+        f"the keystore must be copied last, got {labels}; see the note on _STORES"
+    )
+    assert labels.index("database") < labels.index("keystore")

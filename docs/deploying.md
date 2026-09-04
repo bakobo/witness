@@ -74,7 +74,7 @@ Two things follow that the arithmetic alone did not give. **Degradation starts u
 
 So a per-source rate limit is worth having and is not sufficient. A limit loose enough for legitimate traffic — a witness serves KELs to strangers on demand — still admits one source at 1 req/s, and a hundred sources at 0.01 req/s each is invisible to it.
 
-**The image already shortens the window.** `witness run --escrow-timeout` defaults to **60 seconds** where keripy's own default is 300 (`@znm5uppx`), which cuts the sustained depth of a given attack rate fivefold. Raise it if a controller population genuinely queries ahead of its own events; lower it to trade more of that tolerance for less exposure.
+**The image already shortens the window.** `witness run --escrow-timeout` defaults to **60 seconds** where keripy's own default is 300 (`@znm5uppx`). Measured: at 5 req/s the escrow pins at 301 entries with 0.077 s of lag, against ~1,000 entries and 0.34 s at keripy's default. Raise it if a controller population genuinely queries ahead of its own events; lower it to trade more of that tolerance for less exposure.
 
 **Alert on `witness.loop.lag` above 0.05 s sustained for a minute**, which is where the measurement puts the onset of noticeable delay, and read `witness.escrow.depth{store="query_not_found"}` alongside it: lag rising with a flat escrow depth is something else, such as a slow disk.
 
@@ -112,6 +112,8 @@ docker exec witness witness backup --name witness --to /backup/$(date +%F)
 It prints a manifest, which is also written beside the copy. The manifest records the keripy version the backup was taken with, which is what makes the one-way door above checkable in advance rather than at restore time.
 
 Two things it does that a `tar` of the volume does not. It is consistent rather than merely crash-recoverable — a tar taken while the witness runs may be missing the last transactions, and for a witness a missing receipt is a receipt a controller believes it has. And it copies **every** store: the signing keys live in the keystore, a separate LMDB from the event database, so a backup of `db` alone restores a witness that holds every event it ever receipted and cannot sign a single new one. `witness backup` refuses outright rather than writing a partial backup, because a partial backup is discovered during a restore.
+
+One residual, stated because it is the interesting part. `env.copy` is atomic per LMDB environment and promises nothing across two, so copying three stores gives three instants and a backup taken from a running witness could in principle be internally torn. The harmful direction — a key history referencing a key the keystore does not hold, which signs perfectly and can never rotate — is closed by copying the keystore last, so it is never older than the database. And a witness's keystore is measurably static during operation, because a witness AID is non-transferable and cannot rotate. If a witness ever gains a rotating key, that trade wants revisiting: the stronger guarantee is to quiesce the stores under an exclusive lock, which costs the downtime this design exists to avoid.
 
 Use a **named volume** for `/backup`. The image pre-creates and owns that directory, so Docker gives a fresh named volume the right ownership; a host bind mount does not inherit that and must be `chown 1001:1001` first.
 

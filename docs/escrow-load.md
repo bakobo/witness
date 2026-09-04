@@ -41,6 +41,20 @@ The last column is the number that matters: wall-clock time for a fresh controll
 
 **It degrades; it does not deny.** The witness answered every request throughout, and `/v1/witness/health` reported `ok` the whole time. That is correct behaviour and is why the disposition stays "hardening" rather than "incident".
 
+## Re-measured after shortening the window
+
+`@znm5uppx` lowered `TimeoutQNF` from keripy's 300 s to 60 s. Same image, same host, same 5 req/s offered load for 400 s, differing only in `--escrow-timeout`:
+
+| | `TimeoutQNF=300` | `TimeoutQNF=60` |
+| --- | --- | --- |
+| steady-state escrow depth | ~1,000 and still climbing | **301, flat from t=60 s** |
+| loop lag | 0.34 s | **0.077 s** |
+| rate the attacker actually achieved | 3.46 req/s | 5.0 req/s |
+
+The 60-second run is the model behaving exactly as predicted: depth pins at rate × timeout = 5 × 60 = 300 and stays there for the remaining 340 seconds, while lag settles at a tenth of a tock.
+
+The 300-second run never reached steady state within 400 s, and the reason is worth its own line: **the witness got too slow to accept the attack at the offered rate**, so the attacker achieved only 3.46 req/s instead of 5. Its plateau of ~1,040 is that reduced rate times 300. Normalising both to the same achieved rate, the reduction is the predicted fivefold; the 3.3× seen directly is smaller only because the degraded witness was throttling its own attacker — which is not a comfort, because real traffic is in that same queue.
+
 ## Consequences
 
 **For alerting.** `witness.loop.lag` is the signal, and the measurement gives it a defensible threshold rather than a guess: lag stays at ~0.003 s through 100 entries and passes 0.05 s by 200, which is where a controller first waits noticeably longer. **Alert on `witness.loop.lag` above 0.05 s sustained for a minute**, and use `witness.escrow.depth{store="query_not_found"}` to tell an attack apart from a slow disk — a lag rise with a flat escrow depth is not this.

@@ -18,6 +18,16 @@ A backup of the event database alone restores a witness that holds every event i
 and cannot sign a single new one — dead while looking alive. So this copies every store there is,
 and refuses rather than producing a partial backup, because a partial backup is discovered during
 a restore, which is the moment the alternative is gone.
+
+The residual, stated plainly because it is the interesting part. ``env.copy`` is atomic per
+environment and promises nothing across two, so three copies are three instants and a backup taken
+while the witness writes could in principle be internally torn. The store ORDER below makes the
+only harmful direction of that tear impossible, and a witness's keystore is measurably static
+during normal operation because a witness AID cannot rotate. What is NOT offered is heti's
+stronger guarantee for its lockbox — quiesce the stores, hold an exclusive lock across the whole
+copy — because that costs downtime, and this design's premise is a backup you can take from a
+running witness. If a witness ever gains a rotating key, revisit that trade rather than this
+comment.
 """
 
 from __future__ import annotations
@@ -37,16 +47,32 @@ import witness as _witness_package
 from . import paths
 from .errors import BackupIncomplete, DbUnavailable
 
-#: (label, keripy class, required). Order is copy order; the directory each lands in comes from
-#: the class itself via :func:`witness.paths.kind`, never from a layout assumed here.
+#: (label, keripy class, required). The directory each lands in comes from the class itself via
+#: :func:`witness.paths.kind`, never from a layout assumed here.
+#:
+#: THE ORDER IS LOAD-BEARING, and the keystore is last on purpose. ``env.copy`` is atomic per
+#: ENVIRONMENT and says nothing about two, so copying three stores gives three instants, and a
+#: tear between them is not hypothetical: heti measured a keystore out of step with its own key
+#: history in 17 of 30 trials under concurrent rotation, producing a party that signs perfectly
+#: and can never rotate again — the one loss KERI calls unrecoverable.
+#:
+#: The tear only bites in one direction. The unrecoverable state is a key HISTORY referencing a
+#: key the keystore does not hold, so it arises when the database snapshot is NEWER than the
+#: keystore snapshot. Take the keystore last and that cannot happen: the keystore is at least as
+#: new as the database, and a keystore holding a key no event references yet is inert.
+#:
+#: Measured here, and the reason this is a defence in depth rather than the whole answer: a
+#: witness's own keystore is byte-identical after receipting other controllers' events, because a
+#: witness AID is non-transferable and therefore never rotates. So the window is normally empty.
+#: "Normally empty" is a circumstance; the ordering is a property, and the ordering is free.
 #:
 #: ``required`` is the whole safety property. The keystore and the event database are what a
 #: witness IS; a credential registry is created only by something that uses one, so its absence is
 #: a fact about this deployment rather than a broken backup.
 _STORES = (
-    ("keystore", keeping.Keeper, True),
     ("database", basing.Baser, True),
     ("registry", Reger, False),
+    ("keystore", keeping.Keeper, True),
 )
 
 
