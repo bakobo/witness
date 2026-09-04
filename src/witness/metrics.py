@@ -39,7 +39,7 @@ def _observation(observation_class, value, attributes=None):
     return observation_class(value, attributes or {})
 
 
-def build_callbacks(reader, observation_class):
+def build_callbacks(reader, observation_class, counter=None):
     """The gauge callbacks, as ``(name, unit, description, callback)`` tuples.
 
     Separated from the SDK wiring so the interesting part — what is measured, and that a failing
@@ -85,6 +85,12 @@ def build_callbacks(reader, observation_class):
     def process_cpu():
         yield _observation(observation_class, reader.process()["cpu_seconds"])
 
+    def requests():
+        for (route, status), count in (counter.counts if counter else {}).items():
+            yield _observation(
+                observation_class, count, {"route": route, "status": str(status)}
+            )
+
     return [
         ("witness.up", "1", "Whether the witness is serving.", guarded(up)),
         ("witness.loop.lag", "s", "How far behind its tock the hio loop is running.",
@@ -100,10 +106,13 @@ def build_callbacks(reader, observation_class):
          guarded(process_resident)),
         ("witness.process.cpu_seconds", "s", "CPU consumed by the witness process.",
          guarded(process_cpu)),
+        ("witness.controlplane.requests", "1",
+         "Control-plane requests, by route template and status.", guarded(requests)),
     ]
 
 
-def configure(reader, endpoint=None, interval_ms=_DEFAULT_INTERVAL_MS, environ=None):
+def configure(reader, endpoint=None, interval_ms=_DEFAULT_INTERVAL_MS, environ=None,
+              counter=None):
     """Start OTLP metric export for ``reader``, or return None when no endpoint is configured.
 
     Imported lazily so the SDK is not paid for by a deployment that has no collector, and so a
@@ -129,7 +138,7 @@ def configure(reader, endpoint=None, interval_ms=_DEFAULT_INTERVAL_MS, environ=N
         ],
     )
     meter = provider.get_meter("witness")
-    for name, unit, description, callback in build_callbacks(reader, Observation):
+    for name, unit, description, callback in build_callbacks(reader, Observation, counter):
         meter.create_observable_gauge(
             name=name, unit=unit, description=description, callbacks=[callback]
         )

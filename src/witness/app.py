@@ -25,6 +25,27 @@ _PROBLEM_JSON = "application/problem+json"
 _REQUEST_ID_HEADER = "Bakobo-Request-Id"
 
 
+class RequestCounter:
+    """Counts requests by route and outcome, for the metrics infra asked for.
+
+    Kept here rather than in metrics.py because the count has to be taken where requests actually
+    arrive, and kept as plain in-process state because these are the control plane's OWN numbers —
+    unlike every other series, which reads through to LMDB or the telemetry segment at export time
+    and so needs no shadow copy. Labelled by falcon's URI TEMPLATE, never the raw path: a counter
+    keyed by /v1/witness/controller/<aid> would mint a new series per controller, which is the
+    classic way to make a metrics backend unusable.
+    """
+
+    def __init__(self):
+        self.counts = {}
+
+    def process_response(self, req, resp, resource, req_succeeded):
+        route = req.uri_template or "unmatched"
+        status = int(str(resp.status)[:3])
+        key = (route, status)
+        self.counts[key] = self.counts.get(key, 0) + 1
+
+
 class RequestIdMiddleware:
     """Assign every request a correlation id, echoed in a header and in any error envelope."""
 
@@ -61,9 +82,14 @@ class Endpoint:
                 resp.set_header("Retry-After", "5")
 
 
-def make_app(reader):
-    """Build the falcon application wired to ``reader``."""
-    app = falcon.App(middleware=[RequestIdMiddleware()])
+def make_app(reader, counter=None):
+    """Build the falcon application wired to ``reader``.
+
+    The counter is passed in rather than handed back because falcon's ``App`` uses ``__slots__``
+    and will not carry an attribute for us; the caller that wants the numbers is the same caller
+    that wires up metric export, so it can simply own the object.
+    """
+    app = falcon.App(middleware=[RequestIdMiddleware(), counter or RequestCounter()])
     # falcon serializes resp.media only for media types it has a handler for, so setting the
     # RFC 9457 content type without registering it turns every error into a 415 — the error
     # about the error, which is the least useful response there is.
