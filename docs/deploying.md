@@ -45,7 +45,7 @@ The volume must persist. It holds the keystore, the AID, the KEL and every recei
 
 ## Health and alerting
 
-`GET /v1/witness/health` is the probe. It returns `200 {"status": "ok", "ticks": N}` when the database opens **and** the hio loop is not stuck, and `{"status": "degraded", "reason": "the loop is stuck inside <doer>"}` when it is. A witness whose loop has wedged still opens its database perfectly, so a probe that only checks the database stays green through the failure that has actually happened — this is `ops.md` §7's "prove the service is working, not that a port is open", made specific.
+`GET /v1/witness/health` is the probe. It returns `200 {"status": "ok", "ticks": N}` when the database opens **and** the hio loop is not stuck, and `{"status": "degraded", "reason": "the loop has been inside <doer> for <N>s"}` when one doer has held it past five seconds. Presence of a current doer is NOT a wedge — on a healthy loop a sample catches it inside some doer most of the time — so the check measures duration. A witness whose loop has wedged still opens its database perfectly, so a probe that only checks the database stays green through the failure that has actually happened — this is `ops.md` §7's "prove the service is working, not that a port is open", made specific.
 
 Metrics leave over OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and are silent otherwise. The series worth alerting on:
 

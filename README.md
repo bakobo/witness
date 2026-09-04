@@ -71,7 +71,7 @@ Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated i
 | `/v1/witness/controller` | Every controller whose key state this witness holds. |
 | `/v1/witness/controller/{aid}` | One controller's key state, or `404`. |
 
-Health is worth a sentence. A witness whose loop has wedged still has a perfectly openable database, so a probe that only opens the database stays green through the failure that has actually happened. This one reports `degraded` and names the doer the loop is stuck inside.
+Health is worth a sentence. A witness whose loop has wedged still has a perfectly openable database, so a probe that only opens the database stays green through the failure that has actually happened. This one reports `degraded` and names the doer, but only once that doer has held the loop past five seconds: a sample catching the loop mid-doer is normal, and treating it as a wedge would make the probe a random alarm.
 
 ## Metrics
 
