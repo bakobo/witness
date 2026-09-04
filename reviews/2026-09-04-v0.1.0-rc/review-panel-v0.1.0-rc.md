@@ -9,7 +9,27 @@
 - personas reviewed: SEC, CON, TST, MNT, OPS, DX
 - counts: 28 raw findings, 28 after dedupe, 3 CRITICAL/HIGH recommend-fix blockers
 
-status: untriaged — 3 blocking, 28 total. No ticks filed yet.
+status: triaged 2026-09-04 — 0 blocking. 20 fixed in commit following this review; 8 carried to ticks or accepted with reasons below.
+
+## Triage
+
+**Fixed** (see the commit that follows this directory): OPS-F1, DX-F1, CON-F1, CON-F2, CON-F3,
+CON-F4, MNT-F1, MNT-F2, MNT-F3, MNT-F4, MNT-F5, TST-F1, TST-F4, TST-F5, OPS-F2, OPS-F3, OPS-F4,
+DX-F2, DX-F3, DX-F5, SEC-F4.
+
+**Carried to ticks**: SEC-F2 + TST-F2 → `~3lda` (P3 auth; the read surface ships unauthenticated
+and the only confinement is a publish flag). SEC-F1 → `~4ekl` (measure the query-not-found escrow
+before claiming anything about it, upstream or otherwise). OPS-F5 → `~7hrf` (prove the LMDB
+upgrade path across keripy pins). DX-F4 → `~3tty` (render response schemas for consumers).
+
+**Accepted with a reason, no ticket**: SEC-F3 — `--nopasscode` leaves the signing key unencrypted
+at rest, accepted because an encrypted keystore needs its passcode at every start, which would put
+the passcode on the same host as the volume and protect nothing against host compromise; now
+stated in `docs/deploying.md` where an operator reads it. TST-F3 — the `_free_port()` TOCTOU race
+is inherent to picking an ephemeral port before handing it to a subprocess, the window is a few
+milliseconds, and the test already fails loudly with the child's output if the bind loses.
+
+Nothing was refuted by the verify pass, and nothing here was dismissed as wrong.
 
 ## Executive summary
 

@@ -22,7 +22,7 @@ docker run -d --name witness \
     ghcr.io/bakobo/witness@sha256:<digest>
 ```
 
-A keystore must exist in the volume before first start:
+A keystore must exist in the volume before first start. `--nopasscode` leaves the witness's signing key **unencrypted at rest in the volume**, which is accepted deliberately: an encrypted keystore needs its passcode supplied at every start, so the passcode would have to live on the same host as the volume and would protect nothing against the threat that matters (host compromise). What does protect it is the volume's own access control. Do not copy the volume anywhere the host's uid boundary does not follow.
 
 ```
 docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
