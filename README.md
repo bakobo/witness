@@ -13,7 +13,7 @@ The design and its rationale live in `this.i` (the intent tree, the source of tr
 
 - Python ≥ 3.14 (keripy's floor)
 - [`uv`](https://docs.astral.sh/uv/)
-- Access to `bakobo/heti`, which is a private dependency
+- An SSH key with access to `bakobo/heti`, which is a private dependency pinned by SSH URL. `uv sync` fetches it over SSH, so `ssh -T git@github.com` must succeed before a fresh clone will resolve. CI uses a GitHub App token instead; the container build takes one from `gh auth token`.
 
 ## From a fresh clone to passing tests
 

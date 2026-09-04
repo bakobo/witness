@@ -44,6 +44,17 @@ class WitnessError(Exception):
         super().__init_subclass__(**kwargs)
         cls.retryable = cls.code.endswith(".r")
 
+    def __init__(self, detail, *, args=None):
+        """``detail`` describes this occurrence; ``args`` are its situational values.
+
+        http-errors.md defines ``args`` as "the situational values, positional, for clients that
+        render their own text" — the point being that a client can localise or reformat without
+        parsing the English out of ``detail``. Keyword-only and separate from ``Exception.args``,
+        which already means something else and would collide.
+        """
+        super().__init__(detail)
+        self.problem_args = list(args) if args else []
+
     def problem(self, instance=None, request_id=None) -> dict:
         """Render this error as an RFC 9457 problem document."""
         document = {
@@ -52,6 +63,8 @@ class WitnessError(Exception):
             "title": self.title,
             "detail": str(self),
         }
+        if self.problem_args:
+            document["args"] = self.problem_args
         if instance is not None:
             document["instance"] = instance
         if request_id is not None:
@@ -139,3 +152,29 @@ class ControllerUnknown(WitnessError):
     code = "e.state.missing.controller.f"
     title = "I hold no key state for that controller."
     status = 404
+
+
+class TelemetryNotConfigured(WitnessError):
+    """This control plane was not told where the witness publishes telemetry.
+
+    ``e.feature.`` rather than ``e.env.``: nothing is broken and nothing is missing at the other
+    end — this deployment simply does not offer the capability, which is what a witness started by
+    stock ``kli witness start`` looks like. Reporting it as a database failure, which an earlier
+    version did, sends an operator to inspect a database that is perfectly healthy.
+    """
+
+    code = "e.feature.unsupported.telemetry.f"
+    title = "This witness does not publish loop telemetry."
+    status = 501
+
+
+class RunnerNotRunning(WitnessError):
+    """The witness runner process is not running, so its vitals cannot be read.
+
+    Retryable because the supervisor restarts a crashed control plane and the orchestrator
+    restarts a crashed witness, so the honest answer is "ask again" rather than "this failed".
+    """
+
+    code = "e.env.runner.unavailable.r"
+    title = "The witness process is not running."
+    status = 503

@@ -213,3 +213,18 @@ def test_a_fully_witnessed_event_carries_every_witnesss_signature(fully_witnesse
         rdb.close()
     assert len(wigers) == fully_witnessed_db["toad"]
     assert sorted(w.index for w in wigers) == [0, 1]
+
+
+def test_states_yields_its_key_as_a_one_element_tuple(witnessing_db):
+    """reader._key_states indexes keys[0], and a bare-string key would silently yield whole
+    tuples where AIDs are expected — every controller then reported as an unusable value rather
+    than as an error. @w7c4mz pairs riding a semi-internal accessor with a test that says so."""
+    rdb = _reopen(witnessing_db)
+    try:
+        keys, _state = next(iter(rdb.states.getTopItemIter()))
+    finally:
+        rdb.close()
+
+    assert isinstance(keys, tuple)
+    assert len(keys) == 1
+    assert isinstance(keys[0], str)

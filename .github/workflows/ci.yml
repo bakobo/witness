@@ -51,7 +51,9 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
+      # --frozen fails rather than silently updating uv.lock, so a dependency that drifted from
+      # the lockfile is a red build instead of an image nobody can reproduce.
       - name: Sync dependencies
-        run: uv sync
+        run: uv sync --frozen
       - name: Run tests (100% branch coverage gate)
         run: uv run pytest

@@ -13,6 +13,7 @@ from witness import telemetry
 from witness.config import ControlPlaneConfig
 from witness.errors import (
     ControllerUnknown,
+    TelemetryNotConfigured,
     DbUnavailable,
     ForeignKeystore,
     WitnessNotIncepted,
@@ -292,9 +293,14 @@ def test_an_unwitnessed_aid_is_a_missing_resource_not_a_failure(witnessing_db):
     assert caught.value.retryable is False
 
 
-def test_loop_without_a_configured_segment_says_so_rather_than_guessing(reader):
-    with pytest.raises(DbUnavailable):
+def test_loop_without_a_configured_segment_blames_the_right_component(reader):
+    """DX-F1. This used to raise DbUnavailable, so an operator running --no-telemetry was told
+    "I could not open the witness database" about a database that was open and fine."""
+    with pytest.raises(TelemetryNotConfigured) as caught:
         reader.loop()
+
+    assert caught.value.status == 501
+    assert "database is unaffected" in str(caught.value)
 
 
 def test_loop_reports_the_segment_when_one_is_configured(reader, witness_db, tmp_path):

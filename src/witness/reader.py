@@ -28,6 +28,7 @@ from .errors import (
     ControllerUnknown,
     DbUnavailable,
     ForeignKeystore,
+    TelemetryNotConfigured,
     WitnessError,
     WitnessNotIncepted,
 )
@@ -210,8 +211,9 @@ class WitnessReader:
         """The witness's hio loop: how far behind it runs, and where its time goes (@vxt7feoi)."""
         reader = self._telemetry()
         if reader is None:
-            raise DbUnavailable(
-                "This control plane was not told where the witness publishes its telemetry."
+            raise TelemetryNotConfigured(
+                "This control plane was started with --no-telemetry, so there is no loop "
+                "telemetry to report; the witness database is unaffected."
             )
         try:
             return reader.read()
@@ -291,7 +293,8 @@ class WitnessReader:
                         "threshold": state.bt,
                     }
             raise ControllerUnknown(
-                f"This witness holds no key state for {aid}; it may not witness that controller."
+                f"This witness holds no key state for {aid}; it may not witness that controller.",
+                args=[aid],
             )
         finally:
             rdb.close()
@@ -321,6 +324,12 @@ class WitnessReader:
 
 
 def _key_states(rdb):
-    """(aid, key-state-record) for every controller this witness holds state for."""
+    """(aid, key-state-record) for every controller this witness holds state for.
+
+    ``db.states`` is a Komer keyed by AID, and keripy yields its keys as a one-element tuple —
+    verified against the pinned commit, and asserted in tests/test_keripy_contract.py so an
+    upstream change to that shape fails loudly here rather than silently yielding tuples where
+    AIDs are expected.
+    """
     for keys, state in rdb.states.getTopItemIter():
-        yield (keys[0] if isinstance(keys, tuple) else keys), state
+        yield keys[0], state

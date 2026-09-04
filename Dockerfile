@@ -8,6 +8,13 @@
 # runtime layer needs no compiler at all. If you find yourself adding gcc here, you have taken a
 # wrong turn.
 #
+# The base is pinned by DIGEST, not by tag (OPS-F3). `python:3.14-slim-bookworm` is a moving
+# target: two builds of the same commit weeks apart would carry different interpreters and
+# different system libraries, which is the drift @lnk24kwp closes on one side and would leave
+# open on the other. The digest is the multi-arch index, so multi-platform builds still work.
+# To move it deliberately:
+#     docker buildx imagetools inspect python:3.14-slim-bookworm --format '{{.Manifest.Digest}}'
+#
 # Exactly one native library is required: libsodium23. pysodium is a ctypes binding that
 # dlopen()s libsodium.so.23 at import time, so without it `import keri` fails outright. That is
 # the entire native surface.
@@ -16,7 +23,7 @@
 # Builder: resolves the dependency closure into a self-contained venv. All build tooling lives
 # here and none of it reaches the runtime image.
 # ---------------------------------------------------------------------------------------------
-FROM python:3.14-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f AS builder
 
 # git is build tooling: both keripy and heti are pinned as git references, so resolution needs a
 # git client. Confined to this stage, which is the whole point of the split.
@@ -54,7 +61,7 @@ RUN --mount=type=secret,id=gh_token,required=false \
 # ---------------------------------------------------------------------------------------------
 # Runtime: the interpreter, one native library, and the resolved venv. No compiler, no git, no uv.
 # ---------------------------------------------------------------------------------------------
-FROM python:3.14-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f AS runtime
 
 ARG SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.title="bakobo-witness" \
@@ -101,6 +108,15 @@ EXPOSE 5631 5632 5633
 # loosening: inside a container, loopback means "reachable only from this container", which no
 # operator can use. The confinement moves out to the host, where `-p 127.0.0.1:5633:5633` gives
 # the same property @h5n2rk wanted. Publishing it on 0.0.0.0 at the host is the mistake to avoid.
+# An orchestrator otherwise cannot tell "started" from "working", and for this image those differ
+# in the way that matters: a wedged witness has a running process, an open port and an openable
+# database. `degraded` is treated as unhealthy deliberately — that IS the wedge. Uses the
+# interpreter already in the image rather than adding curl to a runtime layer that has one job.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD \
+    python -c "import json,sys,urllib.request; \
+r=urllib.request.urlopen('http://127.0.0.1:5633/v1/witness/health',timeout=4); \
+sys.exit(0 if json.load(r).get('status')=='ok' else 1)"
+
 ENTRYPOINT ["witness", "supervise"]
 CMD ["--essential", "witness run --name witness --alias witness --http 5631 --tcp 5632", \
      "--auxiliary", "witness control-plane --name witness --host 0.0.0.0 --port 5633"]

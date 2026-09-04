@@ -151,7 +151,9 @@ class SegmentWriter:
         self._max[slot] = highest
         self._begin_write()
         pack_into("<i", self._map, self._body + _CURRENT_OFF, _NO_DOER)
-        pack_into("<dd", self._map, self._body + _SLOTS_OFF + slot * 16, elapsed, highest)
+        pack_into(
+            "<dd", self._map, self._body + _SLOTS_OFF + slot * _SLOT.size, elapsed, highest
+        )
         self._end_write()
 
     def close(self):
@@ -165,6 +167,9 @@ class SegmentReader:
     A purpose-built segment has no lock protocol, so the read-only mapping costs nothing.
     """
 
+    #: Test seam, not dead code: a test sets this to make a write land between the reader's two
+    #: sequence samples, which is the only way to exercise the retry path deterministically.
+    #: Always None in production, which is why it reads as unreachable at a glance.
     _on_retry = None
 
     def __init__(self, path):
@@ -219,7 +224,9 @@ class SegmentReader:
         _seq, ticks, wall, lag, since, current = _BODY.unpack_from(self._map, self._body)
         doers = []
         for index in range(self._slots):
-            last, highest = _SLOT.unpack_from(self._map, self._body + _SLOTS_OFF + index * 16)
+            last, highest = _SLOT.unpack_from(
+                self._map, self._body + _SLOTS_OFF + index * _SLOT.size
+            )
             doers.append(
                 {"name": self._names[index], "last_seconds": last, "max_seconds": highest}
             )

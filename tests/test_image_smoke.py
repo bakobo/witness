@@ -254,3 +254,22 @@ def test_the_telemetry_segment_is_not_writable_through_the_reader(witness_contai
     ).stdout
 
     assert "refused" in result, result
+
+
+def test_the_container_reports_itself_healthy_to_the_orchestrator(witness_container):
+    """OPS-F4. Without a HEALTHCHECK an orchestrator cannot tell "started" from "working", and
+    for this image those differ in the way that matters: a wedged witness has a running process,
+    an open port and an openable database."""
+    container, port = witness_container
+    _await_healthz(container, port)
+
+    deadline = time.time() + 90
+    state = None
+    while time.time() < deadline:
+        state = _docker(
+            "inspect", "-f", "{{.State.Health.Status}}", container, check=False
+        ).stdout.strip()
+        if state == "healthy":
+            return
+        time.sleep(2)
+    raise AssertionError(f"container never became healthy (last: {state!r})")

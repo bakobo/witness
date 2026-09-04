@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 
-from .errors import DbUnavailable
+from .errors import RunnerNotRunning
 
 _RUNNER_MARKERS = ("witness run", "kli witness start")
 _CLOCK_TICKS = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
@@ -50,7 +50,7 @@ def runner_vitals(proc="/proc"):
     """CPU, memory and descriptor counts for the running witness."""
     pid = find_runner_pid(proc=proc)
     if pid is None:
-        raise DbUnavailable(
+        raise RunnerNotRunning(
             "The witness runner process is not running, so its vitals cannot be read."
         )
     try:
@@ -62,7 +62,7 @@ def runner_vitals(proc="/proc"):
             )
         descriptors = len(os.listdir(f"{proc}/{pid}/fd"))
     except OSError as exc:
-        raise DbUnavailable(
+        raise RunnerNotRunning(
             "The witness runner process went away while its vitals were being read."
         ) from exc
 
@@ -80,6 +80,6 @@ def runner_vitals(proc="/proc"):
 
 def _kb(value):
     """Parse a `/proc/<pid>/status` "N kB" field into bytes, or None when it is absent."""
-    if value is None:  # pragma: no cover - every Linux kernel reports VmRSS for a live process
+    if value is None:  # a kernel or a container runtime that omits VmRSS
         return None
     return int(value.strip().split()[0]) * 1024

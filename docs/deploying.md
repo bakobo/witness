@@ -6,7 +6,9 @@ Written for `bakobo/infra`, which consumes this repo's image. It states the cont
 
 `ghcr.io/bakobo/witness`, private, published from this repo's CI (`@lypmcw7f`, `@lnk24kwp`). Every build is tagged `sha-<full-commit>`; a release tag adds its `v<major>.<minor>.<patch>`. There is deliberately **no `latest`** — a floating tag is exactly the image-to-pin drift this arrangement exists to close.
 
-**Deploy by digest, never by tag.** The publish workflow prints the digest to its job summary. The image is built here rather than in `infra` because this repo owns the keripy pin: a direct git reference in `pyproject.toml`. Building anywhere else lets the image and the pin drift apart, which is the whole problem containerizing solves.
+**Deploy by digest, never by tag.** The publish workflow prints the digest to its job summary.
+
+Take the digest from the run triggered by the **release tag**, not from the earlier `main` push. Container builds are not bit-reproducible — apt and pip layers carry timestamps — so the tag run rebuilds the same commit into a different digest and moves `sha-<commit>` onto it. Within that one run both tags point at the same image, so the tag run's digest is the one that agrees with `v<x.y.z>`. The image is built here rather than in `infra` because this repo owns the keripy pin: a direct git reference in `pyproject.toml`. Building anywhere else lets the image and the pin drift apart, which is the whole problem containerizing solves.
 
 ## What to run
 

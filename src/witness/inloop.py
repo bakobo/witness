@@ -107,7 +107,7 @@ class TimedDoist(doing.Doist):
 
     def enter(self, doers=None, *, temp=None):
         deeds = super().enter(doers=doers, temp=temp)
-        if self.sink is None:  # pragma: no cover - a Doist built without telemetry
+        if self.sink is None:  # a Doist built without telemetry times nothing
             return deeds
         wrapped = [self._wrap(deed) for deed in deeds]
         deeds.clear()
