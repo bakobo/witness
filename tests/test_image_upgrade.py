@@ -209,3 +209,86 @@ def test_the_database_version_matches_the_keripy_the_image_carries(volume):
 
     assert state["db"] == state["library"]
     assert state["current"] is True
+
+
+def test_a_witness_restored_from_backup_still_witnesses(volume):
+    """The rollback path, exercised rather than assumed (@7b34ohbo).
+
+    @a24p3kbw made an upgrade across a keripy migration a one-way door, so restoring a backup is
+    how a deployment goes backwards. This destroys the volume outright — not a corruption, a
+    deletion — and rebuilds from the backup alone.
+
+    The last assertion is the one with teeth: the restored witness must accept and RECEIPT a new
+    event, which it can only do with its signing keys. A backup of the event database alone would
+    pass every earlier check in this test and fail that one, which is exactly the failure mode
+    worth a test rather than a comment.
+    """
+    name, containers = volume
+    backup_volume = f"{name}-backup"
+    live, restored = f"{name}-live", f"{name}-restored"
+    port_a, port_b = _free_port(), _free_port()
+
+    _docker("volume", "create", backup_volume)
+    try:
+        containers.append(live)
+        _docker(
+            "run", "-d", "--name", live,
+            "-v", f"{name}:{_KERI_HOME}", "-v", f"{backup_volume}:/backup",
+            "-p", f"127.0.0.1:{port_a}:5633", IMAGE,
+        )
+        _await_ready(live, port_a)
+        witness_aid = _get(port_a, "/v1/witness/identity")["aid"]
+        accepted = _submit_inception(live, witness_aid, "0987654321kjihgfedcba", "pre")
+        assert accepted["status"] == 204
+        controller = accepted["controller"]
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                _get(port_a, f"/v1/witness/controller/{controller}")
+                break
+            except urllib.error.HTTPError:
+                time.sleep(0.5)
+        witnessed = _get(port_a, f"/v1/witness/controller/{controller}")
+
+        # Back up WHILE THE WITNESS RUNS — the property env.copy buys over stopping and tarring.
+        result = _docker(
+            "exec", live, "witness", "backup", "--name", "witness", "--to", "/backup/snapshot",
+        )
+        manifest = json.loads(result.stdout[result.stdout.index("{"):])
+        assert manifest["stores"]["keystore"]["present"] is True
+        assert manifest["witness_aid"] == witness_aid
+
+        # Destroy the witness entirely: container and volume both gone.
+        _docker("rm", "-f", live)
+        containers.remove(live)
+        _docker("volume", "rm", "-f", name)
+
+        # Restore is a directory copy, which is why the backup mirrors the keri layout.
+        _docker("volume", "create", name)
+        _docker(
+            "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "-v", f"{backup_volume}:/backup",
+            "--entrypoint", "sh", IMAGE, "-c", f"cp -a /backup/snapshot/. {_KERI_HOME}/",
+        )
+
+        containers.append(restored)
+        _start(name, restored, port_b)
+
+        assert _get(port_b, "/v1/witness/identity")["aid"] == witness_aid
+        assert _get(port_b, f"/v1/witness/controller/{controller}") == witnessed
+
+        after = _submit_inception(restored, witness_aid, "mnopqrstuvw1122334455", "post")
+        assert after["status"] == 204
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                fresh = _get(port_b, f"/v1/witness/controller/{after['controller']}")
+                assert fresh["witnesses"] == [witness_aid]
+                return
+            except urllib.error.HTTPError:
+                time.sleep(0.5)
+        raise AssertionError(
+            "the restored witness accepted no new event — it holds the history but cannot sign, "
+            "which is what a backup missing the keystore looks like"
+        )
+    finally:
+        _docker("volume", "rm", "-f", backup_volume, check=False)

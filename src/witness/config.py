@@ -17,6 +17,9 @@ _MIN_PORT = 1
 _MAX_PORT = 65535
 #: Beside the keystore, so it shares the volume's lifetime and needs no extra mount.
 _DEFAULT_TELEMETRY_PATH = "/usr/local/var/keri/telemetry"
+#: @znm5uppx. keripy holds an unanswerable query for 300s; sustained escrow depth is the
+#: attacker's request rate times this number, and the measured cost is linear in depth.
+_DEFAULT_ESCROW_TIMEOUT = 60
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,18 @@ class RunnerConfig:
     tcp_port: int
     http_port: int
     telemetry_path: str
+    escrow_timeout: int = _DEFAULT_ESCROW_TIMEOUT
+
+
+@dataclass(frozen=True)
+class BackupConfig:
+    """Resolved configuration for ``witness backup``."""
+
+    name: str
+    base: str
+    head_dir_path: str | None
+    destination: str
+    force: bool = False
 
 
 @dataclass(frozen=True)
@@ -98,6 +113,17 @@ def _build_parser() -> _RaisingParser:
         default=[],
         help="A command that is restarted if it exits, never taking the witness down. Repeatable.",
     )
+    bak = sub.add_parser("backup", help="Take a consistent copy of every store, witness running.")
+    bak.add_argument("--name", default="witness", help="The witness keystore/database name.")
+    bak.add_argument("--base", default="", help="The keystore base subdirectory.")
+    bak.add_argument(
+        "--head-dir-path", default=None, help="Keystore head directory (keripy default if omitted)."
+    )
+    bak.add_argument("--to", dest="destination", required=True, help="Where to write the backup.")
+    bak.add_argument(
+        "--force", action="store_true", help="Replace an existing backup at that destination."
+    )
+
     run = sub.add_parser("run", help="Run the keripy witness with in-loop telemetry.")
     run.add_argument("--name", default="witness", help="The witness keystore/database name.")
     run.add_argument("--alias", default=None, help="The hab alias. Defaults to --name.")
@@ -109,6 +135,15 @@ def _build_parser() -> _RaisingParser:
     # runWitness()'s signature, which has the two the other way round.
     run.add_argument("--http", default=5631, type=int, help="Witness HTTP port. Default 5631.")
     run.add_argument("--tcp", default=5632, type=int, help="Witness CESR/TCP port. Default 5632.")
+    run.add_argument(
+        "--escrow-timeout",
+        default=_DEFAULT_ESCROW_TIMEOUT,
+        type=int,
+        help=(
+            "Seconds to hold a query for an AID this witness does not have (@znm5uppx). "
+            f"Default {_DEFAULT_ESCROW_TIMEOUT}; keripy's own default is 300."
+        ),
+    )
     run.add_argument(
         "--telemetry-path",
         default=_DEFAULT_TELEMETRY_PATH,
@@ -136,6 +171,17 @@ def _runner_config(ns) -> RunnerConfig:
         tcp_port=_port(ns.tcp, "--tcp"),
         http_port=_port(ns.http, "--http"),
         telemetry_path=ns.telemetry_path,
+        escrow_timeout=ns.escrow_timeout,
+    )
+
+
+def _backup_config(ns) -> BackupConfig:
+    return BackupConfig(
+        name=ns.name,
+        base=ns.base,
+        head_dir_path=ns.head_dir_path,
+        destination=ns.destination,
+        force=ns.force,
     )
 
 
@@ -168,4 +214,6 @@ def parse_args(argv):
         return ns.subcommand, _supervisor_config(ns)
     if ns.subcommand == "run":
         return ns.subcommand, _runner_config(ns)
+    if ns.subcommand == "backup":
+        return ns.subcommand, _backup_config(ns)
     return ns.subcommand, _control_plane_config(ns)

@@ -57,6 +57,14 @@ witness control-plane --name witness --host 127.0.0.1 --port 5633
 
 Add `--no-telemetry` to the control plane when the witness was started by stock `kli witness start`, which publishes none.
 
+And a witness can be backed up without being stopped:
+
+```sh
+witness backup --name witness --to /backup/2026-09-04
+```
+
+That takes a transactionally consistent snapshot of every store — including the keystore, where the signing keys live — using LMDB's own `env.copy` from a read-only environment. See [`docs/deploying.md`](docs/deploying.md) for the restore procedure, which is a directory copy.
+
 ## The control-plane surface
 
 Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated in this release — see the note below.

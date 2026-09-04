@@ -24,7 +24,7 @@ from keri.db import basing
 
 import witness as _witness_package
 
-from . import vitals
+from . import paths, vitals
 from .errors import (
     ControllerUnknown,
     DatabaseTooNew,
@@ -36,8 +36,6 @@ from .errors import (
     WitnessNotIncepted,
 )
 from .telemetry import SegmentReader
-
-_DB_FILE = "data.mdb"
 
 #: How long a doer must hold the loop before the witness is called degraded.
 #:
@@ -69,39 +67,14 @@ _ESCROWS = {
 }
 
 
-def _db_dir_candidates(config):
-    """The directories keripy could resolve the witness DB to for ``config``, computed without
-    opening or creating anything.
-
-    Mirrors hio's Filer resolution: with an explicit ``head_dir_path`` the DB lives only under
-    that head; with the default (``None``) keripy tries its primary head and falls back to the
-    alt (home) head, so we check both.
-    """
-    if config.head_dir_path is not None:
-        heads = [(config.head_dir_path, basing.Baser.TailDirPath)]
-    else:
-        heads = [
-            (basing.Baser.HeadDirPath, basing.Baser.TailDirPath),
-            (basing.Baser.AltHeadDirPath, basing.Baser.AltTailDirPath),
-        ]
-    return [
-        os.path.abspath(os.path.expanduser(os.path.join(head, tail, config.base, config.name)))
-        for head, tail in heads
-    ]
-
-
 def _resolve_existing_db(config):  # ~5s3e — keripy readonly open creates a phantom env on a missing DB
-    """Return the witness DB directory that actually holds an LMDB file, or ``None``.
+    """The witness DB directory that actually holds a database, or ``None``.
 
-    A read-only ``Baser`` open of a *missing* DB does not fail — keripy creates an empty env
-    (polluting the path, or ``~/.keri`` under the default head). Guarding on the real ``data.mdb``
-    keeps the reader honest (a missing witness reports unavailable) and truly read-only (we never
-    create a phantom DB).
+    Delegated to :mod:`witness.paths`, which resolves every store from its own keripy class
+    constants rather than from an assumed layout — see the note there about the alt head using a
+    dotted tail, which a hand-computed "keri home" gets wrong.
     """
-    for path in _db_dir_candidates(config):
-        if os.path.exists(os.path.join(path, _DB_FILE)):
-            return path
-    return None
+    return paths.resolve(basing.Baser, config)
 
 
 def _is_witness_hab(hr):

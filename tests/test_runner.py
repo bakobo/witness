@@ -13,6 +13,7 @@ from keri.app import Configer, Habery, HaberyDoer, Keeper, indirecting
 from keri.cli import common as keri_cli_common
 
 from witness import inloop, runner, telemetry
+from witness import config as config_mod
 from witness.config import RunnerConfig
 
 
@@ -231,3 +232,40 @@ def test_open_habery_loads_a_config_file_when_one_is_named(tmp_path, monkeypatch
     assert seen["configer"]["name"] == "wit"
     assert seen["configer"]["headDirPath"] == "/cfgdir"
     assert seen["habery"]["cf"] is not None
+
+
+def test_the_escrow_timeout_is_applied_before_the_witness_doers_are_built(config, monkeypatch):
+    """@znm5uppx. keripy reads TimeoutQNF off the CLASS when its Kevery runs, so setting it after
+    setupWitness would still work — but setting it before is the only ordering that is obviously
+    correct, and this pins it. Sustained escrow depth is the attacker's rate times this number."""
+    from keri.core.eventing import Kevery
+
+    original = Kevery.TimeoutQNF
+    order = []
+
+    def fake_build(cfg, hby, **_kwargs):
+        order.append(("build", Kevery.TimeoutQNF))
+        return []
+
+    FakeDoist.instances.clear()
+    try:
+        runner.WitnessRunner(
+            config,
+            open_habery=lambda cfg: order.append(("habery", Kevery.TimeoutQNF)),
+            build_doers=fake_build,
+            doist_factory=FakeDoist,
+        ).run()
+        assert order == [("habery", config.escrow_timeout), ("build", config.escrow_timeout)]
+    finally:
+        Kevery.TimeoutQNF = original
+
+
+def test_the_default_escrow_timeout_is_well_below_keripys():
+    """The measurement is the argument: keripy's 300 s makes sustained depth five times larger for
+    the same attack rate, and cost is linear in depth."""
+    from keri.core.eventing import Kevery
+
+    _subcommand, cfg = config_mod.parse_args(["run", "--name", "w"])
+
+    assert cfg.escrow_timeout == 60
+    assert cfg.escrow_timeout < Kevery.TimeoutQNF or Kevery.TimeoutQNF == 60
