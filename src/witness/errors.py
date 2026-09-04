@@ -1,78 +1,141 @@
-"""witness error taxonomy.
+"""witness error taxonomy (@zzbdxa).
 
-Every witness failure is a typed :class:`WitnessError` carrying a stable symbolic code, a
-``retryable`` flag (transient vs. permanent — whether retrying could help), and a complete,
-plain-sentence message in the house voice. Error JSON bodies use the shape
-``{"code": ..., "message": ..., "retryable": ...}``. See the Bakobo error-handling standard.
+Every failure is a typed :class:`WitnessError` carrying a stable code shaped
+``<sorter>.<descriptor>[.<sub>].<disposition>``, per dev/standards/error-codes.md. The code is
+classified by **what the obstacle was**, never by which component raised it, so a caller can
+prefix-match a whole branch of meaning: ``e.env.*`` is "something we depend on did not deliver",
+and ``e.*.r`` is "retrying could help" whatever the descriptor.
+
+Over HTTP these render as RFC 9457 problem+json with media type ``application/problem+json``, per
+dev/standards/http-errors.md. ``title`` is static per code and never varies with the occurrence;
+``detail`` is this occurrence. There is deliberately no ``retryable`` member: the disposition is
+the code's trailing token, and duplicating it in the body invites the two to disagree.
+
+The predecessors of these codes (``witness.db.unavailable`` and friends) predate all four
+standards. @zzbdxa chose to re-cut rather than grandfather them, on the grounds that witness is
+private at 0.0.0 with no external consumer, so a freeze protects nobody today and protects more
+with every consumer it acquires.
 """
 
 from __future__ import annotations
+
+_TYPE_BASE = "https://errors.bakobo.com"
 
 
 class WitnessError(Exception):
     """Base for every witness failure.
 
-    Subclasses set a stable :attr:`code` and a :attr:`retryable` flag. The message is a
-    complete, plain sentence supplied at the raise site.
+    Subclasses set a stable :attr:`code`, a static :attr:`title`, and the HTTP :attr:`status` its
+    code's prefix maps to. The message passed at the raise site becomes ``detail``.
     """
 
-    code = "witness.error"
+    code = "e.self.unknown.f"
+    title = "Something failed and I could not attribute it."
+    status = 500
     retryable = False
 
-    def to_dict(self) -> dict:
-        """Render this error as the frozen JSON error body."""
-        return {"code": self.code, "message": str(self), "retryable": self.retryable}
+    def __init_subclass__(cls, **kwargs):
+        """Derive retryability from the code at class-definition time.
+
+        A class attribute rather than a property so callers can ask a *type* whether it is worth
+        retrying without first constructing one — which is how a caller decides its policy. It is
+        derived rather than declared so the code and the flag cannot drift apart.
+        """
+        super().__init_subclass__(**kwargs)
+        cls.retryable = cls.code.endswith(".r")
+
+    def problem(self, instance=None, request_id=None) -> dict:
+        """Render this error as an RFC 9457 problem document."""
+        document = {
+            "code": self.code,
+            "type": f"{_TYPE_BASE}/{self.code}",
+            "title": self.title,
+            "detail": str(self),
+        }
+        if instance is not None:
+            document["instance"] = instance
+        if request_id is not None:
+            document["request_id"] = request_id
+        return document
 
 
 class DbUnavailable(WitnessError):
-    """The witness database could not be opened for reading.
+    """The witness database could not be opened for reading."""
 
-    Transient: the witness may not be running yet, so retrying later could succeed.
+    code = "e.env.witnessdb.unavailable.r"
+    title = "I could not open the witness database."
+    status = 503
+
+
+class WitnessNotIncepted(WitnessError):
+    """The database opened but holds no identity at all — the witness has not been incepted yet.
+
+    ~2lmg: distinct from :class:`ForeignKeystore` because the two have opposite dispositions.
+    This one resolves on its own the moment the witness incepts, so it is retryable and a caller
+    should wait rather than page anyone.
     """
 
-    code = "witness.db.unavailable"
-    retryable = True
+    code = "e.state.pending.r"
+    title = "The witness has not been incepted yet."
+    status = 409
 
 
-class IdentityUnavailable(WitnessError):
-    """The witness database opened but holds no witness identity.
+class ForeignKeystore(WitnessError):
+    """The database holds identities, but none of them can be this witness's own.
 
-    Either the witness has not been incepted yet, in which case retrying succeeds once it is, or
-    the configured keystore belongs to somebody else, in which case it never will. ~2lmg records
-    that these want separate codes and opposite dispositions; today they share one.
+    ~2lmg: a keystore belonging to some other controller is a deployment mistake, not a wait.
+    Reporting another controller's AID as this witness's identity would be worse than reporting
+    none, so this fails closed and says so.
     """
 
-    code = "witness.identity.unavailable"
-    retryable = True
+    code = "e.self.config.keystore.f"
+    title = "The configured keystore does not belong to a witness."
+    status = 500
 
 
 class InvalidArguments(WitnessError):
-    """The control-plane command-line arguments are invalid.
+    """The command-line arguments are invalid.
 
-    Permanent: the same arguments will always be rejected, so retrying does not help.
+    ``e.input.`` because the obstacle is what was sent, even though it arrived on argv rather than
+    over HTTP — the taxonomy classifies the obstacle, not the transport.
     """
 
-    code = "witness.config.invalid"
-    retryable = False
+    code = "e.input.format.f"
+    title = "The arguments I was started with are not usable."
+    status = 400
 
 
 class TelemetryUnavailable(WitnessError):
     """The witness's telemetry segment could not be read.
 
-    Transient: the witness may not be running yet, or a read raced a write and lost. Both resolve
-    on their own, so retrying is the right response.
+    Retryable both ways it fails: the witness may not have started yet, or a read raced a write
+    and lost. Neither needs anyone's attention.
     """
 
-    code = "witness.telemetry.unavailable"
-    retryable = True
+    code = "e.env.telemetry.unavailable.r"
+    title = "I could not read the witness's telemetry."
+    status = 503
 
 
 class TelemetryIncompatible(WitnessError):
-    """The telemetry segment exists but this build cannot read it.
+    """The telemetry segment exists but carries a layout this build cannot read.
 
-    Permanent: the segment carries a layout this build does not know, or is not ours at all.
-    Retrying cannot help; the two sides have to be brought to the same version.
+    That means the two halves of one image were deployed at different versions, which retrying
+    cannot fix.
     """
 
-    code = "witness.telemetry.incompatible"
-    retryable = False
+    code = "e.self.config.telemetry.f"
+    title = "The witness's telemetry uses a layout I do not understand."
+    status = 500
+
+
+class ControllerUnknown(WitnessError):
+    """This witness holds no key state for the requested AID.
+
+    A genuinely absent resource rather than a failure: asking a witness about a controller it does
+    not witness is a reasonable question with a negative answer.
+    """
+
+    code = "e.state.missing.controller.f"
+    title = "I hold no key state for that controller."
+    status = 404

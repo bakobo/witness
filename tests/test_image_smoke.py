@@ -83,7 +83,7 @@ def witness_container():
 
 
 def _await_healthz(container, port, timeout=60.0):
-    url = f"http://127.0.0.1:{port}/healthz"
+    url = f"http://127.0.0.1:{port}/v1/witness/health"
     deadline = time.time() + timeout
     while time.time() < deadline:
         state = _docker("inspect", "-f", "{{.State.Running}}", container, check=False)
@@ -100,16 +100,69 @@ def _await_healthz(container, port, timeout=60.0):
     raise AssertionError(f"/healthz never came up:\n{logs.stdout}\n{logs.stderr}")
 
 
+def _get(port, path):
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:  # noqa: S310
+        return json.loads(resp.read().decode())
+
+
 def test_the_image_serves_the_control_plane(witness_container):
     container, port = witness_container
 
-    assert _await_healthz(container, port) == {"status": "ok"}
+    health = _await_healthz(container, port)
+    assert health["status"] == "ok"
+    assert health["ticks"] > 0, "health should see the loop ticking, not merely the DB opening"
 
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}/info", timeout=5) as resp:  # noqa: S310
-        info = json.loads(resp.read().decode())
-    assert info["alias"] == "witness"
-    assert info["aid"].startswith("B"), "a witness AID is non-transferable, so it starts with B"
-    assert info["db_path"] == f"{_KERI_HOME}/db/witness"
+    identity = _get(port, "/v1/witness/identity")
+    assert identity["alias"] == "witness"
+    assert identity["aid"].startswith("B"), "a witness AID is non-transferable, so it starts with B"
+
+
+def test_the_whole_versioned_surface_answers_against_a_real_witness(witness_container):
+    """Every Phase 2 view against a live witness rather than a stub — the shapes are only worth
+    anything if keripy's real accessors produce them."""
+    container, port = witness_container
+    _await_healthz(container, port)
+
+    assert _get(port, "/v1/witness/version")["keripy"].startswith("2.")
+    assert "query_not_found" in _get(port, "/v1/witness/escrow")["depths"]
+
+    database = _get(port, "/v1/witness/database")
+    assert database["path"] == f"{_KERI_HOME}/db/witness"
+    assert 0 <= database["used_fraction"] <= 1
+    assert database["readers"] >= 1
+
+    process = _get(port, "/v1/witness/process")
+    assert process["pid"] > 1, "pid 1 is the supervisor, not the witness"
+    assert process["threads"] >= 1
+
+    loop = _get(port, "/v1/witness/loop")
+    assert loop["ticks"] > 0
+    assert any(doer["name"] == "HaberyDoer" for doer in loop["doers"])
+
+    controllers = _get(port, "/v1/witness/controller")["controllers"]
+    assert all(set(entry) == {"aid", "sequence_number", "said"} for entry in controllers)
+
+
+def test_an_unknown_controller_is_a_404_problem_document(witness_container):
+    """The envelope has to survive the round trip through waitress, not just falcon's test client."""
+    container, port = witness_container
+    _await_healthz(container, port)
+
+    request = urllib.request.Request(  # noqa: S310
+        f"http://127.0.0.1:{port}/v1/witness/controller/EAAAAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    )
+    try:
+        urllib.request.urlopen(request, timeout=5)  # noqa: S310
+        raise AssertionError("an unwitnessed AID should not be found")
+    except urllib.error.HTTPError as failure:
+        assert failure.code == 404
+        assert failure.headers["content-type"].startswith("application/problem+json")
+        body = json.loads(failure.read().decode())
+
+    assert body["code"] == "e.state.missing.controller.f"
+    assert body["type"] == "https://errors.bakobo.com/e.state.missing.controller.f"
+    assert body["instance"].startswith("/v1/witness/controller/")
+    assert body["request_id"]
 
 
 def test_both_processes_run_in_the_one_container(witness_container):

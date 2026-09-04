@@ -19,7 +19,8 @@ def test_parses_the_full_happy_path():
     )
     assert subcommand == "control-plane"
     assert cfg == config.ControlPlaneConfig(
-        name="testwit", host="0.0.0.0", port=5666, base="b1", head_dir_path="/tmp/hd"
+        name="testwit", host="0.0.0.0", port=5666, base="b1", head_dir_path="/tmp/hd",
+        telemetry_path=config._DEFAULT_TELEMETRY_PATH,
     )
 
 
@@ -114,3 +115,12 @@ def test_run_accepts_an_explicit_alias_and_ports():
 def test_run_rejects_an_out_of_range_port(flag):
     with pytest.raises(InvalidArguments):
         config.parse_args(["run", "--name", "w", flag, "70000"])
+
+
+def test_the_control_plane_can_be_told_the_witness_publishes_no_telemetry():
+    """A witness started from stock `kli witness start` publishes none, and the control plane
+    should serve the rest of its surface rather than refuse to start."""
+    _subcommand, cfg = config.parse_args(
+        ["control-plane", "--name", "w", "--port", "1", "--no-telemetry"]
+    )
+    assert cfg.telemetry_path is None
