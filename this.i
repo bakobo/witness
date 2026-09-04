@@ -96,6 +96,30 @@ Operator layer over a stock keripy witness = goal:
         instead of kli.
       children:
 
+        The query-not-found escrow is held for 60 seconds  not 300 = decision:
+          id: znm5uppx
+          why: >
+            Measured (docs/escrow-load.md, ~4ekl): keripy re-walks the whole query-not-found
+            escrow every hio pass, the cost is linear at ~0.35 ms per entry, and sustained depth is
+            the attacker's request rate times the timeout. So a witness is measurably degraded at
+            UNDER ONE unauthenticated request per second — 200 entries — which is one to two orders
+            of magnitude below what the depth figure suggests, and far below any rate limit loose
+            enough for a witness that serves KELs to strangers. The timeout is the one term in that
+            product we control, so 300 becomes 60 and the sustained cost of a given attack rate
+            falls fivefold. Configurable, because the trade is real and belongs to whoever operates
+            the witness: the escrow exists so a query arriving just BEFORE the KEL it asks about
+            can still be answered, and shortening it drops such a query sooner, leaving the querier
+            to retry. Rejected filtering queries for AIDs this witness does not hold, which sounds
+            obvious and is wrong — a witness learns its own controller set FROM their inceptions,
+            so before one arrives it cannot know, which is precisely why the escrow exists.
+            Rejected reaping the escrow ourselves: in-loop it is exactly the computing @e3uji3mv
+            forbids, and from the control plane it needs the write access @k3p7wr denies; changing
+            a supported knob beats weakening either. Set as a keripy class attribute at startup,
+            which is keripy's own configuration idiom (Baser.MapSize is the same shape), so
+            @w7c4mz's unforked dependency stays unforked. Accepted tradeoff: a genuinely early
+            query now has 60 seconds rather than 300, and the depth is still unbounded — capping it
+            outright is an upstream change, and the measurement is what would make that case.
+
         In-loop telemetry publishes to a segment the control plane maps read-only = decision:
           id: vxt7feoi
           why: >
@@ -344,6 +368,31 @@ Operator layer over a stock keripy witness = goal:
             list of approved gaps, so an unrecorded gap is a defect while a recorded one is a
             judgment. Found by the v0.1.0-rc review panel (CON-F2) rather than by the author, which
             is what running one is for.
+
+    A backup is a consistent hot copy of every store  taken read-only = decision:
+      id: 7b34ohbo
+      why: >
+        @a24p3kbw made an upgrade across a keripy migration a one-way door — keripy refuses to open
+        a database written by a newer library — so restoring a backup IS the rollback path, and a
+        rollback plan that has never been exercised is a hope. `witness backup` uses LMDB's own
+        `env.copy`, which takes a transactionally consistent snapshot from a READ-ONLY environment
+        while the witness keeps running. That is strictly better than the tar-the-volume advice it
+        replaces on both counts an operator cares about: no downtime, and consistent rather than
+        merely crash-recoverable. Read-only because @k3p7wr's guarantee is not suspended just
+        because the operation is administrative.
+        The part that is easy to get wrong and fatal: a witness is FOUR stores, and the signing
+        keys are not in the one anybody thinks of. Backing up `db` alone restores a witness that
+        holds every event and cannot sign a single receipt — dead while looking alive — so backup
+        covers the keystore, the event database, the credential registry and the config together,
+        and the restore test proves the restored witness still RECEIPTS rather than merely still
+        answering. Rejected a control-plane endpoint: an HTTP surface that writes files wants the
+        authentication @s6v3qm has not landed yet, and an operator with a shell already has one.
+        Rejected a `witness restore` subcommand: restore writes into the witness's own volume,
+        which is the one direction this repo has spent its whole design avoiding, and it is a
+        directory copy an operator can audit. What needed proving was that a restored volume
+        WORKS, and that is a test rather than a command. Accepted tradeoff: an operator composes
+        the restore from documented steps, and a backup taken with the witness running captures
+        the moment `env.copy` began rather than the moment it finished.
 
     The deployable artifact is a container image built from this repo = decision:
       id: lypmcw7f
