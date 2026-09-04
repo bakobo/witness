@@ -28,6 +28,7 @@ class ControlPlaneConfig:
     port: int
     base: str = ""
     head_dir_path: str | None = None
+    telemetry_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,16 @@ def _build_parser() -> _RaisingParser:
     )
     cp.add_argument("--host", default="127.0.0.1", help="The host/interface to bind.")
     cp.add_argument("--port", required=True, type=int, help="The TCP port to bind.")
+    cp.add_argument(
+        "--telemetry-path",
+        default=_DEFAULT_TELEMETRY_PATH,
+        help="Where the witness publishes its telemetry segment. Omit with --no-telemetry.",
+    )
+    cp.add_argument(
+        "--no-telemetry",
+        action="store_true",
+        help="Serve without loop telemetry, for a witness started by stock `kli witness start`.",
+    )
     sup = sub.add_parser(
         "supervise", help="Run the witness runner and the control plane in one container."
     )
@@ -134,6 +145,7 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
             f"The --port value must be between {_MIN_PORT} and {_MAX_PORT}, but was {ns.port}."
         )
     return ControlPlaneConfig(
+        telemetry_path=None if ns.no_telemetry else ns.telemetry_path,
         name=ns.name,
         host=ns.host,
         port=ns.port,

@@ -1,8 +1,15 @@
-"""Read-only reader over a witness's LMDB.
+"""Read-only views over a running witness, for the control plane.
 
-The control-plane process must never stall or corrupt the witness, so it opens the witness's
-LMDB strictly read-only, and opens it per request (no long-lived read transactions). The reader
-serves liveness (:meth:`WitnessReader.health`) and identity (:meth:`WitnessReader.info`).
+The control-plane process must never stall or corrupt the witness (@c7v3kp), so it opens the
+LMDB strictly read-only and opens it per request — no long-lived read transactions, because a
+registered reader that lingers holds back the writer\'s page reclamation and grows the database
+against keripy\'s 100 MB map ceiling. That is the flip side of getting the locking right, and it
+is why every method here closes what it opens.
+
+Three sources feed the surface. The LMDB supplies anything durable: identity, escrow depth,
+database size, controller key state. The telemetry segment (@vxt7feoi) supplies what only the
+witness\'s own loop can know: whether it is still ticking, and where its time goes. And /proc
+supplies process vitals, reachable only because @a24p3kbw made the two processes co-resident.
 """
 
 from __future__ import annotations
@@ -13,9 +20,38 @@ import keri
 from keri.core import coring
 from keri.db import basing
 
-from .errors import DbUnavailable, IdentityUnavailable
+import witness as _witness_package
+
+from . import vitals
+from .errors import (
+    ControllerUnknown,
+    DbUnavailable,
+    ForeignKeystore,
+    WitnessError,
+    WitnessNotIncepted,
+)
+from .telemetry import SegmentReader
 
 _DB_FILE = "data.mdb"
+
+#: Escrow stores whose depth is worth publishing, and what each one parks.
+#:
+#: ``qnfs`` leads because infra asked for it by name: keripy re-walks the whole query-not-found
+#: escrow on EVERY hio loop pass, so its depth is the one number that turns a flood of queries for
+#: AIDs this witness does not hold from a code reading into an observation. Entries age out after
+#: TimeoutQNF (300s), so a rising gauge that does not fall is the signal.
+_ESCROWS = {
+    "query_not_found": "qnfs",
+    "out_of_order": "ooes",
+    "partially_signed": "pses",
+    "partially_witnessed": "pwes",
+    "unverified_receipt": "ures",
+    "unverified_witness_receipt": "uwes",
+    "unverified_validator_receipt": "vres",
+    "duplicitous": "pdes",
+    "misfit": "misfits",
+    "delegable": "delegables",
+}
 
 
 def _db_dir_candidates(config):
@@ -118,26 +154,154 @@ class WitnessReader:
                 "running yet."
             ) from exc
 
+    def _telemetry(self):
+        """The telemetry segment reader, or None when this control plane serves no telemetry."""
+        if self._config.telemetry_path is None:
+            return None
+        return SegmentReader(self._config.telemetry_path)
+
     def health(self) -> dict:
-        """Liveness: confirm the witness database opens read-only."""
+        """Liveness, and specifically whether the witness is still doing its job.
+
+        The database opening is necessary and nowhere near sufficient: a witness whose hio loop
+        has wedged still has a perfectly openable database, and that is the failure mode that has
+        actually happened. So this also asks the telemetry segment whether the loop is between
+        doers or stuck inside one. ops.md §7 asks a probe to prove the service is working rather
+        than that a port is open; for a witness, this is what that means.
+        """
         rdb = self._open()
         rdb.close()
-        return {"status": "ok"}
+        try:
+            reader = self._telemetry()
+            loop = None if reader is None else reader.read()
+        except WitnessError:
+            # Unreadable telemetry is not itself unhealthy. A witness started from stock
+            # `kli witness start` publishes none, and calling that unhealthy would make this a
+            # check on our own launcher rather than on the witness.
+            loop = None
+        if loop is not None and loop["current_doer"] is not None:
+            return {
+                "status": "degraded",
+                "reason": f"the loop is stuck inside {loop['current_doer']}",
+                "ticks": loop["ticks"],
+            }
+        return {"status": "ok", "ticks": None if loop is None else loop["ticks"]}
 
-    def info(self) -> dict:
-        """Identity: report the witness's own AID, alias, keripy version, and database path."""
+    def loop(self) -> dict:
+        """The witness's hio loop: how far behind it runs, and where its time goes (@vxt7feoi)."""
+        reader = self._telemetry()
+        if reader is None:
+            raise DbUnavailable(
+                "This control plane was not told where the witness publishes its telemetry."
+            )
+        try:
+            return reader.read()
+        finally:
+            reader.close()
+
+    def version(self) -> dict:
+        """What is running: this package, and the keripy it wraps."""
+        return {"witness": _witness_package.__version__, "keripy": keri.__version__}
+
+    def escrow(self) -> dict:
+        """Escrow depth per store, which is where a witness under load shows it first."""
         rdb = self._open()
         try:
-            hab = _select_witness_hab(rdb.habs.getTopItemIter())
-            if hab is None:
-                raise IdentityUnavailable(
-                    "The witness database opened but holds no witness identity."
-                )
+            depths = {}
+            # Counted from each sub-database's own statistics rather than by iterating it. Three
+            # reasons: it is O(1) instead of O(entries), which matters precisely when an escrow is
+            # deep and something is wrong; it needs no per-class knowledge, where keripy's escrow
+            # stores are six different Suber subclasses whose iteration signatures disagree; and
+            # one read transaction covers every store, so the numbers are a coherent snapshot
+            # rather than a series of readings taken at different moments.
+            with rdb.env.begin() as txn:
+                for label, attribute in _ESCROWS.items():
+                    store = getattr(rdb, attribute, None)
+                    if store is None:
+                        continue  # an upstream bump moved it; report the rest rather than nothing
+                    depths[label] = txn.stat(store.sdb)["entries"]
+            return {"depths": depths, "total": sum(depths.values())}
+        finally:
+            rdb.close()
+
+    def database(self) -> dict:
+        """Size against keripy's fixed map ceiling — the wall a busy witness eventually hits."""
+        rdb = self._open()
+        try:
+            info = rdb.env.info()
+            used = info["last_pgno"] * rdb.env.stat()["psize"]
             return {
-                "aid": hab.hid,
-                "alias": hab.name,
-                "keripy_version": keri.__version__,
-                "db_path": rdb.path,
+                "path": rdb.path,
+                "used_bytes": used,
+                "map_bytes": info["map_size"],
+                "used_fraction": used / info["map_size"],
+                "last_transaction": info["last_txnid"],
+                "readers": info["num_readers"],
             }
         finally:
             rdb.close()
+
+    def process(self) -> dict:
+        """Vitals for the co-located runner process."""
+        return vitals.runner_vitals()
+
+    def controllers(self) -> dict:
+        """Every controller whose key state this witness holds."""
+        rdb = self._open()
+        try:
+            return {
+                "controllers": [
+                    {"aid": aid, "sequence_number": int(state.s, 16), "said": state.d}
+                    for aid, state in _key_states(rdb)
+                ]
+            }
+        finally:
+            rdb.close()
+
+    def controller(self, aid) -> dict:
+        """One controller's current key state, or a 404 if this witness does not hold it."""
+        rdb = self._open()
+        try:
+            for held, state in _key_states(rdb):
+                if held == aid:
+                    return {
+                        "aid": held,
+                        "sequence_number": int(state.s, 16),
+                        "said": state.d,
+                        "witnesses": list(state.b),
+                        "threshold": state.bt,
+                    }
+            raise ControllerUnknown(
+                f"This witness holds no key state for {aid}; it may not witness that controller."
+            )
+        finally:
+            rdb.close()
+
+    def identity(self) -> dict:
+        """The witness's own AID and alias."""
+        rdb = self._open()
+        try:
+            habs = list(rdb.habs.getTopItemIter())
+            hab = _select_witness_hab(habs)
+            if hab is None:
+                # ~2lmg: these look alike and behave oppositely. No habs at all means the witness
+                # has simply not incepted yet and the caller should wait. Habs present but none
+                # of them a witness means the configured keystore belongs to somebody else, and
+                # waiting will never fix it.
+                if not habs:
+                    raise WitnessNotIncepted(
+                        "The witness database holds no identities yet; it has not been incepted."
+                    )
+                raise ForeignKeystore(
+                    "The configured keystore holds identities, but none of them is a witness's, "
+                    "so this keystore belongs to some other controller."
+                )
+            return {"aid": hab.hid, "alias": hab.name}
+        finally:
+            rdb.close()
+
+
+def _key_states(rdb):
+    """(aid, key-state-record) for every controller this witness holds state for."""
+    for keys, state in rdb.states.getTopItemIter():
+        yield (keys[0] if isinstance(keys, tuple) else keys), state

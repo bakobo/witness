@@ -6,10 +6,17 @@ import os
 import keri
 import pytest
 from keri.app import habbing
+from keri.db import basing
 
 from witness import reader as reader_mod
+from witness import telemetry
 from witness.config import ControlPlaneConfig
-from witness.errors import DbUnavailable, IdentityUnavailable
+from witness.errors import (
+    ControllerUnknown,
+    DbUnavailable,
+    ForeignKeystore,
+    WitnessNotIncepted,
+)
 from witness.reader import WitnessReader, _select_witness_hab
 
 
@@ -36,18 +43,15 @@ def reader(witness_db):
 
 
 def test_health_reports_ok_when_the_db_opens(reader):
-    assert reader.health() == {"status": "ok"}
+    assert reader.health() == {"status": "ok", "ticks": None}
 
 
 def test_info_reports_the_witness_identity(reader, witness_db):
-    info = reader.info()
-    assert info == {
-        "aid": witness_db["pre"],
-        "alias": witness_db["alias"],
-        "keripy_version": keri.__version__,
-        "db_path": witness_db["db_path"],
-    }
-    assert isinstance(keri.__version__, str) and keri.__version__
+    """@zzbdxa re-cut /info: identity answers who the witness is, and nothing else. The keripy
+    version moved to /v1/witness/version and the database path to /v1/witness/database, because
+    varying either changes the shape of a different answer — the insight test in url-design.md."""
+    assert reader.identity() == {"aid": witness_db["pre"], "alias": "wit"}
+
 
 
 @pytest.fixture
@@ -71,7 +75,7 @@ def test_health_raises_dbunavailable_when_the_db_cannot_open(unopenable_config):
 
 def test_info_raises_dbunavailable_when_the_db_cannot_open(unopenable_config):
     with pytest.raises(DbUnavailable):
-        WitnessReader(unopenable_config).info()
+        WitnessReader(unopenable_config).identity()
 
 
 def test_health_reports_unavailable_and_creates_nothing_when_db_missing(tmp_path):
@@ -94,13 +98,13 @@ def test_info_reports_unavailable_when_db_missing_with_default_head():
         head_dir_path=None,
     )
     with pytest.raises(DbUnavailable):
-        WitnessReader(cfg).info()
+        WitnessReader(cfg).identity()
 
 
 def test_info_raises_identityunavailable_when_no_witness_hab_is_present(reader, monkeypatch):
     monkeypatch.setattr(reader_mod, "_select_witness_hab", lambda items: None)
-    with pytest.raises(IdentityUnavailable):
-        reader.info()
+    with pytest.raises(ForeignKeystore):
+        reader.identity()
 
 
 # Real qb64 prefixes. A witness AID is ALWAYS non-transferable (a 'B' prefix): a transferable
@@ -158,8 +162,8 @@ def test_info_refuses_a_controllers_keystore_instead_of_reporting_its_aid(tmp_pa
     cfg = ControlPlaneConfig(
         name="notawitness", host="127.0.0.1", port=1, base="", head_dir_path=head
     )
-    with pytest.raises(IdentityUnavailable) as caught:
-        WitnessReader(cfg).info()
+    with pytest.raises(ForeignKeystore) as caught:
+        WitnessReader(cfg).identity()
     assert controller.pre not in str(caught.value)
 
 
@@ -195,3 +199,170 @@ def test_open_still_registers_in_the_lock_table(reader):
         assert rdb.env.info()["num_readers"] >= 1
     finally:
         rdb.close()
+
+
+# ------------------------------------------------------------------------------------------
+# Phase 2 views
+# ------------------------------------------------------------------------------------------
+
+
+def test_version_reports_both_halves_of_what_is_running(reader):
+    """The package and the keripy it wraps, because a bug report needs both and @w7c4mz pins
+    keripy by commit rather than by version."""
+    import keri as keri_pkg
+
+    import witness as witness_pkg
+
+    assert reader.version() == {
+        "witness": witness_pkg.__version__,
+        "keripy": keri_pkg.__version__,
+    }
+
+
+def test_escrow_reports_a_depth_for_every_store_including_query_not_found(reader):
+    """Infra asked for query-not-found by name: keripy re-walks that whole escrow on every hio
+    loop pass, so its depth is what turns a query flood from a code reading into an observation."""
+    escrow = reader.escrow()
+
+    assert "query_not_found" in escrow["depths"]
+    assert escrow["total"] == sum(escrow["depths"].values())
+    assert all(count >= 0 for count in escrow["depths"].values())
+
+
+def test_escrow_skips_a_store_an_upstream_bump_removed(reader, monkeypatch):
+    """@w7c4mz rides semi-internal accessors. If one moves, reporting the rest honestly beats
+    failing the whole endpoint over a store nobody asked about."""
+    monkeypatch.setitem(reader_mod._ESCROWS, "invented", "nosuchstore")
+
+    assert "invented" not in reader.escrow()["depths"]
+
+
+def test_database_reports_usage_against_keripys_fixed_map_ceiling(reader):
+    """keripy pins MapSize at 100 MB, and a witness that reaches it stops accepting events. The
+    fraction is the number worth alerting on, so it is computed here rather than by every caller."""
+    database = reader.database()
+
+    assert database["map_bytes"] == basing.Baser.MapSize
+    assert 0 <= database["used_fraction"] <= 1
+    assert database["used_bytes"] <= database["map_bytes"]
+    assert database["readers"] >= 1, "the reader registers, per @v27j7uvo"
+
+
+def test_controllers_includes_the_witnesss_own_key_state(reader, witness_db):
+    """A witness holds key state for itself as well as for whoever it witnesses, and that is
+    worth reporting rather than filtering: an operator asking what state exists wants all of it,
+    and /v1/witness/identity already answers "which of these is you"."""
+    listed = reader.controllers()["controllers"]
+
+    assert witness_db["pre"] in {entry["aid"] for entry in listed}
+    assert all(
+        set(entry) == {"aid", "sequence_number", "said"} and entry["sequence_number"] >= 0
+        for entry in listed
+    )
+
+
+def test_controllers_and_controller_agree_about_a_witnessed_aid(witnessing_db):
+    cfg = ControlPlaneConfig(
+        name=witnessing_db["name"], host="127.0.0.1", port=1, base="",
+        head_dir_path=witnessing_db["head"],
+    )
+    subject = WitnessReader(cfg)
+
+    listed = subject.controllers()["controllers"]
+    aids = {entry["aid"] for entry in listed}
+    assert witnessing_db["controller_pre"] in aids
+
+    one = subject.controller(witnessing_db["controller_pre"])
+    assert one["aid"] == witnessing_db["controller_pre"]
+    assert one["threshold"] is not None
+    listed_entry = next(e for e in listed if e["aid"] == one["aid"])
+    assert listed_entry["sequence_number"] == one["sequence_number"]
+
+
+def test_an_unwitnessed_aid_is_a_missing_resource_not_a_failure(witnessing_db):
+    cfg = ControlPlaneConfig(
+        name=witnessing_db["name"], host="127.0.0.1", port=1, base="",
+        head_dir_path=witnessing_db["head"],
+    )
+
+    with pytest.raises(ControllerUnknown) as caught:
+        WitnessReader(cfg).controller(witnessing_db["unwitnessed_pre"])
+
+    assert caught.value.status == 404
+    assert caught.value.retryable is False
+
+
+def test_loop_without_a_configured_segment_says_so_rather_than_guessing(reader):
+    with pytest.raises(DbUnavailable):
+        reader.loop()
+
+
+def test_loop_reports_the_segment_when_one_is_configured(reader, witness_db, tmp_path):
+    path = tmp_path / "telemetry"
+    writer = telemetry.SegmentWriter.create(str(path), names=["OnlyDoer"])
+    writer.publish_tick(ticks=41, wall=1.0, lag=0.25)
+    cfg = ControlPlaneConfig(
+        name="testwit", host="127.0.0.1", port=1, base="",
+        head_dir_path=witness_db["head"], telemetry_path=str(path),
+    )
+    try:
+        loop = WitnessReader(cfg).loop()
+    finally:
+        writer.close()
+
+    assert loop["ticks"] == 41
+    assert loop["loop_lag"] == 0.25
+    assert [d["name"] for d in loop["doers"]] == ["OnlyDoer"]
+
+
+def test_health_is_degraded_while_the_loop_sits_inside_a_doer(reader, witness_db, tmp_path):
+    """The wedge detector. A witness stuck inside one doer still opens its database perfectly,
+    which is why the old probe would have stayed green through the failure that has happened."""
+    path = tmp_path / "telemetry"
+    writer = telemetry.SegmentWriter.create(str(path), names=["Stuck"])
+    writer.publish_tick(ticks=7, wall=1.0, lag=0.0)
+    writer.mark_enter(0, now=1.0)  # entered and never left
+    cfg = ControlPlaneConfig(
+        name="testwit", host="127.0.0.1", port=1, base="",
+        head_dir_path=witness_db["head"], telemetry_path=str(path),
+    )
+    try:
+        health = WitnessReader(cfg).health()
+    finally:
+        writer.close()
+
+    assert health["status"] == "degraded"
+    assert "Stuck" in health["reason"]
+
+
+def test_health_stays_ok_when_the_witness_publishes_no_telemetry(reader, witness_db, tmp_path):
+    """A witness started from stock `kli witness start` publishes none. Calling that unhealthy
+    would make this endpoint a check on our own launcher rather than on the witness."""
+    cfg = ControlPlaneConfig(
+        name="testwit", host="127.0.0.1", port=1, base="",
+        head_dir_path=witness_db["head"], telemetry_path=str(tmp_path / "absent"),
+    )
+
+    assert WitnessReader(cfg).health()["status"] == "ok"
+
+
+def test_process_delegates_to_the_proc_reader(reader, monkeypatch):
+    monkeypatch.setattr(reader_mod.vitals, "runner_vitals", lambda: {"pid": 4242})
+
+    assert reader.process() == {"pid": 4242}
+
+
+def test_a_keystore_with_no_identities_at_all_is_pending_not_foreign(tmp_path):
+    """~2lmg's other half. A keystore that exists but holds nothing means the witness has not
+    incepted yet, which resolves itself; only a keystore holding somebody ELSE's identities is
+    the permanent misconfiguration. Conflating them told an operator to fix a wait."""
+    head = str(tmp_path / "empty")
+    hby = habbing.Habery(name="emptywit", base="", temp=False, headDirPath=head)
+    hby.close()  # a keystore, but no habs were made
+    cfg = ControlPlaneConfig(name="emptywit", host="127.0.0.1", port=1, base="", head_dir_path=head)
+
+    with pytest.raises(WitnessNotIncepted) as caught:
+        WitnessReader(cfg).identity()
+
+    assert caught.value.retryable is True
+    assert caught.value.status == 409

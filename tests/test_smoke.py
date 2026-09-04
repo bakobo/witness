@@ -40,7 +40,7 @@ def witness_db(tmp_path):
     return head, pre
 
 
-def test_console_script_serves_healthz_and_info(witness_db):
+def test_console_script_serves_the_versioned_control_plane(witness_db):
     head, pre = witness_db
     port = _free_port()
     proc = subprocess.Popen(
@@ -50,6 +50,7 @@ def test_console_script_serves_healthz_and_info(witness_db):
             "--head-dir-path", head,
             "--host", "127.0.0.1",
             "--port", str(port),
+            "--no-telemetry",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -65,14 +66,14 @@ def test_console_script_serves_healthz_and_info(witness_db):
                     f"{proc.stdout.read().decode('utf-8', 'replace')}"
                 )
             try:
-                status, health = _get_json(base + "/healthz")
+                status, health = _get_json(base + "/v1/witness/health")
                 if status == 200:
                     break
             except (urllib.error.URLError, ConnectionError):
                 time.sleep(0.3)
-        assert health == {"status": "ok"}, "witness /healthz never came up"
+        assert health is not None and health["status"] == "ok", "the control plane never came up"
 
-        info_status, info = _get_json(base + "/info")
+        info_status, info = _get_json(base + "/v1/witness/identity")
         assert info_status == 200
         assert info["aid"] == pre
         assert info["alias"] == "wit"
