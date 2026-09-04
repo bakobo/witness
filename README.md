@@ -29,6 +29,8 @@ GH_TOKEN=$(gh auth token) docker build --secret id=gh_token,env=GH_TOKEN -t witn
 WITNESS_IMAGE=witness:dev uv run pytest tests/test_image_smoke.py
 ```
 
+There is also a load oracle that measures what a flood of unanswerable queries costs the witness — slow, gated behind `WITNESS_LOAD`, and documented with its measured curve in [`docs/escrow-load.md`](docs/escrow-load.md).
+
 The build needs a token only because `heti` is private and pinned by SSH URL; `gh auth token` is enough, and no personal access token is involved.
 
 ## Running it

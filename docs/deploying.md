@@ -64,9 +64,19 @@ Do not alert on `witness.process.*` thresholds. They are for diagnosis after an 
 
 ### The query-not-found escrow, specifically
 
-`Kevery.processQueryNotFound` walks the entire query-not-found escrow on **every** loop pass, roughly 32 times a second. A `/query` for an AID the witness does not hold parks an entry there, costing about four LMDB reads and four write-transaction attempts per pass until it ages out after `TimeoutQNF` (300 s). Sustaining N entries therefore costs an attacker only N/300 requests per second, and the per-pass cost of a deep escrow degrades the loop into slowness rather than unbounded growth.
+**Measured, not inferred** — see [`escrow-load.md`](escrow-load.md) for the curve and the harness.
 
-That makes it a 300-second sliding window that drains on its own once a flood stops, which is why edge rate limiting genuinely helps here. It is a hardening observation rather than a keripy defect — `TimeoutQNF` exists to bound it — and it is **unmeasured**. Anything said about it upstream should carry a latency-versus-query-rate curve rather than a code reading.
+`Kevery.processQueryNotFound` walks the entire query-not-found escrow on every hio loop pass. A `/query` for an AID the witness does not hold parks an entry there for `TimeoutQNF` (300 s), and queries are not authenticated at the public port, so sustained depth is roughly the attacker's request rate times 300.
+
+The cost is linear at about 0.35 ms per entry per pass, paid by `WitnessStart` — the same doer that ingests and receipts real events. Measured: at 200 entries a controller waits 0.075 s to be witnessed instead of 0.046 s; at 1,000 entries, 0.257 s, with the loop running 0.33 s behind a 0.03125 s tock.
+
+Two things follow that the arithmetic alone did not give. **Degradation starts under one request per second** — around 200 entries — which is one to two orders of magnitude below the "10,000 entries at 33 req/s" the depth figure suggests. And **it drains on its own**: during the run, depth fell from 1,000 to 823 while the flood continued, because entries were ageing out faster than they arrived. A flood that stops is a witness that recovers unattended.
+
+So a per-source rate limit is worth having and is not sufficient. A limit loose enough for legitimate traffic — a witness serves KELs to strangers on demand — still admits one source at 1 req/s, and a hundred sources at 0.01 req/s each is invisible to it.
+
+**Alert on `witness.loop.lag` above 0.05 s sustained for a minute**, which is where the measurement puts the onset of noticeable delay, and read `witness.escrow.depth{store="query_not_found"}` alongside it: lag rising with a flat escrow depth is something else, such as a slow disk.
+
+`/v1/witness/health` will **not** tell you. It reports `ok` at 0.33 s of lag, because health answers "is this witness working" and a degraded witness is working. That split is deliberate and pinned by a test.
 
 ## Upgrading
 
