@@ -20,6 +20,9 @@ _DEFAULT_TELEMETRY_PATH = "/usr/local/var/keri/telemetry"
 #: @znm5uppx. keripy holds an unanswerable query for 300s; sustained escrow depth is the
 #: attacker's request rate times this number, and the measured cost is linear in depth.
 _DEFAULT_ESCROW_TIMEOUT = 60
+#: @zj3h2pzh. keripy sweeps every escrow on every hio pass, 32 times a second, at a cost linear in
+#: escrow depth. One second is still far inside the 60-second escrow lifetime. 0 restores stock.
+_DEFAULT_ESCROW_INTERVAL = 1.0
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,7 @@ class RunnerConfig:
     http_port: int
     telemetry_path: str
     escrow_timeout: int = _DEFAULT_ESCROW_TIMEOUT
+    escrow_interval: float = _DEFAULT_ESCROW_INTERVAL
 
 
 @dataclass(frozen=True)
@@ -145,6 +149,16 @@ def _build_parser() -> _RaisingParser:
         ),
     )
     run.add_argument(
+        "--escrow-interval",
+        default=_DEFAULT_ESCROW_INTERVAL,
+        type=float,
+        help=(
+            "Seconds between escrow sweeps (@zj3h2pzh). keripy sweeps every pass, 32 times a "
+            f"second, at a cost linear in escrow depth. Default {_DEFAULT_ESCROW_INTERVAL}; "
+            "0 restores keripy's own behaviour exactly."
+        ),
+    )
+    run.add_argument(
         "--telemetry-path",
         default=_DEFAULT_TELEMETRY_PATH,
         help=f"Where to publish the telemetry segment. Default {_DEFAULT_TELEMETRY_PATH}.",
@@ -172,6 +186,7 @@ def _runner_config(ns) -> RunnerConfig:
         http_port=_port(ns.http, "--http"),
         telemetry_path=ns.telemetry_path,
         escrow_timeout=ns.escrow_timeout,
+        escrow_interval=ns.escrow_interval,
     )
 
 

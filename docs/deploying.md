@@ -74,6 +74,8 @@ Two things follow that the arithmetic alone did not give. **Degradation starts u
 
 So a per-source rate limit is worth having and is not sufficient. A limit loose enough for legitimate traffic — a witness serves KELs to strangers on demand — still admits one source at 1 req/s, and a hundred sources at 0.01 req/s each is invisible to it.
 
+**The image also paces the sweep.** `witness run --escrow-interval` defaults to **1 second** where keripy sweeps every escrow on every hio pass, 32 times a second (`@zj3h2pzh`). Measured at 5 req/s of attack: median loop lag falls from 0.079 s to **zero**, with the same escrow depth. `--escrow-interval 0` restores keripy's own behaviour exactly.
+
 **The image already shortens the window.** `witness run --escrow-timeout` defaults to **60 seconds** where keripy's own default is 300 (`@znm5uppx`). Measured: at 5 req/s the escrow pins at 301 entries with 0.077 s of lag, against ~1,000 entries and 0.34 s at keripy's default. Raise it if a controller population genuinely queries ahead of its own events; lower it to trade more of that tolerance for less exposure.
 
 **Alert on `witness.loop.lag` above 0.05 s sustained for a minute**, which is where the measurement puts the onset of noticeable delay, and read `witness.escrow.depth{store="query_not_found"}` alongside it: lag rising with a flat escrow depth is something else, such as a slow disk.

@@ -55,6 +55,24 @@ The 60-second run is the model behaving exactly as predicted: depth pins at rate
 
 The 300-second run never reached steady state within 400 s, and the reason is worth its own line: **the witness got too slow to accept the attack at the offered rate**, so the attacker achieved only 3.46 req/s instead of 5. Its plateau of ~1,040 is that reduced rate times 300. Normalising both to the same achieved rate, the reduction is the predicted fivefold; the 3.3× seen directly is smaller only because the degraded witness was throttling its own attacker — which is not a comfort, because real traffic is in that same queue.
 
+## Re-measured again after pacing the sweep
+
+`@znm5uppx` addressed how *deep* the escrow gets. `@zj3h2pzh` addresses how *often* it is swept: keripy's `escrowDo` ends its loop with a bare `yield`, which hio reads as "rerun next pass", so the sweep runs 32 times a second. The launcher substitutes a doer that yields an interval instead.
+
+Same image, same 5 req/s, `TimeoutQNF=60` in both, differing only in `--escrow-interval`. Steady state, from t=60 s:
+
+| | sweep every pass (stock, 32 Hz) | sweep at 1 Hz |
+| --- | --- | --- |
+| escrow depth | ~300 | ~300 |
+| **median loop lag** | **0.079 s** | **0.000 s** |
+| mean loop lag | 0.085 s | 0.014 s |
+| max loop lag | 0.125 s | 0.154 s |
+| samples showing zero lag | **0 of 23** | **18 of 20** |
+
+Depth is unchanged, as it should be — the timeout governs depth and the cadence governs cost — and the attacker still achieved the full 5 req/s. What changes is that the loop stops being permanently behind.
+
+Read the max column honestly: pacing does not make the work disappear, it **batches** it. Stock pays a constant tax on every pass; paced pays nothing on 31 passes and then a larger bill on the 32nd, so the worst single pass is slightly worse while the typical pass is free. For a witness that trade is clearly right — a permanent 0.08 s lag delays everything, where a once-a-second hiccup delays whatever lands in that one pass — but it is a trade, not a free win. `--escrow-interval 0.25` would make the bursts a quarter the size and still cut total sweep work eightfold, if jitter ever matters more than throughput.
+
 ## Consequences
 
 **For alerting.** `witness.loop.lag` is the signal, and the measurement gives it a defensible threshold rather than a guess: lag stays at ~0.003 s through 100 entries and passes 0.05 s by 200, which is where a controller first waits noticeably longer. **Alert on `witness.loop.lag` above 0.05 s sustained for a minute**, and use `witness.escrow.depth{store="query_not_found"}` to tell an attack apart from a slow disk — a lag rise with a flat escrow depth is not this.
