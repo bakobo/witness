@@ -82,7 +82,14 @@ def witness_container():
         _docker("volume", "rm", "-f", volume, check=False)
 
 
-def _await_healthz(container, port, timeout=60.0):
+def _await_healthz(container, port, timeout=120.0):
+    """Wait until the witness is genuinely up, not merely until something answers 200.
+
+    Health returns 200 as soon as the database opens, which can happen before the runner has
+    created the telemetry segment — so a test that proceeds on the first 200 can reach
+    /v1/witness/loop while it still, correctly, returns 503. Waiting for a tick count is waiting
+    for the thing every dependent assertion actually needs.
+    """
     url = f"http://127.0.0.1:{port}/v1/witness/health"
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -93,7 +100,9 @@ def _await_healthz(container, port, timeout=60.0):
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:  # noqa: S310 (loopback only)
                 if resp.status == 200:
-                    return json.loads(resp.read().decode())
+                    health = json.loads(resp.read().decode())
+                    if health.get("ticks"):
+                        return health
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             time.sleep(0.5)
     logs = _docker("logs", container, check=False)

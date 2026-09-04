@@ -1,5 +1,10 @@
 # Foreseen work — the whole surface
 
+> **Partly built since, 2026-09-04.** The launcher, in-loop telemetry, the container image and the
+> read-only control-plane surface have all landed; see `this.i` and `docs/deploying.md` for what
+> actually exists. This map has not been rewritten around them, so read it for the shape of the
+> surface rather than for current status.
+
 *Written 2026-08-02 to answer a question that could not be answered without it: what work has this
 repo actually foreseen? Every entry is traced to the `this.i` node or tick that implies it, and
 separated by how firmly it is established. No sequencing and no phase labels — the point is to see

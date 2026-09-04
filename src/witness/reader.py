@@ -15,6 +15,7 @@ supplies process vitals, reachable only because @a24p3kbw made the two processes
 from __future__ import annotations
 
 import os
+import time
 
 import keri
 from keri.core import coring
@@ -33,6 +34,16 @@ from .errors import (
 from .telemetry import SegmentReader
 
 _DB_FILE = "data.mdb"
+
+#: How long a doer must hold the loop before the witness is called degraded.
+#:
+#: `current_doer` being set does NOT mean the loop is stuck — on a healthy witness the loop is
+#: inside *some* doer most of the time, and sampling catches it there. Measured against a live
+#: witness: a normal pass spends microseconds per doer, and an earlier version of this check that
+#: treated any non-null `current_doer` as a wedge reported "stuck inside Directant" on a witness
+#: that was perfectly fine. What distinguishes a wedge is DURATION, so that is what is measured.
+#: Five seconds is ~160 tocks at hio's default 0.03125s, far outside anything normal.
+_WEDGE_SECONDS = 5.0
 
 #: Escrow stores whose depth is worth publishing, and what each one parks.
 #:
@@ -160,14 +171,17 @@ class WitnessReader:
             return None
         return SegmentReader(self._config.telemetry_path)
 
-    def health(self) -> dict:
+    def health(self, now=None) -> dict:
         """Liveness, and specifically whether the witness is still doing its job.
 
         The database opening is necessary and nowhere near sufficient: a witness whose hio loop
         has wedged still has a perfectly openable database, and that is the failure mode that has
-        actually happened. So this also asks the telemetry segment whether the loop is between
-        doers or stuck inside one. ops.md §7 asks a probe to prove the service is working rather
+        actually happened. So this also asks the telemetry segment how long the loop has been
+        inside its current doer. ops.md §7 asks a probe to prove the service is working rather
         than that a port is open; for a witness, this is what that means.
+
+        The comparison is between two readings of CLOCK_MONOTONIC taken in different processes,
+        which is sound precisely because @a24p3kbw co-located them: one kernel, one clock.
         """
         rdb = self._open()
         rdb.close()
@@ -180,11 +194,16 @@ class WitnessReader:
             # check on our own launcher rather than on the witness.
             loop = None
         if loop is not None and loop["current_doer"] is not None:
-            return {
-                "status": "degraded",
-                "reason": f"the loop is stuck inside {loop['current_doer']}",
-                "ticks": loop["ticks"],
-            }
+            held = (time.monotonic() if now is None else now) - loop["current_since"]
+            if held > _WEDGE_SECONDS:
+                return {
+                    "status": "degraded",
+                    "reason": (
+                        f"the loop has been inside {loop['current_doer']} for "
+                        f"{held:.1f}s"
+                    ),
+                    "ticks": loop["ticks"],
+                }
         return {"status": "ok", "ticks": None if loop is None else loop["ticks"]}
 
     def loop(self) -> dict:
