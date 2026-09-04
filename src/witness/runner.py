@@ -79,16 +79,21 @@ class WitnessRunner:
     def run(self) -> int:
         hby = self._open_habery(self._config)
         doers = self._build_doers(self._config, hby)
-        doers.append(self._telemetry_doer(doers))
-        doist = self._doist_factory(
-            limit=0.0, tock=TOCK, real=True, doers=doers, sink=self._writer
-        )
+        writer, telemetry_doer = self._open_telemetry(doers)
+        doers.append(telemetry_doer)
+        doist = self._doist_factory(limit=0.0, tock=TOCK, real=True, doers=doers, sink=writer)
         doist.do()
         return 0
 
-    def _telemetry_doer(self, doers):
-        # The telemetry doer is itself timed, so it has to be in the name table before the
-        # segment is created — hence naming the list that already includes it.
+    def _open_telemetry(self, doers):
+        """Create the segment for ``doers`` and the doer that publishes into it.
+
+        Returns both rather than stashing the writer on self, because the writer is needed by the
+        Doist as its sink and by the doer as its target — two consumers, so making one of them
+        reach into instance state set by a method that looks like a factory hides the dependency.
+        """
+        # The telemetry doer is itself timed, so it must be in the name table before the segment
+        # is created — hence naming a list that already includes it.
         names = inloop.TimedDoist.names_for(doers) + ["TelemetryDoer"]
-        self._writer = self._create_segment(self._config.telemetry_path, names)
-        return inloop.TelemetryDoer(writer=self._writer, tock=TOCK)
+        writer = self._create_segment(self._config.telemetry_path, names)
+        return writer, inloop.TelemetryDoer(writer=writer, tock=TOCK)

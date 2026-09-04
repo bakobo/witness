@@ -23,6 +23,22 @@ from .errors import WitnessError
 
 _PROBLEM_JSON = "application/problem+json"
 _REQUEST_ID_HEADER = "Bakobo-Request-Id"
+#: A caller-supplied correlation id is echoed into a response header and into the error body, so
+#: it is attacker-controlled data on two output paths. Bounded and character-restricted rather
+#: than trusted: an unbounded value invites header stuffing and log-line forgery, and a caller
+#: with a genuine id has no need of newlines or 400 characters to express it.
+_REQUEST_ID_MAX = 64
+_REQUEST_ID_ALLOWED = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+)
+
+
+def _acceptable_request_id(value):
+    return (
+        bool(value)
+        and len(value) <= _REQUEST_ID_MAX
+        and all(character in _REQUEST_ID_ALLOWED for character in value)
+    )
 
 
 class RequestCounter:
@@ -50,7 +66,10 @@ class RequestIdMiddleware:
     """Assign every request a correlation id, echoed in a header and in any error envelope."""
 
     def process_request(self, req, resp):
-        req.context.request_id = req.get_header(_REQUEST_ID_HEADER) or uuid.uuid4().hex
+        supplied = req.get_header(_REQUEST_ID_HEADER)
+        req.context.request_id = (
+            supplied if _acceptable_request_id(supplied) else uuid.uuid4().hex
+        )
 
     def process_response(self, req, resp, resource, req_succeeded):
         resp.set_header(_REQUEST_ID_HEADER, getattr(req.context, "request_id", ""))
@@ -73,6 +92,9 @@ class Endpoint:
         except WitnessError as exc:
             resp.status = falcon.util.code_to_http_status(exc.status)
             resp.content_type = _PROBLEM_JSON
+            # http-errors.md's worked examples carry Content-Language, because `detail` is prose
+            # and a client that localises needs to know what it just received.
+            resp.set_header("Content-Language", "en")
             resp.media = exc.problem(
                 instance=req.path, request_id=getattr(req.context, "request_id", None)
             )

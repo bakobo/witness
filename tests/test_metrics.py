@@ -192,3 +192,21 @@ def test_request_counts_are_empty_without_a_counter():
             assert callback(None) == []
             return
     raise AssertionError("gauge missing")
+
+
+@pytest.mark.parametrize(
+    ("gauge", "expected"),
+    [
+        ("witness.loop.lag", 0.5),
+        ("witness.loop.ticks", 5),
+        ("witness.database.used_fraction", 0.25),
+        ("witness.process.resident_bytes", 1024),
+        ("witness.process.cpu_seconds", 3.5),
+    ],
+)
+def test_single_valued_gauges_report_the_readers_number(gauge, expected):
+    """TST-F1: several gauges were only asserted to exist. A callback reading the wrong key, or
+    doing arithmetic on it, produced a plausible series that nothing would have caught."""
+    observed = collect(StubReader(), gauge)
+
+    assert [o.value for o in observed] == [expected]

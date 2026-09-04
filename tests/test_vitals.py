@@ -12,7 +12,7 @@ import os
 import pytest
 
 from witness import vitals
-from witness.errors import DbUnavailable
+from witness.errors import RunnerNotRunning
 
 
 def make_proc(root, pid, cmdline, *, comm="python", utime=200, stime=100, threads=3, rss=4096):
@@ -105,7 +105,7 @@ def test_a_command_name_containing_spaces_does_not_shift_the_fields(proc):
 
 
 def test_vitals_for_a_witness_that_is_not_running_fail_closed(proc):
-    with pytest.raises(DbUnavailable) as caught:
+    with pytest.raises(RunnerNotRunning) as caught:
         vitals.runner_vitals(proc=str(proc))
 
     assert caught.value.retryable is True
@@ -118,5 +118,25 @@ def test_a_runner_that_exits_between_being_found_and_being_read(proc, monkeypatc
     make_proc(proc, 8, "witness run --name witness")
     monkeypatch.setattr(vitals, "find_runner_pid", lambda proc=None: 999999)
 
-    with pytest.raises(DbUnavailable):
+    with pytest.raises(RunnerNotRunning):
         vitals.runner_vitals(proc=str(proc))
+
+
+def test_a_kernel_that_omits_vmrss_reports_none_rather_than_crashing(proc):
+    """TST-F4: this branch was behind a pragma. Not every runtime exposes VmRSS, and losing one
+    field should not lose the whole vitals response."""
+    directory = make_proc(proc, 8, "witness run --name witness")
+    (directory / "status").write_text("Name:\tpython\n")
+
+    reported = vitals.runner_vitals(proc=str(proc))
+
+    assert reported["vm_rss_bytes"] is None
+    assert reported["pid"] == 8
+
+
+def test_resident_bytes_is_reported_from_the_stat_rss_field(proc):
+    """TST-F5: the field was returned but never asserted, so a wrong index was invisible."""
+    page = os.sysconf("SC_PAGE_SIZE")
+    make_proc(proc, 8, "witness run --name witness", rss=page * 7)
+
+    assert vitals.runner_vitals(proc=str(proc))["resident_bytes"] == page * 7

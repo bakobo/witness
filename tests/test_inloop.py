@@ -351,3 +351,26 @@ def test_names_disambiguate_duplicates_and_bound_method_doers():
     )
 
     assert names == ["ServerDoer", "ServerDoer#2", "ServerDoer#3", "Holder.escrowDo"]
+
+
+def test_a_doist_built_without_telemetry_runs_its_doers_untimed():
+    """TST-F4: this branch was behind a pragma, so nothing proved a sink-less Doist still works —
+    which is what any future caller wiring a TimedDoist without a segment would get."""
+    from hio.base import doing
+
+    class Plain(doing.Doer):
+        def __init__(self, **kwa):
+            super().__init__(**kwa)
+            self.passes = 0
+
+        def recur(self, tyme):
+            self.passes += 1
+            return False
+
+    doers = [Plain(tock=0.0)]
+    doist = inloop.TimedDoist(tock=0.03125, real=False, doers=doers, sink=None)
+
+    doist.enter()
+    doist.recur()
+
+    assert doers[0].passes == 1

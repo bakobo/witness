@@ -205,3 +205,45 @@ def test_an_unmatched_path_is_counted_without_inventing_a_route():
     client.simulate_get("/v1/witness/nope")
 
     assert counter.counts[("unmatched", 404)] == 1
+
+
+def test_error_responses_declare_their_language():
+    """DX-F3. `detail` is prose, so a client that localises needs to know what it received."""
+    client = testing.TestClient(make_app(StubReader(health=DbUnavailable("down."))))
+
+    response = client.simulate_get("/v1/witness/health")
+
+    assert response.headers["content-language"] == "en"
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "x" * 200,
+        "abc\r\nX-Injected: yes",
+        "id with spaces",
+        "<script>alert(1)</script>",
+    ],
+)
+def test_a_hostile_request_id_is_replaced_rather_than_reflected(hostile):
+    """SEC-F4. The caller's id is echoed into a response header AND into the error body, so it is
+    attacker-controlled data on two output paths. A caller with a genuine correlation id needs
+    neither newlines nor two hundred characters to express it."""
+    client = testing.TestClient(make_app(StubReader()))
+
+    response = client.simulate_get("/v1/witness/health", headers={"Bakobo-Request-Id": hostile})
+
+    echoed = response.headers["Bakobo-Request-Id"]
+    assert echoed != hostile
+    assert len(echoed) <= 64
+    assert "\n" not in echoed and "\r" not in echoed
+
+
+def test_a_well_formed_request_id_is_still_carried_through():
+    client = testing.TestClient(make_app(StubReader()))
+
+    response = client.simulate_get(
+        "/v1/witness/health", headers={"Bakobo-Request-Id": "01K1M4YQ8ZP3V7.trace-9"}
+    )
+
+    assert response.headers["Bakobo-Request-Id"] == "01K1M4YQ8ZP3V7.trace-9"
