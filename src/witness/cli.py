@@ -10,7 +10,7 @@ falcon app over it, then serves; serving is delegated to :mod:`witness.server` (
 from __future__ import annotations
 
 from . import config, metrics, runner, server, supervisor
-from .app import make_app
+from .app import RequestCounter, make_app
 from .reader import WitnessReader
 
 
@@ -27,7 +27,10 @@ def main(argv=None) -> int:
     # Held for the process's lifetime rather than discarded: the PeriodicExportingMetricReader
     # inside it owns the background thread that does the exporting. Returns None, and costs
     # nothing, when no OTLP collector is configured (@wea6qjmk).
-    _metrics = metrics.configure(reader)  # noqa: F841 - kept alive deliberately
-    app = make_app(reader)
+    counter = RequestCounter()
+    app = make_app(reader, counter=counter)
+    _metrics = metrics.configure(  # noqa: F841 - kept alive deliberately
+        reader, counter=counter
+    )
     server.serve(app, cfg.host, cfg.port)
     return 0

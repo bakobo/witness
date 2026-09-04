@@ -88,9 +88,14 @@ def test_the_control_plane_starts_metric_export(monkeypatch):
     from witness import metrics as metrics_mod
 
     seen = {}
-    monkeypatch.setattr(metrics_mod, "configure", lambda reader: seen.setdefault("reader", reader))
+    monkeypatch.setattr(
+        metrics_mod,
+        "configure",
+        lambda reader, counter=None: seen.update(reader=reader, counter=counter),
+    )
     monkeypatch.setattr(server_mod, "serve", lambda app, host, port: None)
 
     cli.main(["control-plane", "--name", "w", "--port", "5621"])
 
     assert seen["reader"] is not None
+    assert seen["counter"] is not None, "export needs the request counter the app is counting into"

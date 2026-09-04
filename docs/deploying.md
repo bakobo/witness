@@ -56,6 +56,7 @@ Metrics leave over OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and are silen
 | `witness.escrow.depth{store="query_not_found"}` | The one observable for a query flood; see below |
 | `witness.database.used_fraction` | keripy's map ceiling is fixed at 100 MB and a witness that reaches it stops accepting events |
 | `witness.loop.doer.max_seconds{doer=…}` | Names the doer when the loop is slow |
+| `witness.controlplane.requests{route,status}` | Sets a rate limit from evidence rather than a guess |
 
 Do not alert on `witness.process.*` thresholds. They are for diagnosis after an alert fires, and `ops.md` §7 is explicit that CPU and memory thresholds carrying no action just train their recipient to ignore the channel.
 

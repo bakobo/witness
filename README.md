@@ -81,7 +81,7 @@ The control plane exports OpenTelemetry metrics over OTLP when a collector endpo
 OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318 witness control-plane ...
 ```
 
-There is no scrape endpoint, deliberately: `bakobo/dev`'s `ops.md` §7 puts the OpenTelemetry SDK in code Bakobo writes and OTLP on the wire.
+Series cover witness liveness, loop lag and per-doer maxima, escrow depth per store, database usage, process vitals, and control-plane request counts by route template and status. There is no scrape endpoint, deliberately: `bakobo/dev`'s `ops.md` §7 puts the OpenTelemetry SDK in code Bakobo writes and OTLP on the wire.
 
 ## Errors
 

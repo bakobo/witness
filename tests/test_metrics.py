@@ -167,3 +167,28 @@ def test_configure_builds_a_provider_carrying_every_gauge():
         assert provider is not None
     finally:
         provider.shutdown()
+
+
+class Counter:
+    counts = {("/v1/witness/health", 200): 3, ("/v1/witness/health", 503): 1}
+
+
+def test_request_counts_are_reported_by_route_and_status():
+    for name, _u, _d, callback in metrics.build_callbacks(StubReader(), Observation, Counter()):
+        if name == "witness.controlplane.requests":
+            observed = callback(None)
+            break
+
+    assert {(o.attributes["route"], o.attributes["status"], o.value) for o in observed} == {
+        ("/v1/witness/health", "200", 3),
+        ("/v1/witness/health", "503", 1),
+    }
+
+
+def test_request_counts_are_empty_without_a_counter():
+    """metrics.configure is usable without an app, so the gauge must tolerate having no source."""
+    for name, _u, _d, callback in metrics.build_callbacks(StubReader(), Observation):
+        if name == "witness.controlplane.requests":
+            assert callback(None) == []
+            return
+    raise AssertionError("gauge missing")

@@ -10,7 +10,7 @@ not) is exactly what a shared envelope test prevents recurring.
 import pytest
 from falcon import testing
 
-from witness.app import make_app
+from witness.app import RequestCounter, make_app
 from witness.errors import ControllerUnknown, DbUnavailable, WitnessNotIncepted
 
 
@@ -172,3 +172,36 @@ def test_a_wrong_verb_is_refused(client):
 
     assert response.status_code == 405
     assert "allow" in {key.lower() for key in response.headers}
+
+
+def test_requests_are_counted_by_route_template_not_by_path():
+    """A counter keyed by the raw path would mint a new series per controller AID, which is the
+    classic way to make a metrics backend unusable. falcon's uri_template is the right label."""
+    counter = RequestCounter()
+    client = testing.TestClient(make_app(StubReader(), counter=counter))
+    client.simulate_get("/v1/witness/controller/BOne")
+    client.simulate_get("/v1/witness/controller/BTwo")
+    client.simulate_get("/v1/witness/health")
+
+    counts = counter.counts
+    assert counts[("/v1/witness/controller/{aid}", 200)] == 2
+    assert counts[("/v1/witness/health", 200)] == 1
+
+
+def test_failures_are_counted_separately_from_successes():
+    """Rejection counts are what let a limit be set from evidence rather than guessed."""
+    counter = RequestCounter()
+    client = testing.TestClient(make_app(StubReader(health=DbUnavailable("down.")), counter=counter))
+
+    client.simulate_get("/v1/witness/health")
+
+    assert counter.counts[("/v1/witness/health", 503)] == 1
+
+
+def test_an_unmatched_path_is_counted_without_inventing_a_route():
+    counter = RequestCounter()
+    client = testing.TestClient(make_app(StubReader(), counter=counter))
+
+    client.simulate_get("/v1/witness/nope")
+
+    assert counter.counts[("unmatched", 404)] == 1
