@@ -218,6 +218,29 @@ Operator layer over a stock keripy witness = goal:
             in /info are readable without auth. These response shapes are frozen external contracts
             once shipped; changing them needs a new node.
 
+        The P2 read surface is nine GET nouns and their response shapes = decision:
+          id: zc7p7qth
+          why: >
+            @h5n2rk made an endpoint's response shape a node-governed external contract, and the
+            P2 surface shipped seven new ones without a node — @zzbdxa governs the GRAMMAR those
+            paths follow, not which paths exist. This node is the missing record, and it enumerates
+            them so a later change has something to be a change TO: health (status, and ticks when
+            telemetry is available), identity (aid, alias), version (witness, keripy), loop (the
+            telemetry segment), escrow (depth per store, total), database (path, used_bytes,
+            map_bytes, used_fraction, last_transaction, readers), process (the runner's vitals),
+            controller (aid, sequence_number, said per held controller), and controller/{aid}
+            (adding witnesses and threshold). The carve follows url-design's insight test: /info
+            was split because varying the keripy version, the database path and the AID each change
+            the shape of a different answer, so grouping them under one noun predicted nothing.
+            Health gained a `ticks` field and a `degraded` status served at 200, which @h5n2rk's
+            freeze did not contemplate: ops.md §7 asks a probe to prove the service is working, and
+            a witness whose loop has wedged opens its database perfectly. Degraded is 200 rather
+            than 503 deliberately — the control plane IS working and is reporting accurately on
+            something else, and an HTTP status is a verdict on the exchange rather than on the
+            subject (http-errors.md). Accepted tradeoff: nine shapes are now frozen contracts, and
+            the read surface is unauthenticated until @s6v3qm lands, which is why the port binds
+            behind the estate's proxy.
+
         Metrics leave over OTLP  and only when an endpoint is configured = decision:
           id: wea6qjmk
           why: >
@@ -291,6 +314,36 @@ Operator layer over a stock keripy witness = goal:
         and docs. The two processes stay independently deployable (separate invocations / containers);
         sharing a CLI package does not couple their runtime. Accepted tradeoff: one package ships
         both roles even on a host that runs only one.
+      children:
+
+        The CLI is three subcommands  the third being the in-image supervisor = decision:
+          id: ixdaut53
+          why: >
+            @g3w6px named two process roles, `control-plane` and a later `run`. Both now exist, and
+            a third shipped without being named: `supervise`, which @a24p3kbw's one-container shape
+            requires — something has to start both processes, forward the container's stop signal,
+            and enforce the asymmetric failure policy @c7v3kp implies. It belongs on this CLI by
+            @g3w6px's own argument (one entry point operators install and discover) even though it
+            is not a witness role in the way the other two are: it is the thing that runs roles.
+            Rejected a separate `witness-supervise` console script, which fragments discovery
+            exactly as @g3w6px rejected; rejected supervisord and s6, because the org standard is
+            provable 100% branch coverage and neither an untested shell entrypoint nor an opaque
+            third-party binary can meet it, and neither gives the asymmetric policy by default.
+            Accepted tradeoff: this repo now owns process-supervision code, a category of bug it
+            did not previously have.
+
+        Intent for @wea6qjmk landed in the same commit as its code = deviation:
+          id: 2gep42zc
+          why: >
+            methodology §5 requires the intent commit to precede the code commit it justifies, and
+            every other node here did that — @lypmcw7f, @a24p3kbw, @vxt7feoi and their children all
+            landed code-free. @wea6qjmk did not: commit 7493ade carries the node together with
+            metrics.py and its tests. Recorded as a deviation rather than repaired, because the
+            repair would be a history rewrite to buy back a discipline whose whole value is that it
+            was observable at the time — and it was not. §7 says deviation nodes are the complete
+            list of approved gaps, so an unrecorded gap is a defect while a recorded one is a
+            judgment. Found by the v0.1.0-rc review panel (CON-F2) rather than by the author, which
+            is what running one is for.
 
     The deployable artifact is a container image built from this repo = decision:
       id: lypmcw7f
