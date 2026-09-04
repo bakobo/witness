@@ -99,29 +99,19 @@ later need to know *why*) may skip intent entirely — just delete `this.i.seed`
 
 ## Testing Protocol
 
-This repository appears to have no test suite yet. Before writing feature code
-or fixing bugs, propose an appropriate testing framework for this project type
-and add a single trivially-passing test to confirm the setup works. In the
-same commit, propose to change AGENTS.md to replace this instruction with one
-that instructs agents to follow strict TDD from now on: write failing tests
-that capture happy path and edge cases/unhappy paths for each requirement,
-observe them fail, implement until tests pass, never checkin without proving
-that all tests pass, aim for 100% of all new code, and always leave existing
-code better tested than it was before you touched it.
+Follow strict TDD. For each requirement, write failing tests that capture the happy path **and**
+the edge and unhappy paths, observe them fail, then implement until they pass. Never check in
+without proving the whole suite passes. Aim for 100% branch coverage of all new code — the suite
+is gated at `--cov-fail-under=100`, so anything less fails CI rather than merely disappointing
+someone. Always leave existing code better tested than you found it.
+
+Two kinds of test here are deliberately *not* counted toward coverage, and both exist because a
+unit suite can pass while the shipped artifact is broken. `tests/test_smoke.py` starts the real
+console script in a subprocess; `tests/test_image_smoke.py` runs the built container and is
+skipped unless `WITNESS_IMAGE` names an image. Add to them when you change what ships, not only
+what is imported.
 
 ## CI and Documentation
-
-This repo appears to have no CI workflows yet. Until it does, any time you make
-code changes to the user, propose an appropriate set of GitHub actions (e.g.,
-`.github/workflows/ci.yml`) that builds and runs tests on every push and
-pull request. Propose to remove this instruction from AGENTS.md on the
-same commit.
-
-This repository has no README. As long is this is the case, any time you
-make code changes for the user, propose to add a `README.md` that explains how
-to get from a fresh clone to passing tests, with a clickable CI status
-badge at the top for each active workflow. Propose to remove this
-instruction from AGENTS.md on the same commit.
 
 When writing or modifying GitHub Actions workflows, always use the latest
 stable release of each action. Avoid versions pinned to Node.js 16 or
