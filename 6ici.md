@@ -1,0 +1,4 @@
+# Follow up on WebOfTrust/keripy#1671, opened 2026-09-05: two cheap fixes on the query-not-found retry path. (1) processQuery re-escrows on every retry via escrowQueryNotFoundEvent, doing four LMDB writes that change nothing — Suber.put does not overwrite so the timestamp is not even refreshed, and qnfs.add re-adds an existing member. (2) processQueryNotFound reads sigs twice for the same entry. The issue offers a PR for both; if it gets a positive response, that PR is ours to write. Measured context lives in docs/escrow-load.md — deliberately NOT in the issue, since the numbers come from one box with our own config and would move the discussion onto the harness. If accepted upstream, our own escrow pacing (@zj3h2pzh) gets cheaper per sweep and the contract tests in tests/test_escrows.py will need rechecking against the new escrowDo.
+kind: todo
+created: 2026-09-05T20:55Z
+
