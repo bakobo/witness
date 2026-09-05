@@ -81,7 +81,9 @@ Read the max column honestly: pacing does not make the work disappear, it **batc
 
 **For the edge.** A per-source rate limit is worth having and is not sufficient. One source at 1 req/s is enough to degrade, so a limit loose enough for legitimate traffic — a witness serves KELs to strangers on demand — still admits it, and a hundred sources at 0.01 req/s each is invisible to any per-source limit. Rate limiting raises the cost of the lazy version; it does not close the vector.
 
-**Upstream.** This is now a measurement rather than a code reading, which is what the standing rule required before saying anything to WebOfTrust. It is still a *hardening* observation and not a defect: `TimeoutQNF` exists precisely to bound this, and it does. If it is ever raised, the useful framing is the slope and the sub-1-req/s onset, not the word "amplification". Nobody has posted anything, and per the standing rule nobody will except Daniel.
+**Upstream.** Two consequences of this work were raised on 2026-09-05 as [WebOfTrust/keripy#1671](https://github.com/WebOfTrust/keripy/issues/1671), and deliberately *not* the load finding. The issue proposes two cheap fixes on the retry path — the re-escrow that writes four times and changes nothing, and a duplicated `sigs.get` — because they stand on their own as waste, help every escrow rather than this one, and carry none of the framing risk of an abuse report. The measurement stayed out of it: the numbers come from one container on one box with our own configuration, and quoting them invites a discussion about the harness instead of the code.
+
+The load finding itself remains a *hardening* observation rather than a defect — `TimeoutQNF` exists to bound this, and it does. If it is ever raised, the useful framing is the slope and the sub-1-req/s onset, not the word "amplification".
 
 ## What this does not cover
 
