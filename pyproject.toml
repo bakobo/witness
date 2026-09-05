@@ -1,6 +1,6 @@
 [project]
 name = "witness"
-version = "0.1.0"
+version = "0.1.1"
 description = "Bakobo's operator layer over a stock keripy witness — observe a running witness without forking keripy."
 readme = "README.md"
 requires-python = ">=3.14"
