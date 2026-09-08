@@ -1,5 +1,6 @@
 [![CI](https://github.com/bakobo/witness/actions/workflows/ci.yml/badge.svg)](https://github.com/bakobo/witness/actions/workflows/ci.yml)
 [![Image](https://github.com/bakobo/witness/actions/workflows/image.yml/badge.svg)](https://github.com/bakobo/witness/actions/workflows/image.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 # witness
 
@@ -113,3 +114,7 @@ The code carries the meaning: it is classified by what the obstacle was rather t
 ## Authentication
 
 This release is unauthenticated, which is why the control-plane port must be bound to loopback and reached through the estate's reverse proxy rather than exposed. Signed requests (RFC 9421, via `heti`) are the next phase and are required before any endpoint that changes anything.
+
+## License
+
+Apache-2.0.
