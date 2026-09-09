@@ -14,7 +14,8 @@ The design and its rationale live in `this.i` (the intent tree, the source of tr
 
 - Python ≥ 3.14 (keripy's floor)
 - [`uv`](https://docs.astral.sh/uv/)
-- An SSH key with access to `bakobo/heti`, which is a private dependency pinned by SSH URL. `uv sync` fetches it over SSH, so `ssh -T git@github.com` must succeed before a fresh clone will resolve. CI uses a GitHub App token instead; the container build takes one from `gh auth token`.
+
+Every dependency is public and pinned by commit, so `uv sync` resolves anonymously and needs no credential of any kind.
 
 ## From a fresh clone to passing tests
 
@@ -26,13 +27,11 @@ uv run pytest
 The suite runs under a **100% branch-coverage gate**. It includes an install-and-invoke smoke test that starts the real `witness` console script against a temporary witness database. A separate image oracle runs the built container end to end and is skipped unless you point it at an image:
 
 ```sh
-GH_TOKEN=$(gh auth token) docker build --secret id=gh_token,env=GH_TOKEN -t witness:dev .
+docker build -t witness:dev .
 WITNESS_IMAGE=witness:dev uv run pytest tests/test_image_smoke.py
 ```
 
 There is also a load oracle that measures what a flood of unanswerable queries costs the witness — slow, gated behind `WITNESS_LOAD`, and documented with its measured curve in [`docs/escrow-load.md`](docs/escrow-load.md).
-
-The build needs a token only because `heti` is private and pinned by SSH URL; `gh auth token` is enough, and no personal access token is involved.
 
 ## Running it
 
@@ -113,7 +112,7 @@ The code carries the meaning: it is classified by what the obstacle was rather t
 
 ## Authentication
 
-This release is unauthenticated, which is why the control-plane port must be bound to loopback and reached through the estate's reverse proxy rather than exposed. Signed requests (RFC 9421, via `heti`) are the next phase and are required before any endpoint that changes anything.
+This release is unauthenticated, which is why the control-plane port must be bound to loopback and reached through the estate's reverse proxy rather than exposed. Signed requests (RFC 9421, via [`fiki`](https://github.com/bakobo/fiki)) are the next phase and are required before any endpoint that changes anything.
 
 ## License
 

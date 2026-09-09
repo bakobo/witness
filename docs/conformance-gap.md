@@ -77,15 +77,16 @@ Classified by **obstacle**, per the closed first-descriptor set at `error-codes.
 | `witness.identity.unavailable` | `e.env.witness-uninitialized.r` | The database opened but holds no witness hab. **Boundary call, flagged rather than settled:** `e.state.pending.r` is arguable, since the obstacle is the condition of the target — but that maps to 409, which reads wrong on a liveness-adjacent read. `error-codes.md:222` says consult before minting. | 503 |
 | `witness.config.invalid` (missing arg) | `e.input.missing.f` | Splits in two. Today one code covers both cases. | 400 / CLI |
 | `witness.config.invalid` (bad port) | `e.input.range.f` | The offending value and the valid range go in `args`. | 400 / CLI |
-| `witness.error` | *not a code* | Becomes the base exception class carrying an `ErrorCode`, mirroring `HetiError`. A bare descriptor is never a code. | — |
+| `witness.error` | *not a code* | Becomes the base exception class carrying an `ErrorCode`, mirroring `BakoboError`. A bare descriptor is never a code. | — |
 
-Reuse rather than rebuild: `ErrorCode`, `HetiError` and `matches` already exist in
-`~/code/bakobo/heti/src/heti/errors.py`, and witness now depends on heti. The standard describes
-these as living in a "shared Bakobo error package" (`error-codes.md:94`) that does not exist as its
-own repo — so importing from heti is the available option, and worth its own decision if
-`bakobo/errors` is ever extracted.
+Reuse rather than rebuild: `ErrorCode`, `BakoboError` and the `is_a` / `is_like` / `is_exactly`
+matchers live in [`bakobo/errors`](https://github.com/bakobo/errors), which is the "shared Bakobo
+error package" `error-codes.md:94` describes. This paragraph used to say that package did not exist
+as its own repo and that importing from heti was therefore the available option; it has since been
+extracted, is public, and is what `did-webs` depends on — so the extraction this section was
+waiting for has happened, and taking the dependency is the remaining work rather than a question.
 
-Register on the heti pattern, literals at module scope, static titles, named args:
+Register on that pattern, literals at module scope, static titles, named args:
 
 ```python
 DB_UNAVAILABLE = ErrorCode(

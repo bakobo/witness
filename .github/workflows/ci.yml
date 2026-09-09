@@ -12,39 +12,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      # persist-credentials:false is load-bearing, not hygiene. When true, checkout writes
-      # `http.https://github.com/.extraheader` carrying the repo-scoped GITHUB_TOKEN, and that
-      # header beats the credentials the insteadOf rewrite below embeds in the URL — so every
-      # github.com fetch authenticates as a token that cannot see heti ("Repository not found").
+      # persist-credentials:false is kept after the private-dependency machinery went away
+      # (@qojsxe7s). It was load-bearing then, because the extraheader checkout writes beat the
+      # credentials an insteadOf rewrite embedded in the URL; it is ordinary hygiene now, and a
+      # job that resolves a fully public closure has no reason to leave a token in .git/config.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-
-      # witness depends on private intra-org repos (heti) by git SHA. The Bakobo Dependency
-      # Reader App mints a short-lived, contents:read-only token so `uv sync` can fetch them.
-      # client-id is a public identifier, not a credential; only the private key is secret.
-      - name: Mint a token for private intra-org dependencies
-        id: dep-reader
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          client-id: Iv23liAQRlNEpCyR1RXt
-          private-key: ${{ secrets.DEP_READER_PRIVATE_KEY }}
-          owner: bakobo
-          repositories: heti
-      # Private deps are pinned by SSH URL, because every Bakobo developer has SSH keys and a
-      # fresh clone should need no credential setup. The runner has no SSH key, so it rewrites
-      # those URLs to HTTPS carrying the App token. The rewrite is here rather than in
-      # pyproject.toml so the cost of CI's credential model falls on CI.
-      - name: Authenticate git for private intra-org dependencies
-        env:
-          TOKEN: ${{ steps.dep-reader.outputs.token }}
-        run: |
-          git config --global \
-            url."https://x-access-token:${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
-      # Isolates "the credential is broken" from "dependency resolution is broken", which
-      # `uv sync` alone cannot distinguish. Uses the SSH form so it exercises the rewrite too.
-      - name: Verify private dependency access
-        run: git ls-remote ssh://git@github.com/bakobo/heti HEAD > /dev/null
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7

@@ -64,12 +64,17 @@ than to a gap in what exists. It becomes due with the first endpoint that reads 
 
 | Capability | Source |
 |---|---|
-| Authenticate each request as RFC 9421 HTTP Message Signatures, via `heti.l0.verify_request` | `s6v3qm` |
+| Authenticate each request as RFC 9421 HTTP Message Signatures, via `fiki.verify_request` | `s6v3qm` |
 | Authorize against an operator-AID allowlist | `s6v3qm` |
 
-`s6v3qm` also fixes the credential shape: the caller proves a **non-transferable** AID. heti's L0
-rejects transferable AIDs outright, so an operator's credential is a bare Ed25519 key, not their
-organizational KERI identity.
+`s6v3qm` also fixes the credential shape: the caller proves a **non-transferable** AID. fiki's
+identifier *is* the Ed25519 verifying key — a 44-character `B…` string in CESR's `Ed25519N`
+encoding — so a transferable AID is not something it accepts and best-effort checks; it is not
+representable. An operator's credential is a bare key, not their organizational KERI identity.
+
+A second thing `s6v3qm`'s amendment leaves open: fiki raises typed exceptions under `FikiError` and
+carries no Bakobo error codes, deliberately. The translation onto `e.input.*` / `e.proof.*` that
+heti used to do at its own boundary is now witness's to write.
 
 ### Running the witness
 
@@ -129,9 +134,12 @@ decisions that will get made silently if nobody names them.
 - **Where the operator allowlist comes from, and how it changes.** `s6v3qm` says there is one. It
   does not say whether it is a file, a flag, or a table, nor whether changing it restarts the
   process.
-- **Replay defense.** heti's L0 deliberately performs no timestamp-freshness check — `dialect.py:12`
-  says so, and heti's own `this.i` makes freshness an L1 concern. A captured signed GET therefore
-  replays indefinitely unless witness bounds it. Nothing in witness's record acknowledges this.
+- **Replay defense.** fiki offers the check but refuses to choose for you: `verify_request` takes a
+  required `max_age`, with no default, because a default would either guess at somebody else's
+  replay window or silently skip the check. Its `Verdict` also carries no timestamp and says
+  outright that it asserts no freshness. So a captured signed GET replays indefinitely unless
+  witness passes a bound — which makes this a decision the call site cannot avoid making, rather
+  than one it can fail to notice. What that bound should be is still unrecorded.
 - **Operator key rotation.** A non-transferable AID is a bare key with no key history by
   construction. Rotating an operator's credential means editing the allowlist; there is no
   cryptographic rotation path. `s6v3qm` doesn't mention it.

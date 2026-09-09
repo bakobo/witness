@@ -25,8 +25,8 @@
 # ---------------------------------------------------------------------------------------------
 FROM python:3.14-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f AS builder
 
-# git is build tooling: both keripy and heti are pinned as git references, so resolution needs a
-# git client. Confined to this stage, which is the whole point of the split.
+# git is build tooling: keripy is pinned as a git reference, so resolution needs a git client.
+# Confined to this stage, which is the whole point of the split.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -41,22 +41,11 @@ WORKDIR /src
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-# heti is private and pinned by SSH URL, because every Bakobo developer has SSH keys and a fresh
-# clone should need no credential setup. A build has no SSH agent, so it rewrites that URL to
-# HTTPS carrying a short-lived token, exactly as CI does for `uv sync` (.github/workflows/ci.yml).
-# The token arrives as a BuildKit secret so it never lands in a layer or in `docker history`.
-# Locally: --secret id=gh_token,env=GH_TOKEN with GH_TOKEN=$(gh auth token). No PAT is involved
-# at either end. required=false so a future all-public closure still builds with no secret.
-RUN --mount=type=secret,id=gh_token,required=false \
-    set -eu; \
-    if [ -s /run/secrets/gh_token ]; then \
-        git config --global \
-            url."https://x-access-token:$(cat /run/secrets/gh_token)@github.com/".insteadOf \
-            "ssh://git@github.com/"; \
-    fi; \
-    uv sync --frozen --no-dev --no-editable
-# No cleanup of that git config is needed: it lives in this stage's /root/.gitconfig, and only
-# /opt/venv crosses into the runtime image.
+# The closure is entirely public (@qojsxe7s), so this resolves anonymously and the build takes no
+# secret at all. It used to mount a BuildKit secret carrying a GitHub App token and rewrite an SSH
+# URL to HTTPS, because heti was private; @s6v3qm replaced heti with fiki, which is public, and
+# the machinery went with it rather than being left inert against a future that may not come.
+RUN uv sync --frozen --no-dev --no-editable
 
 # ---------------------------------------------------------------------------------------------
 # Runtime: the interpreter, one native library, and the resolved venv. No compiler, no git, no uv.

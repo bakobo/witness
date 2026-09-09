@@ -7,13 +7,9 @@ requires-python = ">=3.14"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Bakobo" }]
 dependencies = [
+    # Public, so plain HTTPS resolves it anonymously — for anyone, with or without a Bakobo
+    # account. That is now true of the whole closure (@qojsxe7s); heti was the one exception.
     "keri @ git+https://github.com/bakobo/keripy@366d81071aea7be5b8ad35acbed815e1255224d5",
-    # heti pins the same keri commit (f5j3wc); the two must never diverge or `keri` cannot resolve.
-    # SSH because heti is private and every Bakobo developer already has SSH keys, so a fresh
-    # clone needs no credential setup. CI has no SSH key and instead rewrites this to an HTTPS
-    # URL carrying a GitHub App token (.github/workflows/ci.yml). keripy stays HTTPS: it is
-    # public, so anonymous HTTPS resolves it for anyone, with or without a Bakobo account.
-    "heti @ git+ssh://git@github.com/bakobo/heti@cd83690286c47241460fa6e2dc81a59abb452d16",
     "falcon",
     "waitress",
     # ops.md §7 mandates the OpenTelemetry SDK in code Bakobo writes, with OTLP on the wire
@@ -30,6 +26,13 @@ witness = "witness.cli:main"
 dev = [
     "pytest>=8",
     "pytest-cov>=5",
+    # The RFC 9421 verifier @s6v3qm rides. It is a DEV dependency and not a runtime one because
+    # the auth path it serves has not landed: nothing under src/ imports fiki, and declaring a
+    # runtime dependency the package never imports would be a claim the code does not support.
+    # tests/test_fiki_contract.py holds the shape witness will call, so the assumptions are
+    # already under test when the auth work starts; move this line into `dependencies` then.
+    # Pinned at the py/v0.5.0 tag rather than main: that commit is the released Python artifact.
+    "fiki @ git+https://github.com/bakobo/fiki@f1c8999bd78d9fee7661672c92a9931fae9ab6f1#subdirectory=py",
 ]
 
 [build-system]

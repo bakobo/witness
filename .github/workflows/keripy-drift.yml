@@ -27,25 +27,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Mint a token for private intra-org dependencies
-        id: dep-reader
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          client-id: Iv23liAQRlNEpCyR1RXt
-          private-key: ${{ secrets.DEP_READER_PRIVATE_KEY }}
-          owner: bakobo
-          repositories: heti
-      - name: Authenticate git for private intra-org dependencies
-        env:
-          TOKEN: ${{ steps.dep-reader.outputs.token }}
-        run: |
-          git config --global \
-            url."https://x-access-token:${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
-
-      # An override rather than an edit to the keri line, because heti pins keripy too (f5j3wc).
-      # Repointing only witness's pin would make the two disagree, and the job would fail on
-      # resolution rather than on drift — a false signal wearing the right colour.
-      - name: Repoint keripy at main, for heti's pin as well as ours
+      # An override rather than an edit to the keri line. When heti was a dependency this was
+      # load-bearing — heti pinned keripy too, so repointing only witness's pin made the two
+      # disagree and the job failed on resolution rather than on drift (@f5j3wc, now dissolved).
+      # Kept as an override anyway: it leaves pyproject.toml's pin untouched, so the diff this
+      # job produces is about keripy's main and never about the file it edited to look there.
+      - name: Repoint keripy at main
         run: |
           cat >> pyproject.toml <<'EOF'
 

@@ -229,6 +229,14 @@ Operator layer over a stock keripy witness = goal:
             the oracle. Resolved 2026-07-27: heti bumped (heti@2c4247c), suite green (57 passed,
             100% branch). witness pins keri@366d8107 to match.
 
+            Dissolved 2026-09-09 by @s6v3qm's amendment. heti is no longer a dependency, and fiki —
+            which replaces it — has no keripy dependency to collide with ours, by its own
+            construction. keri now resolves once because only witness asks for it, so the constraint
+            this node existed to hold has no second party. The pin itself stands — this repo owns it
+            (@lypmcw7f) and the drift workflow still watches it; what goes away is the co-resolution
+            hazard and the gated-bump ceremony around it. Kept rather than deleted because this node
+            is why the pin is where it is, and a reader finding 366d8107 deserves the history.
+
     v1 is read-only audit and inspection = decision:
       id: t3k6ps
       why: >
@@ -342,23 +350,39 @@ Operator layer over a stock keripy witness = goal:
             is not a lemma yet, so the error envelope can land now while the path rename waits on
             minting it.
 
-    Authenticate with RFC 9421 message signatures via heti = decision:
+    Authenticate with RFC 9421 message signatures via fiki = decision:
       id: s6v3qm
       why: >
         The control plane authenticates each request with an RFC 9421 HTTP Message Signature: the
         caller proves a non-transferable AID, which is stronger than a shared bearer secret and fits
-        the KERI posture. Reuses heti.l0.verify_request (KERI-flavor RFC 9421) rather than
-        reimplementing 9421 or using bearer tokens (reuse-before-build). Authorization is an
-        operator-AID allowlist. Accepted tradeoff: callers must sign requests (heti / signify-ts
-        clients), a higher bar than presenting a token.
+        the KERI posture. Reuses a library's 9421 verifier rather than reimplementing 9421 or using
+        bearer tokens (reuse-before-build). Authorization is an operator-AID allowlist. Accepted
+        tradeoff: callers must sign requests, a higher bar than presenting a token.
 
-    Implement in Python to reuse keripy and heti = decision:
+        Amended 2026-09-09: the verifier is fiki, not heti. This node originally named
+        heti.l0.verify_request, then heti.ephemeral.verify_request after a rename. That bundle has
+        since been extracted into bakobo/fiki as a library of its own (fiki this.i @07wstqk7), so
+        depending on heti for it now buys the whole KERI stack to get a function that deliberately
+        does not use it — fiki forbids keripy and bakobo-errors as dependencies rather than merely
+        omitting them, and enforces it with a test. Two consequences follow and are accepted. First,
+        fiki is public, so witness's only private dependency is gone and a clone resolves
+        anonymously — which is what lets this repo be public at all (@qojsxe7s). Second, fiki raises
+        typed exceptions under FikiError and carries no Bakobo error codes, so the mapping onto
+        e.input.*/e.proof.* that heti did at its boundary does not come along: witness must do that
+        translation itself when auth lands, against the error-codes standard. Rejected keeping heti
+        for the code mapping, which would reintroduce the private dependency to avoid writing a
+        dozen lines of translation. Also noted: fiki's verify_request takes url rather than path and
+        requires an explicit max_age, so the call site must decide a replay window rather than
+        inherit one.
+
+    Implement in Python to reuse keripy = decision:
       id: d4h7kt
       why: >
         The control plane reuses keripy's own DB accessors and CESR/Serder to read and render
-        witnessed state, and the auth dependency heti is Python; a different language would
-        reimplement keripy's LMDB schema and CESR parsing. Driving constraint: Python >=3.14 (the
-        keripy and heti floor).
+        witnessed state; a different language would reimplement keripy's LMDB schema and CESR
+        parsing. Driving constraint: Python >=3.14, which is keripy's floor. Amended 2026-09-09:
+        this node also cited heti, which is no longer a dependency (@s6v3qm). Its replacement, fiki,
+        floors at 3.11 and so constrains nothing here — keripy alone sets the floor now.
 
     One witness CLI with subcommands per process role = decision:
       id: g3w6px
@@ -476,3 +500,29 @@ Operator layer over a stock keripy witness = goal:
             retention policy is set from the start: the realistic risk at 53 MB compressed, with
             layers shared across versions, is untended accumulation rather than per-pull cost.
             Accepted tradeoff: a GHCR token must reach the deploy path.
+
+    The repository is public under Apache-2.0 = decision:
+      id: qojsxe7s
+      why: >
+        witness is published: the GitHub repository is public and the tree carries the Apache-2.0
+        text. Recorded 2026-09-09. The driver is that every KERI operator running a stock keripy
+        witness has the observability problem this repo solves, and @q4m7tz already committed to
+        solving it WITHOUT forking keripy — which is the property that makes the answer portable to
+        operators who are not Bakobo. Publishing is also what lets this repo be offered to the KERI
+        Foundation, which is the occasion for the decision rather than its justification.
+
+        Two things had to be true first and now are. The dependency closure resolves anonymously:
+        heti was the one private dependency and @s6v3qm replaced it with fiki, which is public, so a
+        stranger's `uv sync` succeeds where before it needed an SSH key against a repo they cannot
+        see. And the credential machinery that existed only to reach heti from CI and from the image
+        build — the bakobo-dependency-reader App token, the insteadOf rewrite, the
+        persist-credentials:false that the rewrite made load-bearing, the gh_token build secret — is
+        removed rather than left inert, because machinery nobody needs is machinery nobody maintains.
+
+        Accepted tradeoffs. The unauthenticated read-only control plane and the escrow-amplification
+        note in docs/deploying.md are now public reading, so the deployment contract has to hold on
+        its own merits rather than on nobody looking; @h5n2rk and @t3k6ps already took that risk
+        deliberately for a read-only surface carrying no key material, and publication does not
+        change the analysis, only the audience. The GHCR image stays private (@lnk24kwp), so a
+        reader can build the image but cannot pull the one Bakobo ships — a gap worth closing
+        deliberately rather than by drift, and not closed here.

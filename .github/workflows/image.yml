@@ -26,21 +26,11 @@ jobs:
       contents: read
       packages: write
     steps:
-      # persist-credentials:false is load-bearing, not hygiene — see the note in ci.yml. A
-      # persisted extraheader carrying the repo-scoped GITHUB_TOKEN beats the URL credentials the
-      # insteadOf rewrite embeds, and every fetch then authenticates as a token that cannot see heti.
+      # persist-credentials:false — see the note in ci.yml. Hygiene now rather than load-bearing,
+      # since the closure went fully public (@qojsxe7s).
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-
-      - name: Mint a token for private intra-org dependencies
-        id: dep-reader
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          client-id: Iv23liAQRlNEpCyR1RXt
-          private-key: ${{ secrets.DEP_READER_PRIVATE_KEY }}
-          owner: bakobo
-          repositories: heti
 
       # Interpolation happens here, into env, rather than inside a run: body, so nothing from the
       # event can be spliced into a shell command.
@@ -68,15 +58,12 @@ jobs:
 
       - name: Build the image
         env:
-          GH_TOKEN: ${{ steps.dep-reader.outputs.token }}
           PRIMARY: ${{ steps.names.outputs.primary }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           # --load puts the result in the local daemon so the oracle below can actually run it.
-          # The token is a BuildKit secret, so it never lands in a layer or in `docker history`.
           docker buildx build \
-            --secret id=gh_token,env=GH_TOKEN \
             --build-arg "SOURCE_REVISION=${SHA}" \
             --load \
             -t "${PRIMARY}" \
@@ -87,13 +74,6 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-
-      - name: Authenticate git for private intra-org dependencies
-        env:
-          TOKEN: ${{ steps.dep-reader.outputs.token }}
-        run: |
-          git config --global \
-            url."https://x-access-token:${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
 
       # --frozen fails rather than silently updating uv.lock, so a dependency that drifted from
       # the lockfile is a red build instead of an image nobody can reproduce.
