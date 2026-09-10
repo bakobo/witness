@@ -122,6 +122,19 @@ Node.js 20 (both deprecated by GitHub). In 2026, this meant to prefer Node.js
 24-compatible versions, but the standard may evolve over time. Check the GitHub
 Marketplace for each action's current release.
 
+## Changes reach `main` through a pull request
+
+**Do not push to `main`.** Branch, push the branch, open a PR, let CI report, merge it. `test` and
+`image` are required checks and both run on `pull_request`, so a PR gets them without any special
+handling. No approving review is required — a solo maintainer merges their own PR — and the merge
+is a merge commit or a rebase, never a squash.
+
+An organization admin *can* push straight to `main`; the ruleset grants that bypass on purpose, as
+an escape hatch for the case where the process is the thing that is broken. It is an escape hatch
+and not a shortcut. A push that reports `Bypassed rule violations` is a thing you chose, so choose
+it deliberately and say why. The reason this rule is written down at all is that the bypass is
+silent from the pushing side: nothing asks for confirmation, and the notice arrives after the fact.
+
 <!-- >>> tick stanza >>> (managed by `tick init`) -->
 
 ## Task tracking: `tick`

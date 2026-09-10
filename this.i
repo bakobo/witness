@@ -544,3 +544,34 @@ Operator layer over a stock keripy witness = goal:
         treated as evidence of the world's state when it was only evidence of a past intention, and
         the sentence warning against drift was itself the drifted one. Check the artifact, not the
         record of the artifact. @lnk24kwp is corrected too.
+
+    Changes reach main through a pull request  admins may bypass = decision:
+      id: lu4a5qy6
+      why: >
+        Recorded 2026-09-10. `main` carries an active ruleset requiring a pull request and the
+        `test` and `image` checks, with `deletion` and `non_fast_forward` also blocked. Work
+        branches, opens a PR, and merges once CI reports. No approving review is required, because
+        requiring one on a repo with a single maintainer would only produce a habit of
+        self-dismissal; the value bought here is that every change to a public repo passes CI
+        before it lands, not that a second human reads it. Merge or rebase, never squash.
+
+        Organization admins keep an always-bypass, deliberately. A ruleset with no escape hatch
+        fails hardest exactly when the process itself is what is broken — a green build blocked on
+        a check that will never report, a CI outage during an incident. What makes the bypass
+        acceptable is that it stays rare and deliberate, and what threatens that is a property
+        worth naming: **the bypass is silent from the pushing side.** Nothing prompts, nothing
+        confirms; `git push` succeeds and the remote mentions `Bypassed rule violations` in output
+        a person may not read. So the guard is written into AGENTS.md as a rule an agent reads
+        before working here, rather than left to the ruleset to enforce, because the ruleset by
+        construction will not enforce it against the actor most likely to trip it.
+
+        The occasion: the repo went public (@qojsxe7s) and the ruleset had been in place but
+        unhonored — two pushes to `main` bypassed it in as many days, both by an admin who did not
+        set out to bypass anything. The ruleset did not change; the practice did. Accepted
+        tradeoff: a one-line fix now costs a branch, a PR and a CI round-trip, which is the price
+        of the checks actually gating anything.
+
+        A consequence for tooling: `git-autopush` pushes the CURRENT branch when it fast-forwards,
+        so it will push a feature branch (wanted, it feeds the PR) and will push `main` if a commit
+        is ever left sitting there (not wanted, and it would bypass). Keeping work off `main`
+        locally is what makes the nightly job safe here, rather than any setting in the job.
