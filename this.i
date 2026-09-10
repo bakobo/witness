@@ -480,10 +480,21 @@ Operator layer over a stock keripy witness = goal:
             matches the production host OS; the container's job is to supply the 3.14 interpreter
             that Debian 12's system Python (3.11) cannot.
 
-        Publish to GHCR private  tagged by commit and release  consumed by digest = decision:
+        Publish to GHCR  tagged by commit and release  consumed by digest = decision:
           id: lnk24kwp
           why: >
-            GHCR private, chosen over ECR because infra bought a vendor-neutral configuration layer
+            Corrected 2026-09-10: this node said "GHCR private" and that is no longer true. The
+            package ghcr.io/bakobo/witness is public and an anonymous client resolves its tag list
+            and manifests with no credential — verified against the registry rather than inferred
+            from a setting. I cannot date the flip from the API: a package's updated_at tracks its
+            newest version, not its visibility, so all that is established is the current state.
+            The likeliest cause is @qojsxe7s making the repo public, since GHCR ties a package's
+            visibility to the repository it is linked to. Everything below about naming, tagging
+            and digest consumption is unaffected; only the audience changed, and the change is the
+            right one for an Apache-2.0 repo whose whole point is that other operators can run it.
+            The last sentence's "a GHCR token must reach the deploy path" now holds for PUSH only.
+
+            GHCR, chosen over ECR because infra bought a vendor-neutral configuration layer
             whose Ansible contract is "a Debian-family host reachable over SSH", and `aws ecr
             get-login-password` would put an AWS-specific step in it. ECR's real advantage is a host
             authenticating with its own identity and storing no secret, but Lightsail has no
@@ -523,6 +534,13 @@ Operator layer over a stock keripy witness = goal:
         note in docs/deploying.md are now public reading, so the deployment contract has to hold on
         its own merits rather than on nobody looking; @h5n2rk and @t3k6ps already took that risk
         deliberately for a read-only surface carrying no key material, and publication does not
-        change the analysis, only the audience. The GHCR image stays private (@lnk24kwp), so a
-        reader can build the image but cannot pull the one Bakobo ships — a gap worth closing
-        deliberately rather than by drift, and not closed here.
+        change the analysis, only the audience.
+
+        Corrected 2026-09-10, the day after. This paragraph ended by naming a gap — that the GHCR
+        image stayed private, so a reader could build the image but not pull the one Bakobo ships,
+        "a gap worth closing deliberately rather than by drift, and not closed here." The gap does
+        not exist: the package is public and pulls anonymously. The claim was taken from
+        @lnk24kwp's text rather than from the registry, which is the whole lesson — a node was
+        treated as evidence of the world's state when it was only evidence of a past intention, and
+        the sentence warning against drift was itself the drifted one. Check the artifact, not the
+        record of the artifact. @lnk24kwp is corrected too.

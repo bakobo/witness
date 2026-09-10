@@ -4,7 +4,7 @@ Written for `bakobo/infra`, which consumes this repo's image. It states the cont
 
 ## What to pull
 
-`ghcr.io/bakobo/witness`, private, published from this repo's CI (`@lypmcw7f`, `@lnk24kwp`). Every build is tagged `sha-<full-commit>`; a release tag adds its `v<major>.<minor>.<patch>`. There is deliberately **no `latest`** — a floating tag is exactly the image-to-pin drift this arrangement exists to close.
+`ghcr.io/bakobo/witness`, published from this repo's CI (`@lypmcw7f`, `@lnk24kwp`). The package is **public** and pulls anonymously — a credential is needed to push, not to pull. Every build is tagged `sha-<full-commit>`; a release tag adds its `v<major>.<minor>.<patch>`. There is deliberately **no `latest`** — a floating tag is exactly the image-to-pin drift this arrangement exists to close.
 
 **Deploy by digest, never by tag.** The publish workflow prints the digest to its job summary.
 
