@@ -223,6 +223,37 @@ class TestUp:
         with pytest.raises(InvalidArguments):
             pool.run()
 
+    @pytest.mark.parametrize("base_port", [0, -1, 70000])
+    def test_a_base_port_outside_the_port_range_is_refused(self, base_port):
+        """`--base-port 0` is the interesting one: Docker would allocate an ephemeral port while
+        every advertised URL kept using the zero, so the pool would come up unreachable."""
+        pool, _ = _pool("up", count=1, base_port=base_port)
+
+        with pytest.raises(InvalidArguments) as refusal:
+            pool.run()
+
+        assert str(base_port) in str(refusal.value)
+
+    @pytest.mark.parametrize("timeout", [float("inf"), float("nan"), 0, -5])
+    def test_a_timeout_that_is_not_a_positive_number_of_seconds_is_refused(self, timeout):
+        """An infinite deadline makes the readiness poll run until someone notices."""
+        pool, _ = _pool("up", count=1, timeout=timeout)
+
+        with pytest.raises(InvalidArguments):
+            pool.run()
+
+    def test_a_pool_with_volumes_but_no_containers_is_still_a_pool(self):
+        """What an `up` interrupted between `docker volume create` and `docker run` leaves. Building
+        over it would run `kli init` against a keystore that may already be half made."""
+        docker = FakeDocker(script={"ps -a": "", "volume ls": "witness-pool-lab-w1\n"})
+        pool, _ = _pool("up", docker=docker, count=2)
+
+        with pytest.raises(PoolExists) as refusal:
+            pool.run()
+
+        assert "volumes" in str(refusal.value)
+        assert docker.matching("volume create") == []
+
     def test_a_pool_whose_top_port_would_overflow_is_refused(self):
         pool, _ = _pool("up", count=4, base_port=65530)
 
@@ -414,6 +445,18 @@ class TestManifest:
 
         assert pool.run() == 0
         assert json.loads(_printed(written))["toad"] == 1
+
+    @pytest.mark.parametrize("toad", [0, -1, 99])
+    def test_a_toad_no_set_this_size_could_meet_is_refused_rather_than_emitted(self, toad):
+        """The manifest exists to be handed to something that designates this pool, so a threshold
+        it could never satisfy has to fail here rather than at the consumer."""
+        docker = FakeDocker(script={"ps -a": _TWO_UP})
+        pool, _ = _pool("manifest", docker=docker, fetch=FakeFetch(_healthy()), toad=toad)
+
+        with pytest.raises(InvalidArguments) as refusal:
+            pool.run()
+
+        assert "2" in str(refusal.value), "it should say how many witnesses there are"
 
     def test_a_witness_that_cannot_be_asked_its_aid_is_refused_rather_than_guessed(self):
         docker = FakeDocker(script={"ps -a": _TWO_UP})

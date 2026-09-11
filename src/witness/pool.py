@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 import sys
 import time
@@ -72,6 +73,7 @@ _CONTROL_PORT = 5633
 #: for the TCP port to be published later without renumbering a pool.
 _PORT_STRIDE = 10
 _CONTROL_OFFSET = 2
+_MIN_PORT = 1
 _MAX_PORT = 65535
 
 #: Bounded before it is trusted. Twenty-five witnesses is far past any experiment and well short of
@@ -203,10 +205,15 @@ class Pool:
 
     def _up(self):
         count, image = self._planned()
-        if self._containers():
+        # Volumes as well as containers. An `up` interrupted between `docker volume create` and
+        # `docker run` leaves a labelled volume and no container, and building over that would run
+        # `kli init` against a keystore that may already be half made — so the same `down` that
+        # cleans up after any other interruption is what clears it.
+        if self._containers() or self._volumes():
             raise PoolExists(
-                f"A pool named {self._config.name} is already running. Take it down with "
-                f"`witness pool down --name {self._config.name}`, or choose another --name."
+                f"A pool named {self._config.name} already has containers or volumes on this host. "
+                f"Take it down with `witness pool down --name {self._config.name}`, or choose "
+                f"another --name."
             )
         # Built from what was just created rather than read back from `docker ps`: this code knows
         # exactly what it made, and a round trip could only disagree with it.
@@ -265,7 +272,7 @@ class Pool:
     def _manifest(self):
         witnesses = self._sorted(self._require_containers())
         aids = [self._aid(witness) for witness in witnesses]
-        toad = self._config.toad if self._config.toad is not None else ample(len(witnesses))
+        toad = self._toad(len(witnesses))
         oobis = [witness.oobi(aid) for witness, aid in zip(witnesses, aids, strict=True)]
         if self._config.fmt == "heti":
             self._say("[witnesses]")
@@ -303,6 +310,23 @@ class Pool:
             ],
         })
 
+    def _toad(self, size):
+        """The receipt threshold to publish: keripy's own ``ample`` unless told otherwise.
+
+        An out-of-range ``--toad`` is refused here rather than emitted, because the manifest's
+        whole job is to be handed to something that designates this pool — and a threshold no set
+        of this size could ever meet fails at the consumer, a step further from the person who
+        typed it. heti says the same thing in its own words when it reads such a file.
+        """
+        if self._config.toad is None:
+            return ample(size)
+        if not 1 <= self._config.toad <= size:
+            raise InvalidArguments(
+                f"A --toad of {self._config.toad} asks for the agreement of a number of witnesses "
+                f"this pool does not have; it holds {size}."
+            )
+        return self._config.toad
+
     def _ls(self):
         listed = self._docker([
             "ps", "-a", "--filter", f"label={LABEL}", "--format", _LS_FORMAT
@@ -328,6 +352,21 @@ class Pool:
         if not 1 <= count <= _MAX_COUNT:
             raise InvalidArguments(
                 f"A pool holds between 1 and {_MAX_COUNT} witnesses, but --count was {count}."
+            )
+        # The low end matters as much as the high one. `--base-port 0` makes Docker allocate an
+        # ephemeral port while readiness and every advertised URL keep using the number that was
+        # asked for, so the pool would come up pointing at ports nothing is listening on.
+        if not _MIN_PORT <= self._config.base_port <= _MAX_PORT:
+            raise InvalidArguments(
+                f"The --base-port value must be between {_MIN_PORT} and {_MAX_PORT}, but was "
+                f"{self._config.base_port}."
+            )
+        # `float` accepts `inf` and `nan`, and an infinite deadline makes _await_ready poll a
+        # witness that will never be healthy for as long as anyone leaves it running.
+        timeout = self._config.timeout
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise InvalidArguments(
+                f"The --timeout value must be a positive number of seconds, but was {timeout}."
             )
         top = self._config.base_port + _PORT_STRIDE * (count - 1) + _CONTROL_OFFSET
         if top > _MAX_PORT:
