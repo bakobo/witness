@@ -449,6 +449,39 @@ Operator layer over a stock keripy witness = goal:
         WORKS, and that is a test rather than a command. Accepted tradeoff: an operator composes
         the restore from documented steps, and a backup taken with the witness running captures
         the moment `env.copy` began rather than the moment it finished.
+      children:
+
+        A witness refuses to start when its history outlives its keystore = decision:
+          id: 3r2xawen
+          why: >
+            `witness run` compares the two stores before it opens either one, and refuses when the
+            database holds this witness's hab and no keystore exists. The combination cannot be
+            legitimate — a volume that has never run has neither, one that `kli init` has touched
+            has the keystore and no hab yet — so the only way to reach it is for something to have
+            removed the keys from under a witness that already exists. @7b34ohbo makes a restore
+            the rollback path, and a restore that copies `db` without `ks` is exactly that
+            something.
+            What made this worth a refusal rather than a warning is that the previous behaviour
+            was silent in every channel we have. Measured 2026-09-05 while building infra's
+            tier-one restore drill: keripy creates a fresh keystore, and the witness then serves
+            the AID recorded in the DATABASE — the one controllers designated and validators
+            trust — while signing with keys that AID does not name. It reports `{"status": "ok"}`,
+            accepts a controller inception with a 204, and `witness backup` succeeds. There is no
+            observation from outside that distinguishes it from a healthy witness, and a validator
+            cannot detect it either, because the receipts verify against a key the AID never
+            authorised only if you go back to the KEL to check.
+            Rejected surfacing it in `/v1/witness/health` instead: the control plane can only
+            report it once the witness is already running and already signing, which is after the
+            harm. Rejected warning and continuing, for the same reason — the fail-closed principle
+            applies hardest where the failure is undetectable downstream. Placed in the runner
+            rather than in the image's entrypoint because the comparison needs keripy's own view
+            of where the stores are, and because `kli witness start` would have the identical bug.
+            The ordering is load-bearing and easy to get wrong: `Keeper(reopen=True)` CREATES the
+            keystore it is asked to open, so a probe made after it would find one every time and
+            the check would never fire. Accepted tradeoff: a witness whose keystore is genuinely
+            gone now crash-loops instead of coming up wrong, which is louder and is the point.
+            Opens the door to opt-in first-run initialisation, which this refusal is what makes
+            safe — a genuinely fresh volume becomes distinguishable from a mutilated one.
 
     The deployable artifact is a container image built from this repo = decision:
       id: lypmcw7f
