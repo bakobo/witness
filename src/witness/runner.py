@@ -12,26 +12,70 @@ the Doist can be ours. Everything above that line is reproduced rather than rein
 
 from __future__ import annotations
 
-from keri.app import Configer, Habery, HaberyDoer, Keeper, indirecting
+from collections import namedtuple
+
+from keri.app import Configer, Habery, HaberyDoer, Keeper, indirecting, keeping
 from keri.core.eventing import Kevery
 from keri.cli.common import setupHby
+from keri.db import basing
 
-from . import escrows, inloop, telemetry
+from . import escrows, inloop, paths, telemetry
+from .errors import KeystoreLost
 
 #: hio's own default, and what ``directing.runController`` uses. Named here because the telemetry
 #: doer measures lag against it: a pass that takes longer than a tock is a pass running behind.
 TOCK = 0.03125
 
 
-def open_habery(config):
-    """Open the witness's keystore exactly as ``kli witness start`` does.
+_Probe = namedtuple("_Probe", "name base head_dir_path")
+
+
+def _incepted(config, head_dir_path=None) -> bool:
+    """Whether the database already holds a witness identity, read without creating one.
+
+    ``paths.resolve`` first because a keripy read-only open of a MISSING database does not fail,
+    it creates an empty one (~5s3e) — so "is there a database" has to be answered from the
+    filesystem before anything opens it.
+    """
+    probe = _Probe(name=config.name, base=config.base, head_dir_path=head_dir_path)
+    if paths.resolve(basing.Baser, probe) is None:
+        return False
+    rdb = basing.Baser(
+        name=config.name, base=config.base, temp=False, headDirPath=head_dir_path, reopen=False
+    )
+    rdb.reopen(readonly=True)
+    try:
+        return any(True for _ in rdb.habs.getTopItemIter())
+    finally:
+        rdb.close()
+
+
+def open_habery(config, *, resolve=paths.resolve, incepted=_incepted):
+    """Open the witness's keystore exactly as ``kli witness start`` does, unless it is gone.
 
     The branch reads oddly and is deliberately faithful. ``aeid`` is ``None`` only when no
     keystore exists at all; a real ``kli init --nopasscode`` keystore reports ``''``, so the
     ordinary path is ``setupHby``. There is no head-directory override because ``setupHby`` opens
     its own ``Keeper`` without one — which is why ``kli witness start`` offers no such flag either,
     and why this does not invent one.
+
+    Before any of that, the two stores are compared (~5dnx). A witness whose keystore has gone but
+    whose database still holds its hab would otherwise start perfectly: keripy creates a fresh
+    keystore, and the witness then serves the identity recorded in the database while signing with
+    keys that identity does not name. Everything observable about it says healthy. The comparison
+    has to happen HERE, before ``Keeper(reopen=True)``, because that call creates the keystore it
+    was asked to open — so a probe made afterwards would always find one.
     """
+    # keeping.Keeper rather than the module-level Keeper: the probe asks the CLASS where keripy
+    # would put a keystore, which is a different question from which class opens it, and only the
+    # second is a seam tests replace.
+    if resolve(keeping.Keeper, _Probe(config.name, config.base, None)) is None and incepted(config):
+        raise KeystoreLost(
+            f"The witness database for {config.name!r} holds an identity, but there is no keystore "
+            f"to sign for it. Starting would create a new keystore and serve the old AID with new "
+            f"keys, which no validator could detect. A restore that copied the database without "
+            f"the keystore is the usual cause; restore the keystore from the same backup."
+        )
     keeper = Keeper(name=config.name, base=config.base, temp=False, reopen=True)
     aeid = keeper.gbls.get("aeid")
     keeper.close()  # release the LMDB env before Habery reopens the same keystore

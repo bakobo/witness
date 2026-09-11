@@ -5,14 +5,16 @@ falcon app over it, then serves; serving is delegated to :mod:`witness.server` (
 ``supervise`` runs the witness runner and the control plane together inside one container
 (@a24p3kbw) and returns the exit code the container should carry. ``run`` is the launcher
 (@n5r2vq): stock keripy witness doers plus in-loop telemetry. ``backup`` takes a consistent copy
-of every store while the witness keeps running (@7b34ohbo).
+of every store while the witness keeps running (@7b34ohbo). ``pool`` stands up throwaway pools
+of this image for experiments (@n2bgpdds), and is the one subcommand that runs on a host rather
+than inside the container.
 """
 
 from __future__ import annotations
 
 import json
 
-from . import backup, config, metrics, runner, server, supervisor
+from . import backup, config, metrics, pool, runner, server, supervisor
 from .app import RequestCounter, make_app
 from .reader import WitnessReader
 
@@ -26,6 +28,8 @@ def main(argv=None) -> int:
         return 0
     if subcommand == "run":
         return runner.WitnessRunner(cfg).run()
+    if subcommand == "pool":
+        return pool.Pool(cfg).run()
     if subcommand == "supervise":
         sup = supervisor.Supervisor(cfg.specs)
         sup.install_signal_handlers()

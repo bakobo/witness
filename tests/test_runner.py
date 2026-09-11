@@ -15,6 +15,22 @@ from keri.cli import common as keri_cli_common
 from witness import inloop, runner, telemetry
 from witness import config as config_mod
 from witness.config import RunnerConfig
+from witness.errors import KeystoreLost
+
+
+def _FakeKeeper(aeid, opened=None):
+    """A Keeper stand-in that records being opened, so a test can prove it was not."""
+
+    class Fake:
+        def __init__(self, **kwargs):
+            if opened is not None:
+                opened.append(kwargs)
+            self.gbls = {"aeid": aeid}
+
+        def close(self):
+            pass
+
+    return Fake
 
 
 @pytest.fixture
@@ -306,3 +322,111 @@ def test_stock_escrow_behaviour_can_be_restored_from_the_command_line():
     _subcommand, cfg = config_mod.parse_args(["run", "--name", "w", "--escrow-interval", "0"])
 
     assert cfg.escrow_interval == 0
+
+
+class TestARestoreThatLostItsKeystore:
+    """~5dnx. A volume whose keystore is gone but whose database still holds the witness's hab.
+
+    The witness that comes up over one of those is the worst kind of broken: it serves the AID
+    every validator already trusts, out of the database, while signing with keys nobody has ever
+    seen. Nothing about it looks wrong from outside — health is `ok`, inceptions are accepted, a
+    backup succeeds — so the refusal has to happen here, where the two stores can still be
+    compared, and it has to be a refusal rather than a warning.
+    """
+
+    def _config(self, tmp_path, name="lost"):
+        return RunnerConfig(
+            name=name, alias=name, base="", passcode=None, config_dir=None, config_file=None,
+            tcp_port=1, http_port=2, telemetry_path=str(tmp_path / "t"),
+        )
+
+    def test_a_missing_keystore_over_a_witnessed_database_refuses_to_start(self, tmp_path):
+        cfg = self._config(tmp_path)
+
+        with pytest.raises(KeystoreLost) as refusal:
+            runner.open_habery(
+                cfg,
+                resolve=lambda klas, _config: None if klas is Keeper else "/vol/keri/db/lost",
+                incepted=lambda _config: True,
+            )
+
+        assert not refusal.value.retryable, "no amount of waiting puts a keystore back"
+        assert "lost" in str(refusal.value)
+        assert "restore" in str(refusal.value).lower(), "name the thing that produces this"
+
+    def test_a_genuinely_fresh_volume_is_not_that_and_starts_normally(self, tmp_path, monkeypatch):
+        """Both stores absent is a witness that has never run, which is how every witness begins."""
+        monkeypatch.setattr(runner, "Keeper", _FakeKeeper(aeid=None))
+        monkeypatch.setattr(runner, "Habery", lambda **kwargs: ("habery", kwargs))
+
+        kind, _kwargs = runner.open_habery(
+            self._config(tmp_path),
+            resolve=lambda _klas, _config: None,
+            incepted=lambda _config: False,
+        )
+
+        assert kind == "habery"
+
+    def test_a_database_that_holds_no_hab_yet_is_not_that_either(self, tmp_path, monkeypatch):
+        """`kli init` creates both stores, and the hab arrives at the first start. A witness
+        interrupted in that window has a database and no identity in it, which is recoverable."""
+        monkeypatch.setattr(runner, "Keeper", _FakeKeeper(aeid=None))
+        monkeypatch.setattr(runner, "Habery", lambda **kwargs: ("habery", kwargs))
+
+        kind, _kwargs = runner.open_habery(
+            self._config(tmp_path),
+            resolve=lambda klas, _config: None if klas is Keeper else "/vol/keri/db/lost",
+            incepted=lambda _config: False,
+        )
+
+        assert kind == "habery"
+
+    def test_the_keystore_is_probed_before_anything_opens_it(self, tmp_path, monkeypatch):
+        """keripy's own `Keeper(reopen=True)` CREATES the keystore it was asked to open, so a
+        probe that ran afterwards would always find one and this check would never fire."""
+        opened = []
+        monkeypatch.setattr(runner, "Keeper", _FakeKeeper(aeid=None, opened=opened))
+
+        with pytest.raises(KeystoreLost):
+            runner.open_habery(
+                self._config(tmp_path),
+                resolve=lambda klas, _config: None if klas is Keeper else "/vol/db",
+                incepted=lambda _config: True,
+            )
+
+        assert opened == [], "the keystore was opened before it was probed"
+
+    def test_incepted_reads_the_real_database_without_creating_one(self, tmp_path):
+        """The default probe, against real databases built by keripy itself.
+
+        Each store is closed before it is probed, because py-lmdb refuses to open one environment
+        twice in a single process. That is a constraint on the test rather than on the runner,
+        which probes before it opens anything at all.
+
+        The store names are distinctive on purpose (~6z6b): keripy decides whether a database is
+        new by calling `LMDBer.exists(name, base)` WITHOUT the headDirPath it was handed, so a
+        common name that happens to exist under the host's real keri home makes a brand-new
+        database at a temp path look pre-existing — and it then refuses to open, asking for
+        migrations that cannot apply to a database with nothing in it.
+        """
+        from keri.app import habbing
+
+        head = str(tmp_path / "keri")
+
+        empty = habbing.Habery(name="kslostempty", base="", temp=False, headDirPath=head)
+        empty.close()
+        assert runner._incepted(
+            self._config(tmp_path, name="kslostempty"), head_dir_path=head
+        ) is False, "a database with no hab in it is not an incepted witness"
+
+        hby = habbing.Habery(name="kslostfull", base="", temp=False, headDirPath=head)
+        hby.makeHab(name="kslostfull", transferable=False)
+        hby.close()
+        assert runner._incepted(
+            self._config(tmp_path, name="kslostfull"), head_dir_path=head
+        ) is True
+
+    def test_the_probe_says_no_when_there_is_no_database_to_read(self, tmp_path):
+        cfg = self._config(tmp_path, name="absent")
+
+        assert runner._incepted(cfg, head_dir_path=str(tmp_path / "nothing")) is False

@@ -8,6 +8,7 @@ Parsing fails closed: any malformed or missing argument raises a typed
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass
 
 from .errors import InvalidArguments
@@ -23,6 +24,13 @@ _DEFAULT_ESCROW_TIMEOUT = 60
 #: @zj3h2pzh. keripy sweeps every escrow on every hio pass, 32 times a second, at a cost linear in
 #: escrow depth. One second is still far inside the 60-second escrow lifetime. 0 restores stock.
 _DEFAULT_ESCROW_INTERVAL = 1.0
+#: @n2bgpdds. A pool names itself so several can coexist; one name is the common case.
+_DEFAULT_POOL_NAME = "default"
+#: Above keripy's own 5631/5632/5633 so a pool never collides with a witness run by hand.
+_DEFAULT_BASE_PORT = 5640
+#: A cold `docker run` plus keystore open on a loaded box; generous because the failure it guards
+#: is a slow host rather than a broken one.
+_DEFAULT_POOL_TIMEOUT = 120.0
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,28 @@ class BackupConfig:
     head_dir_path: str | None
     destination: str
     force: bool = False
+
+
+@dataclass(frozen=True)
+class PoolConfig:
+    """Resolved configuration for ``witness pool`` (@n2bgpdds).
+
+    One dataclass across every verb rather than one per verb: the verbs share a pool name and an
+    image, most of the rest is defaulted, and six near-empty classes would say less than this does.
+    """
+
+    verb: str
+    name: str = _DEFAULT_POOL_NAME
+    image: str | None = None
+    count: int = 3
+    base_port: int = _DEFAULT_BASE_PORT
+    seed: str | None = None
+    toad: int | None = None
+    witness: str | None = None
+    mode: str = "stop"
+    fmt: str = "json"
+    all_pools: bool = False
+    timeout: float = _DEFAULT_POOL_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -163,7 +193,98 @@ def _build_parser() -> _RaisingParser:
         default=_DEFAULT_TELEMETRY_PATH,
         help=f"Where to publish the telemetry segment. Default {_DEFAULT_TELEMETRY_PATH}.",
     )
+
+    _add_pool_parser(sub)
     return parser
+
+
+def _add_pool_parser(sub):
+    """``witness pool <verb>`` — throwaway pools of this image, for experiments (@n2bgpdds).
+
+    Split out because the verb tree is a parser of its own; nesting it inline would bury the four
+    process subcommands that are what this CLI is actually for.
+    """
+    pool = sub.add_parser("pool", help="Stand up and tear down throwaway witness pools (docker).")
+    verbs = pool.add_subparsers(dest="verb", required=True)
+
+    def shared(parser):
+        parser.add_argument(
+            "--name", default=_DEFAULT_POOL_NAME, help=f"Pool name. Default {_DEFAULT_POOL_NAME}."
+        )
+        return parser
+
+    up = shared(verbs.add_parser("up", help="Create a pool of N witnesses and wait for them."))
+    up.add_argument("--count", "-n", default=3, type=int, help="How many witnesses. Default 3.")
+    # No floating tag exists to default to (@lnk24kwp deliberately publishes none), so the image
+    # is required — from the flag, or from the same WITNESS_IMAGE the image oracles already use.
+    up.add_argument(
+        "--image",
+        default=os.environ.get("WITNESS_IMAGE"),
+        help="The witness image to run. Defaults to $WITNESS_IMAGE.",
+    )
+    up.add_argument(
+        "--base-port",
+        default=_DEFAULT_BASE_PORT,
+        type=int,
+        help=(
+            f"Host port of the first witness. Default {_DEFAULT_BASE_PORT}; each witness takes "
+            "the next multiple of ten, with its control plane two above."
+        ),
+    )
+    up.add_argument(
+        "--seed",
+        default=None,
+        help=(
+            "Derive the witnesses' keys from this string, so the pool's AIDs repeat across runs. "
+            "A seeded pool's signing keys are derivable by anyone who knows the seed."
+        ),
+    )
+    up.add_argument(
+        "--timeout",
+        default=_DEFAULT_POOL_TIMEOUT,
+        type=float,
+        help=f"Seconds to wait for each witness. Default {_DEFAULT_POOL_TIMEOUT}.",
+    )
+
+    down = shared(verbs.add_parser("down", help="Remove a pool's containers and volumes."))
+    down.add_argument(
+        "--all", dest="all_pools", action="store_true", help="Every pool on this host."
+    )
+
+    shared(verbs.add_parser("status", help="What each witness in the pool is doing right now."))
+    shared(verbs.add_parser("ls", help="Every pool on this host."))
+
+    broke = shared(verbs.add_parser("break", help="Take one witness out of service."))
+    broke.add_argument("--witness", "-w", default=None, help="Which witness, e.g. w2.")
+    broke.add_argument(
+        "--mode",
+        default="stop",
+        choices=("stop", "pause"),
+        help=(
+            "stop (default) refuses connections, as a witness that is down does; pause freezes it "
+            "mid-flight, so requests hang instead."
+        ),
+    )
+
+    heal = shared(verbs.add_parser("heal", help="Put a broken witness back into service."))
+    heal.add_argument("--witness", "-w", default=None, help="Which witness, e.g. w2.")
+
+    manifest = shared(
+        verbs.add_parser("manifest", help="Describe the pool, for whatever will designate it.")
+    )
+    manifest.add_argument(
+        "--format",
+        dest="fmt",
+        default="json",
+        choices=("json", "heti", "kli"),
+        help="json (default), heti's [witnesses] block, or a `kli incept --file` document.",
+    )
+    manifest.add_argument(
+        "--toad",
+        default=None,
+        type=int,
+        help="Receipt threshold to suggest. Defaults to keripy's own ample(n).",
+    )
 
 
 def _port(value, flag):
@@ -222,9 +343,29 @@ def _supervisor_config(ns) -> SupervisorConfig:
     return SupervisorConfig(specs=tuple(specs))
 
 
+def _pool_config(ns) -> PoolConfig:
+    """Fold the verb's namespace into one config, defaulting whatever that verb does not take."""
+    return PoolConfig(
+        verb=ns.verb,
+        name=ns.name,
+        image=getattr(ns, "image", None),
+        count=getattr(ns, "count", 3),
+        base_port=getattr(ns, "base_port", _DEFAULT_BASE_PORT),
+        seed=getattr(ns, "seed", None),
+        toad=getattr(ns, "toad", None),
+        witness=getattr(ns, "witness", None),
+        mode=getattr(ns, "mode", "stop"),
+        fmt=getattr(ns, "fmt", "json"),
+        all_pools=getattr(ns, "all_pools", False),
+        timeout=getattr(ns, "timeout", _DEFAULT_POOL_TIMEOUT),
+    )
+
+
 def parse_args(argv):
     """Parse ``argv`` into ``(subcommand, config)`` or raise InvalidArguments."""
     ns = _build_parser().parse_args(argv)
+    if ns.subcommand == "pool":
+        return ns.subcommand, _pool_config(ns)
     if ns.subcommand == "supervise":
         return ns.subcommand, _supervisor_config(ns)
     if ns.subcommand == "run":
