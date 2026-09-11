@@ -2,3 +2,4 @@
 kind: todo
 created: 2026-09-11T19:06Z
 
+- 2026-09-11T19:32Z Diagnosed 2026-09-11: the cause is the reviewer identifier, not an entitlement. The old vendored gate posts reviewers[]=Copilot, which returns 200 and assigns nobody; copilot-pull-request-reviewer[bot] works. My own first diagnosis was wrong in the same way the upstream one was, and for the same reason — I polled requested_reviewers, which NEVER lists this bot even mid-review. The issue timeline is the signal. Fixed by witness#7, which vendors infra's rewritten gate; close this when that merges.
