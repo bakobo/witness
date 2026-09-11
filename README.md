@@ -57,6 +57,21 @@ witness control-plane --name witness --host 127.0.0.1 --port 5633
 
 Add `--no-telemetry` to the control plane when the witness was started by stock `kli witness start`, which publishes none.
 
+## Experimenting: a throwaway pool of witnesses
+
+`witness pool` stands up N containers of this image, each with its own volume, keystore and published ports, and takes them all away again. It runs on a host with Docker rather than inside the image, and it is for experiments — `toad` behaviour, a witness going away, a credential ceremony against witnesses that genuinely receipt:
+
+```sh
+export WITNESS_IMAGE=witness:dev
+uv run witness pool up --name lab --count 3
+uv run witness pool status --name lab
+uv run witness pool manifest --name lab --format heti   # the standing witness set, for a lockbox
+uv run witness pool break --name lab --witness w2       # and `heal` to put it back
+uv run witness pool down --name lab                     # removes every container and volume
+```
+
+The pool serves witnesses and describes them; it never incepts anything, so designating it is [`heti`](https://github.com/bakobo/heti)'s or `kli`'s job. Full documentation, including the reproducible-`--seed` caveat and what a pool is *not* good for, is in [`docs/pools.md`](docs/pools.md).
+
 And a witness can be backed up without being stopped:
 
 ```sh

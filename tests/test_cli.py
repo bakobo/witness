@@ -116,3 +116,21 @@ def test_main_dispatches_backup_and_prints_the_manifest(monkeypatch, capsys, tmp
 
     assert seen["cfg"].destination == str(tmp_path / "b")
     assert json.loads(capsys.readouterr().out)["name"] == "wit"
+
+
+def test_main_dispatches_pool_and_returns_its_exit_code(monkeypatch):
+    from witness import pool as pool_mod
+
+    seen = {}
+
+    class FakePool:
+        def __init__(self, config):
+            seen["config"] = config
+
+        def run(self):
+            return 0
+
+    monkeypatch.setattr(pool_mod, "Pool", FakePool)
+
+    assert cli.main(["pool", "ls", "--name", "lab"]) == 0
+    assert (seen["config"].verb, seen["config"].name) == ("ls", "lab")

@@ -91,13 +91,17 @@ jobs:
       # health", it asserts the control plane's LMDB reader is REGISTERED in the lock table
       # (@v27j7uvo): an unregistered reader opens, answers, and returns wrong data only when the
       # witness happens to be recycling pages, so every cheaper check passes on a broken image.
-      # Both oracles, named explicitly rather than by a glob: a file that stops being collected
+      # Every oracle, named explicitly rather than by a glob: a file that stops being collected
       # because its name drifted would fail silently, and these are the only tests that touch the
-      # artifact this workflow is about to publish.
+      # artifact this workflow is about to publish. The pool oracle (@n2bgpdds) belongs here for
+      # the same reason as the others — it is the only thing that proves the config a pool seeds
+      # into a volume is a config the image's keripy actually reads.
       - name: Run the image oracle
         env:
           WITNESS_IMAGE: ${{ steps.names.outputs.primary }}
-        run: uv run pytest tests/test_image_smoke.py tests/test_image_upgrade.py -v --no-cov
+        run: |
+          uv run pytest tests/test_image_smoke.py tests/test_image_upgrade.py \
+            tests/test_pool_oracle.py -v --no-cov
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
