@@ -342,7 +342,13 @@ def test_a_restore_that_lost_the_keystore_refuses_to_start(volume):
     assert "e.state.conflict.keystore.f" in output or "KeystoreLost" in output, (
         f"the container stopped without saying why:\n{output}"
     )
-    assert f"{_KERI_HOME}/ks" not in _docker(
+    # `test -e`, not a substring of `ls`: the directory prints as `ks`, so searching that output
+    # for the absolute path could never match and the assertion could never fail.
+    still_gone = _docker(
         "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "sh", IMAGE,
-        "-c", f"ls {_KERI_HOME}",
-    ).stdout, "the refusal must not have created the keystore it refused over"
+        "-c", f"test ! -e {_KERI_HOME}/ks", check=False,
+    )
+    assert still_gone.returncode == 0, (
+        "the refusal created the keystore it refused over, which is the branch it exists to "
+        "prevent reaching"
+    )

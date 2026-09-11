@@ -222,7 +222,13 @@ class KeystoreLost(WitnessError):
 
     code = "e.state.conflict.keystore.f"
     title = "This witness's keystore is missing but its history is not."
-    status = 500
+    #: 409, matching :class:`PoolExists` and every other ``e.state.conflict.*``. The status
+    #: follows from the code's prefix rather than from the situation, which is the whole point of
+    #: deriving one from the other — two conflicts answering 409 and 500 would be exactly the
+    #: sibling inconsistency @zzbdxa was written against. Nothing renders this one over HTTP
+    #: today; it refuses a process start, and the disposition a caller acts on is the code's
+    #: trailing ``.f``.
+    status = 409
 
 
 class DockerUnavailable(WitnessError):
