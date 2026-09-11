@@ -206,6 +206,62 @@ class DatabaseTooNew(WitnessError):
     status = 500
 
 
+class DockerUnavailable(WitnessError):
+    """Docker could not be reached, or refused a command the pool needed (@n2bgpdds).
+
+    One code for "no docker binary", "the daemon is not listening" and "that command failed",
+    because from the pool's side they are one obstacle — the thing it builds pools out of did not
+    answer — and the detail carries which. Retryable: a daemon that is down comes back, and this is
+    also what running the laboratory verb inside the image looks like, where docker is absent by
+    design.
+    """
+
+    code = "e.env.docker.unavailable.r"
+    title = "I could not reach Docker."
+    status = 503
+
+
+class PoolExists(WitnessError):
+    """A pool of that name is already up, so building over it would half-adopt it.
+
+    Permanent, because the resolution is a decision rather than a wait: take the existing pool
+    down, or name this one differently.
+    """
+
+    code = "e.state.conflict.pool.f"
+    title = "A pool by that name is already running."
+    status = 409
+
+
+class PoolUnknown(WitnessError):
+    """No container or volume on this host carries that pool's label."""
+
+    code = "e.state.missing.pool.f"
+    title = "I found no pool by that name."
+    status = 404
+
+
+class WitnessUnknown(WitnessError):
+    """The pool exists but holds no witness by that name."""
+
+    code = "e.state.missing.witness.f"
+    title = "That pool has no witness by that name."
+    status = 404
+
+
+class PoolNotReady(WitnessError):
+    """A witness in the pool never reported a turning loop, or cannot be asked what it is.
+
+    Retryable, and deliberately so even at the end of a timeout: a slow host is the ordinary cause,
+    and the containers are left running so the next attempt — or `docker logs` — has something to
+    work with.
+    """
+
+    code = "e.env.pool.unavailable.r"
+    title = "A witness in the pool is not ready."
+    status = 503
+
+
 class BackupIncomplete(WitnessError):
     """A backup could not be taken in full, so none was written.
 

@@ -512,6 +512,61 @@ Operator layer over a stock keripy witness = goal:
             layers shared across versions, is untended accumulation rather than per-pull cost.
             Accepted tradeoff: a GHCR token must reach the deploy path.
 
+    Throwaway witness pools are a verb of this repo's own CLI = decision:
+      id: n2bgpdds
+      why: >
+        Experimenting against a set of witnesses is a standing need — merti's proof-of-email
+        ceremony needs witnessed AIDs whose OOBIs resolve, and every question about toad, receipt
+        thresholds or a witness going away needs more than one witness to ask. `witness pool up`
+        stands up N containers of THIS repo's image, each with its own volume, keystore, PID
+        namespace and published ports, and `witness pool down` removes every container and volume
+        the pool created. Rejected in-process witnesses under one hio scheduler, which is what
+        bakobo/heti already has (`heti/tests/produce/witnesses.py`, and `heti demo
+        --keep-witnesses`): they are genuine keripy witnesses and they are the right tool for a
+        question about the KERI protocol, but they are not this repo's artifact. What a pool is for
+        here is the image — the supervisor's failure policy, the HEALTHCHECK, the control plane
+        answering while the experiment runs — and @a24p3kbw makes the per-witness PID namespace
+        load-bearing rather than decorative, so a testbed that shares one models nothing that
+        matters. Rejected a compose file, generated or hand-written: it would be a second statement
+        of what is running, and it is the wrong thing to key cleanup on. Every container and volume
+        carries a `bakobo.pool=<name>` label instead, so an `up` interrupted halfway is still
+        removable in full by a `down` that knows nothing about how far it got. Rejected `compose up
+        --scale`, which would need the image to initialise its own keystore — the auto-init that
+        tick `5dnx` blocks until a witness refuses to start over a database whose keystore has gone
+        missing. Rejected a loose script outside the package: @g3w6px already says one CLI with a
+        subcommand per role, and the coverage gate measures the `witness` package only, so a script
+        beside it would ship untested by construction. Accepted tradeoff: a laboratory verb rides
+        inside the production image, where `docker` is absent and it fails with a typed error; and
+        the pool holds the default port range 5640+ per witness, which is an assumption about the
+        host rather than a fact about it.
+
+        Two mechanisms are worth naming because the obvious versions of both are wrong. The
+        witness's own advertised URL (its `curls`, which is how a resolver learns where to reach it
+        after an OOBI) is seeded by writing keripy's config file into the volume at keripy's OWN
+        default location, `/usr/local/var/keri/cf/<alias>.json`, rather than by passing
+        `--config-dir` in an overridden container command. An override would mean restating the
+        image's CMD in the pool's own code, where it would drift the first time the image's command
+        changes and would do so silently. And the pool keeps no state file: the manifest is derived
+        live from the docker labels and each control plane's `/v1/witness/identity`, so what the
+        pool reports cannot disagree with what is running, and `down` leaves nothing behind on disk
+        to clean up separately.
+      children:
+
+        A pool serves witnesses and describes them  it never incepts = decision:
+          id: jorbhpfq
+          why: >
+            The pool creates no controller and holds no controller's keys. What an experiment
+            actually needs is a witnessed AID, and inception belongs to whatever holds the keys —
+            heti's lockbox, or `kli incept` — so the pool's deliverable is the description those
+            tools take as input: heti's standing witness set (`[witnesses] oobis / toad`, the exact
+            block `heti/src/heti/tui/config.py` reads) and a `kli incept --file` document carrying
+            `wits` and `toad`. Rejected a `pool incept` verb, which was in an early draft of this
+            design: it would put key material in a witness-side laboratory tool, duplicate what
+            heti exists to do, and buy nothing that piping a manifest does not. The suggested toad
+            is keripy's own `ample(n)` rather than a number of ours, so the default threshold is
+            the protocol's opinion and not this repo's. Accepted tradeoff: standing up a pool and
+            getting a witnessed AID are two commands from two repos rather than one.
+
     The repository is public under Apache-2.0 = decision:
       id: qojsxe7s
       why: >

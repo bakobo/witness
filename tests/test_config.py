@@ -124,3 +124,39 @@ def test_the_control_plane_can_be_told_the_witness_publishes_no_telemetry():
         ["control-plane", "--name", "w", "--port", "1", "--no-telemetry"]
     )
     assert cfg.telemetry_path is None
+
+
+def test_pool_up_carries_the_verb_and_its_own_arguments():
+    subcommand, cfg = config.parse_args(
+        ["pool", "up", "--name", "lab", "--count", "7", "--image", "witness:test",
+         "--base-port", "5700", "--seed", "merti", "--timeout", "30"]
+    )
+    assert subcommand == "pool"
+    assert (cfg.verb, cfg.name, cfg.count, cfg.image) == ("up", "lab", 7, "witness:test")
+    assert (cfg.base_port, cfg.seed, cfg.timeout) == (5700, "merti", 30.0)
+
+
+def test_pool_up_defaults_its_image_to_the_environment(monkeypatch):
+    """The same WITNESS_IMAGE the image oracles already take, because no floating tag exists."""
+    monkeypatch.setenv("WITNESS_IMAGE", "ghcr.io/bakobo/witness@sha256:abc")
+    _subcommand, cfg = config.parse_args(["pool", "up"])
+    assert cfg.image == "ghcr.io/bakobo/witness@sha256:abc"
+
+
+def test_a_pool_verb_that_takes_no_image_still_yields_a_whole_config():
+    """Every verb folds into one PoolConfig, so the absent arguments have to default."""
+    _subcommand, cfg = config.parse_args(["pool", "break", "--witness", "w2", "--mode", "pause"])
+    assert (cfg.verb, cfg.witness, cfg.mode, cfg.name) == ("break", "w2", "pause", "default")
+    assert (cfg.image, cfg.toad, cfg.all_pools, cfg.fmt) == (None, None, False, "json")
+
+
+def test_the_pool_manifest_format_is_one_of_three():
+    _subcommand, cfg = config.parse_args(["pool", "manifest", "--format", "heti", "--toad", "3"])
+    assert (cfg.fmt, cfg.toad) == ("heti", 3)
+    with pytest.raises(InvalidArguments):
+        config.parse_args(["pool", "manifest", "--format", "yaml"])
+
+
+def test_pool_down_can_be_told_to_sweep_everything():
+    _subcommand, cfg = config.parse_args(["pool", "down", "--all"])
+    assert cfg.all_pools is True
