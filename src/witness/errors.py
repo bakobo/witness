@@ -206,6 +206,25 @@ class DatabaseTooNew(WitnessError):
     status = 500
 
 
+class KeystoreLost(WitnessError):
+    """The database holds this witness's identity and the keystore that signs for it is gone.
+
+    ~5dnx. Classified as a conflict rather than as something missing, because that is what makes
+    it certain: either store alone is an ordinary state — a fresh volume has neither, an initialised
+    one has a keystore and no identity yet — and only the two together say that something removed
+    the keys from under a witness that already exists. A restore that copied ``db`` and not ``ks``
+    is how it happens.
+
+    Permanent. The keys are not coming back on their own, and the alternative to refusing is a
+    witness that answers for the AID every validator already trusts while signing with keys nobody
+    has ever seen.
+    """
+
+    code = "e.state.conflict.keystore.f"
+    title = "This witness's keystore is missing but its history is not."
+    status = 500
+
+
 class DockerUnavailable(WitnessError):
     """Docker could not be reached, or refused a command the pool needed (@n2bgpdds).
 

@@ -292,3 +292,57 @@ def test_a_witness_restored_from_backup_still_witnesses(volume):
         )
     finally:
         _docker("volume", "rm", "-f", backup_volume, check=False)
+
+
+def test_a_restore_that_lost_the_keystore_refuses_to_start(volume):
+    """~5dnx, the disaster this oracle exists to make impossible.
+
+    Backups are the rollback path (@7b34ohbo), so a restore that copies the event database and
+    not the keystore is a real mistake with a real occasion. What used to happen next was the
+    worst available outcome: keripy created a fresh keystore, and the witness came up serving the
+    AID out of the database — the one every controller designated and every validator trusts —
+    while signing with keys that AID does not name. Health said `ok`, inceptions were accepted,
+    `witness backup` succeeded. Nothing observable was wrong.
+
+    So the refusal has to be proven against the real image, on a real volume, by actually taking
+    the keystore away. Asserting it in a unit test proves the branch; asserting it here proves the
+    container.
+    """
+    name, containers = volume
+    first, second = f"{name}-k1", f"{name}-k2"
+    containers.extend([first, second])
+
+    _start(name, first, _free_port())
+    _docker("rm", "-f", first)
+
+    # Exactly what a db-only restore leaves behind: history, no keys.
+    _docker(
+        "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "sh", IMAGE,
+        "-c", f"rm -rf {_KERI_HOME}/ks",
+    )
+
+    _docker(
+        "run", "-d", "--name", second,
+        "-v", f"{name}:{_KERI_HOME}",
+        "-p", f"127.0.0.1:{_free_port()}:5633",
+        IMAGE,
+    )
+
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        running = _docker("inspect", "-f", "{{.State.Running}}", second, check=False)
+        if running.stdout.strip() != "true":
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError("the container kept running over a volume with no keystore")
+
+    logs = _docker("logs", second, check=False)
+    output = logs.stdout + logs.stderr
+    assert "e.state.conflict.keystore.f" in output or "KeystoreLost" in output, (
+        f"the container stopped without saying why:\n{output}"
+    )
+    assert f"{_KERI_HOME}/ks" not in _docker(
+        "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "sh", IMAGE,
+        "-c", f"ls {_KERI_HOME}",
+    ).stdout, "the refusal must not have created the keystore it refused over"
