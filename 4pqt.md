@@ -1,0 +1,4 @@
+# A witness that has never witnessed anything reports TWO controllers from /v1/witness/controller, not one. Measured 2026-09-11 on a fresh volume, in a pooled container and in a plain one alike: db.states holds two icp key states — the witness's own AID (the one /v1/witness/identity returns) and a second non-transferable AID that is NOT in hby.habs, so it is something keripy's own witness setup incepts rather than a controller anybody designated. The endpoint presents both as 'controllers', which is misleading for the endpoint whose whole job is 'whom does this witness witness'. Find out what the second AID is (a mailbox/agent hab under a namespace is the guess, unverified), then decide: exclude it, or label the kind. docs/pools.md tells readers to read the count as a delta, which is a workaround, not a fix.
+kind: todo
+created: 2026-09-11T18:26Z
+
