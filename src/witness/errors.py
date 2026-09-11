@@ -206,6 +206,31 @@ class DatabaseTooNew(WitnessError):
     status = 500
 
 
+class KeystoreLost(WitnessError):
+    """The database holds this witness's identity and the keystore that signs for it is gone.
+
+    ~5dnx. Classified as a conflict rather than as something missing, because that is what makes
+    it certain: either store alone is an ordinary state — a fresh volume has neither, an initialised
+    one has a keystore and no identity yet — and only the two together say that something removed
+    the keys from under a witness that already exists. A restore that copied ``db`` and not ``ks``
+    is how it happens.
+
+    Permanent. The keys are not coming back on their own, and the alternative to refusing is a
+    witness that answers for the AID every validator already trusts while signing with keys nobody
+    has ever seen.
+    """
+
+    code = "e.state.conflict.keystore.f"
+    title = "This witness's keystore is missing but its history is not."
+    #: 409, matching :class:`PoolExists` and every other ``e.state.conflict.*``. The status
+    #: follows from the code's prefix rather than from the situation, which is the whole point of
+    #: deriving one from the other — two conflicts answering 409 and 500 would be exactly the
+    #: sibling inconsistency @zzbdxa was written against. Nothing renders this one over HTTP
+    #: today; it refuses a process start, and the disposition a caller acts on is the code's
+    #: trailing ``.f``.
+    status = 409
+
+
 class DockerUnavailable(WitnessError):
     """Docker could not be reached, or refused a command the pool needed (@n2bgpdds).
 
