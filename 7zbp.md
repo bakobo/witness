@@ -1,0 +1,4 @@
+# The Copilot Review Gate workflow has never produced a review. Checked 2026-09-11: PRs 1-4 carry zero reviews and zero review comments from any user, and PRs 5 and 6 got none either. The gate job passes and its POST to /pulls/N/requested_reviewers returns 200 with the PR body, but the response's requested_reviewers array comes back EMPTY, so nothing is actually assigned - the same happens from an interactive gh call with a human token, which rules out the workflow's GITHUB_TOKEN permissions as the cause. Most likely the bakobo org or this repo does not have Copilot code review enabled, or the reviewer slug needs to be 'copilot-pull-request-reviewer[bot]' rather than 'Copilot'. Worth settling, because right now .github/workflows/copilot-review-gate.yml plus the [no-ccr]/[light-ccr] conventions in AGENTS/copilot-instructions describe a review step that does not exist, and a green gate check reads as though it ran.
+kind: todo
+created: 2026-09-11T19:06Z
+
