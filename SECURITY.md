@@ -47,7 +47,7 @@ There is no bug bounty. We are not able to pay for reports, and we would rather 
 
 The control plane is **unauthenticated** in this release, and confining it is the operator's job — it must be bound to loopback and reached through a reverse proxy, never published to a network. This is a recorded decision, not an oversight: the surface is read-only and serves no key material. Signed requests (RFC 9421) are the next phase.
 
-A flood of queries for AIDs a witness does not hold will grow its escrow and slow it down. The cost is measured and documented in `docs/escrow-load.md`, the behaviour is keripy's, and the mitigation is a rate limit at your edge.
+A flood of queries for AIDs a witness does not hold will grow its escrow and slow it down. The cost is measured and documented in `docs/escrow-load.md`. The escrow mechanism is keripy's, but how long an entry survives and how often the sweep runs are set here, so the shape of that curve is ours — report it here. The mitigation is a rate limit at your edge.
 
 ## This repository's licence carries no warranty
 
