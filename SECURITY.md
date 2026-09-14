@@ -27,7 +27,7 @@ Bakobo is a small company. These are commitments about *responsiveness*, not a g
 
 This repository is the layer Bakobo wrote. It sits on [keripy](https://github.com/WebOfTrust/keripy), which is not ours: a flaw in KERI's event processing, CESR parsing or key-state validation belongs to [WebOfTrust](https://github.com/WebOfTrust/keripy/security), and reporting it there reaches the people who can fix it. What is in scope here is everything this repository decides — what it accepts, what it refuses, what it exposes and what it stores.
 
-Concretely: the control plane, the runner, the backup path and the container are ours. The witness process itself is stock keripy, started unchanged.
+Concretely: the control plane, the runner, the backup path and the container are ours. The witness process is keripy's, but it does not run quite as keripy ships it, and the difference is ours rather than theirs. This repository sets keripy's escrow timeout and replaces keripy's escrow sweep with one that paces itself — both to bound what an escrow-flooding attack costs a witness, and both described in [`docs/escrow-load.md`](docs/escrow-load.md). How a witness behaves under that load is therefore a decision made here, so report a flaw in it here, not upstream.
 
 A vulnerability in a dependency should go to that project, not to us. If you are not sure which side of the line something falls on, report it here and we will route it — that is our job, not yours.
 
@@ -47,7 +47,7 @@ There is no bug bounty. We are not able to pay for reports, and we would rather 
 
 The control plane is **unauthenticated** in this release, and confining it is the operator's job — it must be bound to loopback and reached through a reverse proxy, never published to a network. This is a recorded decision, not an oversight: the surface is read-only and serves no key material. Signed requests (RFC 9421) are the next phase.
 
-A flood of queries for AIDs a witness does not hold will grow its escrow and slow it down. The cost is measured and documented in `docs/escrow-load.md`, the behaviour is keripy's, and the mitigation is a rate limit at your edge.
+A flood of queries for AIDs a witness does not hold will grow its escrow and slow it down. The cost is measured and documented in `docs/escrow-load.md`. The escrow mechanism is keripy's, but how long an entry survives and how often the sweep runs are set here, so the shape of that curve is ours — report it here. The mitigation is a rate limit at your edge.
 
 ## This repository's licence carries no warranty
 
