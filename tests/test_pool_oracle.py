@@ -141,15 +141,18 @@ def test_a_pool_comes_up_resolves_and_goes_away_completely(pool):
             published = json.loads(answer.read().decode())
         assert published["attribs"]["pool"] == name
 
-        # And the inheritance the feature exists for: the witness's own tags reach the AIDs it
-        # witnesses, through the endpoint a consumer would ask.
+        # Inheritance itself cannot be settled here, and the reason is worth stating rather than
+        # leaving as a gap: @jorbhpfq means a pool incepts no controller, so the only AIDs this
+        # witness holds key state for are its own and keripy's, and neither has witnesses. What
+        # this does check is that the member is served and that a witness does not spuriously
+        # inherit from itself. The inheritance path is proven against a real keripy database in
+        # tests/test_reader.py, where a controller can be incepted to designate the witness.
         with urllib.request.urlopen(  # noqa: S310
             f"{witness['control']}v1/witness/controller/{witness['aid']}", timeout=20
         ) as answer:
             held = json.loads(answer.read().decode())
-        assert "testnet" in held["tags"]["derived"], (
-            "a witness that declares testnet must taint what it witnesses, or the derivation is "
-            "only true in unit tests"
+        assert held["tags"]["derived"] == [], (
+            "a witness has no witnesses, so its own AID inherits nothing"
         )
 
     _run("down", name)
