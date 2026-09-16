@@ -63,6 +63,5 @@ Letting it clear at the consumer too would let a laboratory witness retroactivel
 ## What is not built
 
 - **Nothing declares automatically outside a pool.** A production witness says nothing about itself until an operator gives it `--tag`, `--attrib` or a seed file, which is correct: absence is not assurance, and a witness that declared something by default would be declaring something nobody chose.
-- **Tagging pooled witnesses** (`~2xf6`). `witness pool` deliberately does not override the image CMD, so `--tag` and `--attribute` cannot reach a pooled control plane on argv. The delivery mechanism is an open question and needs a node of its own.
 - **Delegation** (`~4tml`). Inheritance walks an AID's own witness list and stops. Whether a delegated AID inherits from its delegator's witnesses is undecided.
 - **A door census** (`~4v2j`). The declaration doors are bounded; nothing yet proves the repo's set of doors is complete.
