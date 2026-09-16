@@ -462,3 +462,358 @@ def test_a_failed_open_does_not_leak_the_environment_into_the_next_request(tmp_p
     assert causes == ["DatabaseError"] * 3, (
         f"the reason changed between requests: {causes} — an environment leaked"
     )
+
+
+class TestTags:
+    """The tenth noun, and the tag member on controller/{aid} (@nlunqygr)."""
+
+    def _reader_for(self, facts, tag_tuple, attribs=None):
+        cfg = ControlPlaneConfig(
+            name=facts["name"], host="127.0.0.1", port=1, base="",
+            head_dir_path=facts["head"], tags=tag_tuple, attribs=attribs or {},
+        )
+        return WitnessReader(cfg)
+
+    def test_tags_reports_what_the_operator_configured(self, witnessing_db):
+        answer = self._reader_for(witnessing_db, ("testnet",)).tags()
+        assert answer["tags"] == ["testnet"]
+
+    def test_tags_names_where_the_value_came_from(self, witnessing_db):
+        """The `source` member is the seam for the signed reply route, so it ships from day one.
+
+        Without it, moving the origin of tags later would be a breaking change to a frozen shape
+        rather than a new value in an existing member.
+        """
+        assert self._reader_for(witnessing_db, ()).tags()["source"] == "operator-config"
+
+    def test_an_untagged_witness_reports_an_empty_list_not_an_absent_member(self, witnessing_db):
+        """Absence is never assurance (@pmtzkn6j); an empty list says 'nothing claimed'."""
+        assert self._reader_for(witnessing_db, ()).tags()["tags"] == []
+
+    def test_tags_needs_no_database(self, tmp_path):
+        """Configured tags are answerable even when the witness has not come up yet.
+
+        Failing this endpoint on a missing database would make the one question an operator asks
+        during a bad deploy — "is this the laboratory box?" — unanswerable exactly then.
+        """
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), tags=("testnet",),
+        )
+        assert WitnessReader(cfg).tags()["tags"] == ["testnet"]
+
+    def test_a_controller_inherits_this_witnesss_tag(self, witnessing_db):
+        answer = self._reader_for(witnessing_db, ("testnet",)).controller(
+            witnessing_db["controller_pre"]
+        )
+        assert answer["tags"]["derived"] == ["testnet"]
+        assert answer["tags"]["from"] == [witnessing_db["witness_pre"]]
+        assert answer["tags"]["unresolved"] == []
+
+    def test_an_untagged_witness_taints_no_controller(self, witnessing_db):
+        answer = self._reader_for(witnessing_db, ()).controller(witnessing_db["controller_pre"])
+        assert answer["tags"]["derived"] == []
+        assert answer["tags"]["from"] == [witnessing_db["witness_pre"]]
+
+    def test_a_co_witness_we_cannot_speak_for_is_reported_unresolved(self, fully_witnessed_db):
+        """The control plane does not fetch peers (@nlunqygr), so it says so rather than guessing.
+
+        The fixture's controller designates two witnesses and this reader is only one of them.
+        """
+        answer = self._reader_for(fully_witnessed_db, ("testnet",)).controller(
+            fully_witnessed_db["controller_pre"]
+        )
+        ours, theirs = fully_witnessed_db["witness_pres"]
+        assert answer["tags"]["from"] == [ours]
+        assert answer["tags"]["unresolved"] == [theirs]
+        assert answer["tags"]["derived"] == ["testnet"]
+
+    def test_a_keystore_we_cannot_identify_leaves_every_witness_unresolved(
+        self, witnessing_db, monkeypatch
+    ):
+        """An unidentifiable keystore must not fail the controller endpoint.
+
+        `tags` is an added member on a shape that already worked; a reader that cannot work out
+        its own AID should say it can speak for nobody, not turn an existing 200 into a 409.
+        """
+        subject = self._reader_for(witnessing_db, ("testnet",))
+        monkeypatch.setattr(reader_mod, "_select_witness_hab", lambda items: None)
+        answer = subject.controller(witnessing_db["controller_pre"])
+        assert answer["tags"]["derived"] == []
+        assert answer["tags"]["from"] == []
+        assert answer["tags"]["unresolved"] == [witnessing_db["witness_pre"]]
+
+
+class TestAttribs:
+    """The eleventh noun, and the AID inheritance it deliberately does not take part in."""
+
+    def _reader_for(self, facts, attribs):
+        cfg = ControlPlaneConfig(
+            name=facts["name"], host="127.0.0.1", port=1, base="",
+            head_dir_path=facts["head"], attribs=attribs,
+        )
+        return WitnessReader(cfg)
+
+    def test_attribs_report_what_the_operator_configured(self, witnessing_db):
+        answer = self._reader_for(witnessing_db, {"operator": "Bakobo"}).attribs()
+        assert answer["attribs"] == {"operator": "Bakobo"}
+
+    def test_attribs_name_their_source(self, witnessing_db):
+        assert self._reader_for(witnessing_db, {}).attribs()["source"] == "operator-config"
+
+    def test_an_undeclared_witness_reports_an_empty_map(self, witnessing_db):
+        assert self._reader_for(witnessing_db, {}).attribs()["attribs"] == {}
+
+    def test_attribs_need_no_database(self, tmp_path):
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), attribs={"operator": "Bakobo"},
+        )
+        assert WitnessReader(cfg).attribs()["attribs"] == {"operator": "Bakobo"}
+
+    def test_a_controller_inherits_no_attribs(self, witnessing_db):
+        """@e4ceoopg's why-not, asserted where a consumer would see it.
+
+        Union is defined for tag names and undefined for key/value pairs, so controller/{aid}
+        carries derived tags and nothing else. A future hand adding an attribs member here
+        would have to delete this test to do it, which is the point.
+        """
+        cfg = ControlPlaneConfig(
+            name=witnessing_db["name"], host="127.0.0.1", port=1, base="",
+            head_dir_path=witnessing_db["head"], attribs={"operator": "Bakobo"},
+        )
+        answer = WitnessReader(cfg).controller(witnessing_db["controller_pre"])
+        assert "attribs" not in answer
+        assert "attribs" not in answer["tags"]
+
+
+class _FakeStore:
+    """Stands in for keripy's Komer over decl records, keyed (aid, kind)."""
+
+    def __init__(self, items):
+        self._items = items
+
+    def get(self, keys):
+        return self._items.get(tuple(keys))
+
+
+class _FakeDecl:
+    def __init__(self, tags=(), attribs=None):
+        self.tags = list(tags)
+        self.attribs = dict(attribs or {})
+
+
+class _FakeRdb:
+    """A witness database whose decl store may or may not exist, as the pin dictates."""
+
+    def __init__(self, hab_pre, decls=None, has_store=True):
+        self._hab_pre = hab_pre
+        if has_store:
+            self.decls = _FakeStore(decls or {})
+
+        class _Habs:
+            def getTopItemIter(self):
+                if hab_pre is None:
+                    return iter(())
+                return iter([(("k",), _FakeHab(mid=None, hid=hab_pre))])
+
+        self.habs = _Habs()
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class TestSignedDeclarations:
+    """Preferring a signed declaration over operator config, when one is available (@vqqh6zdk).
+
+    The installed keripy decides whether that is possible at all: the decl stores exist only in a
+    keripy carrying the reply routes, so this reads through `getattr` exactly as escrow() already
+    does for a store an upstream bump may have moved. Falling back is not a degraded mode, it is
+    the honest answer for a witness whose declarations are still operator configuration.
+    """
+
+    def _reader(self, tmp_path, rdb, tags=(), attribs=None):
+        cfg = ControlPlaneConfig(
+            name="w", host="127.0.0.1", port=1, base="", head_dir_path=str(tmp_path),
+            tags=tags, attribs=attribs or {},
+        )
+        subject = WitnessReader(cfg)
+        subject._open = lambda: rdb
+        return subject
+
+    def test_a_signed_tag_declaration_wins_over_config(self, tmp_path):
+        rdb = _FakeRdb(_NONTRANSFERABLE,
+                       decls={(_NONTRANSFERABLE, "tags"): _FakeDecl(tags=["testnet"])})
+        answer = self._reader(tmp_path, rdb, tags=("bakobo.pool",)).tags()
+        assert answer == {"tags": ["testnet"], "source": "signed-reply"}
+
+    def test_a_signed_attrib_declaration_wins_over_config(self, tmp_path):
+        rdb = _FakeRdb(_NONTRANSFERABLE,
+                       decls={(_NONTRANSFERABLE, "attribs"): _FakeDecl(attribs={"operator": "B"})})
+        answer = self._reader(tmp_path, rdb, attribs={"operator": "other"}).attribs()
+        assert answer == {"attribs": {"operator": "B"}, "source": "signed-reply"}
+
+    def test_the_database_is_closed_even_when_it_answers(self, tmp_path):
+        rdb = _FakeRdb(_NONTRANSFERABLE,
+                       decls={(_NONTRANSFERABLE, "tags"): _FakeDecl(tags=["testnet"])})
+        self._reader(tmp_path, rdb).tags()
+        assert rdb.closed, "the control plane opens per request and closes what it opens (@c7v3kp)"
+
+    def test_a_keripy_without_the_decl_store_falls_back(self, tmp_path):
+        """True of the pinned keripy today, so this is the live path rather than a hypothetical."""
+        rdb = _FakeRdb(_NONTRANSFERABLE, has_store=False)
+        answer = self._reader(tmp_path, rdb, tags=("testnet",)).tags()
+        assert answer == {"tags": ["testnet"], "source": "operator-config"}
+
+    def test_no_declaration_published_yet_falls_back(self, tmp_path):
+        rdb = _FakeRdb(_NONTRANSFERABLE, decls={})
+        answer = self._reader(tmp_path, rdb, tags=("testnet",)).tags()
+        assert answer["source"] == "operator-config"
+
+    def test_a_keystore_we_cannot_identify_falls_back(self, tmp_path):
+        rdb = _FakeRdb(None, decls={})
+        assert self._reader(tmp_path, rdb, tags=("testnet",)).tags()["source"] == "operator-config"
+
+    def test_an_unopenable_database_still_answers_from_config(self, tmp_path):
+        """@nlunqygr: an operator asks "is this the laboratory box?" precisely when things are
+        broken, so a database that will not open must not take the answer away."""
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), tags=("testnet",),
+        )
+        answer = WitnessReader(cfg).tags()
+        assert answer == {"tags": ["testnet"], "source": "operator-config"}
+
+
+def test_a_real_signed_declaration_is_what_the_endpoint_serves(tmp_path):
+    """End to end against a genuine witness database, now that the pin carries the decl routes.
+
+    Everything above this stubs the store, which proves the branching and proves nothing about
+    keripy. This builds a real witness, has it declare itself test infrastructure through keripy's
+    own reply machinery, and then reads it back the way the control plane does -- so the claim
+    that /v1/witness/tags reports what a witness actually published rests on a witness actually
+    publishing it.
+    """
+    head = str(tmp_path / "declaring")
+    hby = habbing.Habery(
+        name="declaring", base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    hab = hby.makeHab(name="wit", transferable=False)
+    hab.psr.parse(bytearray(hab.makeDeclTags(tags=["testnet"])))
+    hab.psr.parse(bytearray(hab.makeDeclAttribs(attribs={"operator": "Bakobo"})))
+    hby.close()
+
+    # Operator configuration deliberately disagrees, so the assertion shows which one wins.
+    cfg = ControlPlaneConfig(
+        name="declaring", host="127.0.0.1", port=1, base="", head_dir_path=head,
+        tags=("bakobo.pool",), attribs={"operator": "someone else"},
+    )
+    subject = WitnessReader(cfg)
+
+    assert subject.tags() == {"tags": ["testnet"], "source": "signed-reply"}
+    assert subject.attribs() == {
+        "attribs": {"operator": "Bakobo"}, "source": "signed-reply",
+    }
+
+
+class TestSeedFilePrecedence:
+    """Signed, then flag, then seed file, per endpoint (@hjz7b7qo)."""
+
+    def _reader(self, tmp_path, seed=None, tags=(), attribs=None):
+        path = tmp_path / "decls.json"
+        if seed is not None:
+            path.write_text(seed)
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), decl_file=str(path),
+            tags=tags, attribs=attribs or {},
+        )
+        return WitnessReader(cfg)
+
+    def test_a_seed_file_declares_when_no_flag_does(self, tmp_path):
+        subject = self._reader(tmp_path, seed='{"tags": ["testnet"]}')
+        assert subject.tags() == {"tags": ["testnet"], "source": "seed-file"}
+
+    def test_a_flag_beats_the_seed_file(self, tmp_path):
+        """Whoever typed the flag is acting now; the file was written when the volume was made."""
+        subject = self._reader(tmp_path, seed='{"tags": ["testnet"]}', tags=("bakobo.pool",))
+        assert subject.tags() == {"tags": ["bakobo.pool"], "source": "operator-config"}
+
+    def test_precedence_is_decided_per_endpoint(self, tmp_path):
+        """A flag for one kind does not suppress the file's answer for the other."""
+        subject = self._reader(
+            tmp_path, seed='{"tags": ["testnet"], "attribs": {"pool": "lab"}}',
+            tags=("bakobo.pool",),
+        )
+        assert subject.tags()["source"] == "operator-config"
+        assert subject.attribs() == {"attribs": {"pool": "lab"}, "source": "seed-file"}
+
+    def test_seed_attribs_are_served(self, tmp_path):
+        subject = self._reader(tmp_path, seed='{"attribs": {"operator": "Bakobo"}}')
+        assert subject.attribs() == {"attribs": {"operator": "Bakobo"}, "source": "seed-file"}
+
+    def test_a_missing_file_is_no_declarations_not_a_failure(self, tmp_path):
+        assert self._reader(tmp_path).tags() == {"tags": [], "source": "operator-config"}
+
+    def test_a_malformed_file_does_not_take_the_witness_down(self, tmp_path):
+        """Fail closed on the value, open on the service: a bad file declares nothing.
+
+        Refusing to answer would make a typo in a provisioning script look like a dead control
+        plane, which is a worse failure than declaring nothing.
+        """
+        assert self._reader(tmp_path, seed="{not json").tags() == {
+            "tags": [], "source": "operator-config",
+        }
+
+    def test_declaring_nothing_can_be_switched_off_entirely(self, tmp_path):
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), decl_file=None,
+        )
+        assert WitnessReader(cfg).tags() == {"tags": [], "source": "operator-config"}
+
+
+def test_a_seed_file_that_is_not_utf8_declares_nothing_rather_than_failing(tmp_path):
+    """A UnicodeDecodeError is a ValueError, not an OSError, so it escaped the read guard.
+
+    An operator who copied a seed file through a tool that mangled the encoding would have got a
+    500 from the endpoint documented as always answering.
+    """
+    path = tmp_path / "decls.json"
+    path.write_bytes(b'{"tags": ["\xff\xfe invalid utf-8"]}')
+    cfg = ControlPlaneConfig(
+        name="nosuch", host="127.0.0.1", port=1, base="",
+        head_dir_path=str(tmp_path / "absent"), decl_file=str(path),
+    )
+    assert WitnessReader(cfg).tags() == {"tags": [], "source": "operator-config"}
+
+
+def test_a_controller_inherits_the_tags_the_endpoint_reports(tmp_path):
+    """The two readings of one question have to agree (@hjz7b7qo).
+
+    Before this, controller/{aid} derived inheritance from --tag alone, so a pooled witness
+    reported testnet on /v1/witness/tags while the AIDs it witnesses inherited nothing — which
+    defeats the feature for the case it was built for.
+    """
+    head = str(tmp_path / "seeded")
+    hby = habbing.Habery(
+        name="seeded", base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    wit = hby.makeHab(name="wit", transferable=False)
+    ctl_hby = habbing.Habery(name="ctlseed", base="", temp=True, bran="0987654321kjihgfedcba")
+    ctl = ctl_hby.makeHab(name="ctl", transferable=True, wits=[wit.pre], toad=1)
+    wit.psr.parse(bytearray(ctl.msgOwnInception(framed=True)))
+    ctl_hby.close()
+    hby.close()
+
+    seed = tmp_path / "decls.json"
+    seed.write_text('{"tags": ["testnet"]}')
+    cfg = ControlPlaneConfig(
+        name="seeded", host="127.0.0.1", port=1, base="", head_dir_path=head,
+        decl_file=str(seed),
+    )
+    subject = WitnessReader(cfg)
+
+    assert subject.tags()["source"] == "seed-file"
+    assert subject.controller(ctl.pre)["tags"]["derived"] == ["testnet"]

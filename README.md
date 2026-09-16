@@ -70,7 +70,7 @@ uv run witness pool break --name lab --witness w2       # and `heal` to put it b
 uv run witness pool down --name lab                     # removes every container and volume
 ```
 
-The pool serves witnesses and describes them; it never incepts anything, so designating it is [`heti`](https://github.com/bakobo/heti)'s or `kli`'s job. Full documentation, including the reproducible-`--seed` caveat and what a pool is *not* good for, is in [`docs/pools.md`](docs/pools.md).
+Pooled witnesses declare themselves `testnet` and `bakobo.pool`, with a `pool` attribute naming the set, so their AIDs are no longer indistinguishable from production ones. The pool serves witnesses and describes them; it never incepts anything, so designating it is [`heti`](https://github.com/bakobo/heti)'s or `kli`'s job. Full documentation, including the reproducible-`--seed` caveat and what a pool is *not* good for, is in [`docs/pools.md`](docs/pools.md).
 
 And a witness can be backed up without being stopped:
 
@@ -93,8 +93,22 @@ Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated i
 | `/v1/witness/escrow` | Depth of every escrow store, query-not-found first. |
 | `/v1/witness/database` | Size against keripy's fixed 100 MB map ceiling, and the registered reader count. |
 | `/v1/witness/process` | CPU, memory, threads and descriptors for the witness process. |
+| `/v1/witness/tags` | What this witness claims about itself — `testnet`, and any vendor-prefixed tag its operator set. |
+| `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`. |
 | `/v1/witness/controller` | Every controller whose key state this witness holds. |
-| `/v1/witness/controller/{aid}` | One controller's key state, or `404`. |
+| `/v1/witness/controller/{aid}` | One controller's key state and the tags it inherits, or `404`. |
+
+Tags are worth a paragraph, because what they do *not* say is the point. There is a `testnet` tag and deliberately no `production` tag: a witness claiming to be production makes a self-serving claim nothing verifies, whereas one claiming to be a laboratory speaks against its own interest. So an empty tag list means "nothing claimed", never "this is fine", and a reader must not treat absence as assurance. Set them with `--tag`, repeatable; an undefined bare name is refused at startup, because a misspelled `testnet` that silently fails to apply leaves the witness looking production-grade with nothing to say otherwise. A tag of your own needs a vendor prefix, as in `bakobo.pool`.
+
+Attributes are the other half, and the split matters. A tag is a predicate a consumer *decides* on; an attribute is a key and value a consumer *displays*. That is why they are two nouns rather than one document, and why only tags are inherited. Union is well defined for names — any witness tagged `testnet` taints the AID — and undefined for pairs, since three witnesses reporting three different regions have no natural merge. An attribute also lacks the one property that makes `testnet` credible: `testnet` is a claim against the witness's own interest, whereas a self-reported operator name is worth exactly what a self-reported `production` would have been. So act on tags, show attributes to a human, and trust neither further than that.
+
+Set them with `--attrib key=value`, repeatable. Keys obey the same rule as tag names, so a key is as interoperable as a tag. Values are printable ASCII, non-empty, at most 256 characters — deliberately not Unicode, because this is a string a person reads off a screen, which makes a Cyrillic homograph or a bidi override a spoofing surface rather than an internationalization win.
+
+Both endpoints report a `source`, naming which of three places the answer came from. A witness that has published a signed declaration reports `signed-reply` and serves what it published. Failing that, `--tag` and `--attrib` give `operator-config`. Failing that, a JSON seed file in the volume gives `seed-file` — that is how `witness pool` marks its witnesses, since it will not override the image's command to pass them as arguments. Signed wins, because a third party can verify it and cannot verify a local flag, and letting a flag mask what the witness has already said on the wire would hide the disagreement rather than resolve it. Both endpoints keep answering when the witness database cannot be opened, since "is this the laboratory box?" is a question operators ask precisely when something is broken.
+
+The full reasoning, including the two carriers that were measured and rejected before this one, is in [`docs/decls.md`](docs/decls.md).
+
+An AID inherits tags from its witnesses, and `controller/{aid}` reports that under `tags`: `derived` is the union, `from` lists the witnesses this control plane can speak for, and `unresolved` lists the ones it cannot. That last member is not an omission. This control plane never calls out to peer witnesses — it reads one LMDB and nothing else — so a co-witness's tags are genuinely unknown to it, and saying so beats guessing. A caller who wants the whole picture asks each witness itself. The rule for combining them is monotone: one `testnet` witness is enough, no quorum of untagged ones excuses it, and a consumer that has once seen a witness tagged `testnet` should never clear that marking.
 
 Health is worth a sentence. A witness whose loop has wedged still has a perfectly openable database, so a probe that only opens the database stays green through the failure that has actually happened. This one reports `degraded` and names the doer, but only once that doer has held the loop past five seconds: a sample catching the loop mid-doer is normal, and treating it as a wedge would make the probe a random alarm.
 

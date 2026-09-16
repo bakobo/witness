@@ -305,6 +305,174 @@ Operator layer over a stock keripy witness = goal:
             the read surface is unauthenticated until @s6v3qm lands, which is why the port binds
             behind the estate's proxy.
 
+        A witness broadcasts tags about itself  and testnet is the first one = decision:
+          id: vqqh6zdk
+          why: >
+            A witness needs a way to say "I am laboratory infrastructure, do not build anything
+            consequential on me," and an AID witnessed by such a witness inherits that. Rejected
+            carrying it as a keripy configuration trait in the witness's inception event, on two
+            measurements against the pinned keripy: a witness AID is non-transferable by necessity
+            (@c7v3kp's sibling reasoning in reader.py — a transferable witness would need witnesses
+            of its own and the definition would not terminate), so its `B` prefix IS the public key
+            and does not commit to the event's contents; incepting one key with and without
+            cnfg=["NP"] yields the identical prefix and only a different event SAID. And the icp of
+            a non-transferable AID has no audience, because verifying a witness receipt needs the
+            prefix alone, so nothing in the ecosystem fetches that KEL. Two further facts make the
+            trait carrier worse than it looks: TraitCodex membership is unenforced on the JSON path
+            but enforced on the CESR-native one (Traitor raises InvalidSoftError, coring.py), so a
+            private code is mintable today and unmintable by anything CESR-native; and Kever.state()
+            rebuilds the trait list from two hardcoded booleans, so an unrecognized trait never
+            reaches key state at all. Also rejected an arbitrary anchor in the icp `a` field, which
+            Serder validation refused on both serializations on first inspection. Chosen instead:
+            signed `rpy` messages the witness issues about itself — the same channel /loc/scheme and
+            /end/role already use, and which exists precisely because a non-transferable AID's
+            degenerate KEL cannot carry facts about the witness. Accepted tradeoff: tags are mutable
+            at the source rather than frozen into the identifier, so "cleared by nothing" must be
+            enforced at the consumer (@dhh2gnvv), and increment 1 ships them as operator config with
+            no cryptographic binding at all until the `rpy` route lands.
+          children:
+
+            Tags are names  not key/value pairs = decision:
+              id: k3tkkss2
+              why: >
+                A tag is a bare name and the collection is a list. The consumer question is always
+                membership — "does this witness claim X" — and a map invites a schema argument per
+                key plus a versioning problem this feature does not have. Rejected a fully open
+                namespace, where every deployment invents its own spelling of testnet and nothing
+                interoperates: bare lowercase names are a defined vocabulary that a peer may reject
+                as a typo, and a dotted vendor prefix (bakobo.pool) is anyone's to mint and must be
+                passed through opaquely. Accepted tradeoff: a tag that genuinely needs a value
+                arrives later as a separate member rather than by stringly-typing this one.
+
+            The vocabulary asserts only the negative claim = constraint:
+              id: pmtzkn6j
+              why: >
+                There is a `testnet` tag and there is deliberately no `production` tag. A witness
+                asserting it is production makes a self-serving claim nothing verifies; a witness
+                asserting it is testnet speaks against its own interest, which is the only kind of
+                self-assertion worth reading. So the derived value is three-valued — testnet,
+                unmarked, and never production-asserted — and absence is never assurance, matching
+                COIA APPENDIX-D flag 6's rule that a reader MUST NOT render absence as a positive
+                assurance. Rejected a boolean `production` member, which would make every unmarked
+                witness in the world look affirmatively production-grade. This narrows org principle
+                8 rather than contradicting it: treating unmarked as testnet would taint every AID
+                in existence today and make the feature useless, so failing closed here means
+                refusing to read absence as a positive signal, not manufacturing a negative one.
+
+            Stickiness lives at the consumer  not at the witness = decision:
+              id: dhh2gnvv
+              why: >
+                COIA flag 6 is cleared by nothing — a test identifier does not become a production
+                identifier — but @vqqh6zdk establishes that no carrier available to a witness can
+                make its own assertion immutable. So the monotonicity is enforced where the
+                judgement lives: once a consumer has seen a witness tagged testnet, that marking
+                never clears for that consumer, whatever the witness later says. Rejected letting
+                the tag clear at the consumer too, which would let a laboratory witness retroactively
+                launder every AID it ever witnessed by re-tagging itself. Accepted tradeoff: two
+                consumers can legitimately disagree about the same witness, which is COIA's
+                creator-indexed class, and a consumer with no history sees only today's claim. The
+                derivation function is therefore pure and the caller owns persistence.
+
+            Attributes are a separate map that no AID inherits = decision:
+              id: e4ceoopg
+              why: >
+                @k3tkkss2 said a tag needing a value would arrive as a separate member rather than
+                by stringly-typing the name, and this is that member: `attributes`, a map of key to
+                value, alongside `tags`. The line between them is not mutability but whether a
+                consumer DECIDES on the value or merely DISPLAYS it. A consumer acts on `testnet`,
+                so it must be a predicate with agreed semantics; a consumer shows a human
+                `operator` or `contact`, and should act on neither.
+                The decisive reason they cannot be one thing is that union is defined for names and
+                undefined for pairs. Tag inheritance is a union over an AID's witness set — any
+                witness tagged testnet taints the AID, monotonically and obviously. Three witnesses
+                reporting region=eu, region=us and region=ap have no natural merge, and every
+                artificial one is a rule somebody must agree to. So attributes are deliberately NOT
+                inherited: controller/{aid} carries derived tags and no attribs member at all, and a
+                test asserts that absence so the omission stays a decision rather than decaying
+                into an oversight. The second reason is evidential — @pmtzkn6j accepts `testnet`
+                because it is a claim against the witness's own interest, and no valued attribute
+                has that property, so a self-reported region is worth exactly what a self-reported
+                `production` would have been.
+                Rejected folding both into one noun. The signed reply routes of @vqqh6zdk's second
+                increment want to be separate, because BADA orders each route independently and
+                tags change almost never while a contact address changes often: one route would
+                mean re-signing and re-timestamping the testnet assertion to correct a typo in an
+                email address. Two nouns keep the local surface isomorphic to the protocol surface.
+                Accepted tradeoff: a consumer that wants both makes two requests.
+                Keys follow the same rule as tag names — bare keys are a defined vocabulary
+                (operator, contact, pool), a dotted vendor prefix is anyone's to mint — so a key is
+                exactly as interoperable as a tag name is. Values are printable ASCII, non-empty,
+                at most 256 characters. Deliberately not Unicode: this is a field a human reads off
+                a screen, which makes it a homograph and bidi spoofing surface, and a field nobody
+                is permitted to decide on loses little by being restricted. Rejected allowing empty
+                values, since a key with no value says less than the key's absence does.
+
+            A seed file in the volume carries declarations a pooled witness cannot get on argv = decision:
+              id: hjz7b7qo
+              why: >
+                A pool is laboratory infrastructure by definition, so its witnesses should say so —
+                and until now they could not. @nlunqygr put --tag and --attrib on the control
+                plane's command line, and @n2bgpdds deliberately does NOT override the image's CMD,
+                because restating the image's own command inside pool.py would drift silently the
+                first time that command changed. So argv is closed to the pool by a decision worth
+                keeping, and the declarations had to arrive some other way.
+                Chosen: a JSON file the pool writes into the volume at KERI_HOME/decls.json, read by
+                the control plane from that path by default, so the image's CMD stays untouched and
+                a pooled witness declares itself with no new argument anywhere. It rides the
+                one-shot seeding container the pool already runs for the advertised URL rather than
+                adding a second, so `pool up` costs no extra container per witness. Rejected a
+                WITNESS_TAGS environment variable: it also leaves CMD alone, but tags and attribs
+                would need either two variables or a packed encoding invented here, where one file
+                carries both in a shape that already exists. Rejected folding declarations into
+                keripy's own cf/<name>.json, which is keripy's file and whose keys are keripy's to
+                define; when the /decl routes land upstream that file becomes the right home, and
+                this one goes away.
+                Precedence per endpoint, highest first: a signed declaration, then --tag/--attrib,
+                then the seed file. A flag beats the file because whoever typed it is acting now,
+                where the file was written when the volume was provisioned; that is the ordinary
+                command-line-over-config rule and inverting it would make a flag silently
+                ineffective. `source` therefore has a third value, seed-file, rather than reporting
+                the file as operator-config — an operator debugging a witness that claims something
+                unexpected needs to know which of three places to go and look.
+                Accepted tradeoff: this is a second input door for the same values, and a file in a
+                volume is easier to forget than an argument in a command. The door is bounded like
+                the others (size, then shape, then meaning) and a missing or unreadable file is a
+                witness with no declarations rather than a witness that fails to start.
+
+            The read surface gains a tenth noun and controller/{aid} gains a tags member = decision:
+              id: nlunqygr
+              why: >
+                @zc7p7qth froze nine nouns and their shapes expressly so a later change would have
+                something to be a change TO; this is that change. Tenth noun: GET /v1/witness/tags,
+                answering {tags, source}. And controller/{aid} gains an additive `tags` member
+                carrying {derived, from, unresolved}. The `source` member exists so that increment 2
+                can move the origin of tags from operator config to a signed `rpy` without changing
+                the endpoint contract — it reads "operator-config" now and "signed-reply" then.
+                Rejected having the control plane fetch peer witnesses' tags over HTTP to fill in
+                `unresolved`: it is a read-only observer (@k3p7wr), and an outbound fetch would add
+                an SSRF surface and a network dependency to the one process whose whole charter is
+                not having one. Accepted tradeoff: the controller answer is partial by construction,
+                so `unresolved` is a first-class part of the response rather than an omission, and
+                a caller that wants the whole picture must resolve the other witnesses itself. The
+                repeatable --tag flag is an external contract under the methodology §3 trigger and
+                is frozen by this node.
+                Precedence resolved 2026-09-16, when the read path was built: a signed declaration
+                WINS over operator configuration, rather than configuration overriding it. A third
+                party can verify the signed one and cannot verify the flag, so letting a local flag
+                mask what the witness has published on the wire would make the endpoint disagree
+                with the protocol and would hide the disagreement. Rejected the opposite
+                precedence, which reads like an operator escape hatch and is really a way to lie
+                locally about what you have already said publicly. The endpoint still answers when
+                the database cannot be opened, because an operator asks whether this is the
+                laboratory box precisely when things are broken; four different absences -- no
+                database, a keripy predating the decl routes, an unidentifiable keystore, and
+                nothing declared yet -- all fall back rather than fail, since a witness whose
+                declarations are still configuration is in a normal state and not a degraded one. It goes on `control-plane` ONLY, and deliberately not on
+                `run`: the control plane is the process that serves tags, so a `run --tag` would be
+                a flag whose value nothing reads — the same unsupported claim the pyproject note
+                refuses to make about fiki. `run` grows one when @vqqh6zdk's second increment makes
+                the runner the thing that publishes them.
+
         Metrics leave over OTLP  and only when an endpoint is configured = decision:
           id: wea6qjmk
           why: >

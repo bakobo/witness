@@ -10,6 +10,8 @@ answers to, and the ordering it guarantees. They are deliberately about keripy's
 witness's — witness code is barely imported.
 """
 
+import os
+
 import pytest
 from keri.db import basing, dbing
 
@@ -276,3 +278,19 @@ def test_a_database_ahead_of_the_library_raises_configurationerror(tmp_path):
         rdb.close()
 
     assert not isinstance(caught.value, kering.DatabaseError)
+
+
+def test_the_pinned_keripy_carries_the_decl_stores():
+    """The stores witness.reader reads declarations out of (@vqqh6zdk).
+
+    Read through getattr in reader._declared rather than assumed, because these arrived with the
+    pin bump to 173678c0 and the routes behind them are proposed upstream rather than merged. If
+    a later bump lands a renamed version of this feature, this fails here instead of silently
+    turning every witness back into operator-config.
+    """
+    db = basing.Baser(name="declcontract" + os.urandom(4).hex(), temp=True, reopen=True)
+    try:
+        assert hasattr(db, "decls"), "the decl record store is gone; reader._declared reads it"
+        assert hasattr(db, "dans"), "the decl authorization index is gone"
+    finally:
+        db.close(clear=True)

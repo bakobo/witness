@@ -43,6 +43,7 @@ from keri.core.eventing import ample
 from keri.core.signing import Salter
 from keri.help.helping import nowIso8601
 
+from . import decls
 from .errors import (
     DockerUnavailable,
     InvalidArguments,
@@ -86,11 +87,17 @@ _REQUEST_TIMEOUT = 5.0
 #: permissions and the encoding are keripy's rather than a guess made here. Run inside a one-shot
 #: container as the image's own uid, before the witness ever starts.
 _SEED_CONFIG = (
-    "import json,sys\n"
+    "import json,pathlib,sys\n"
     "from keri.app.configing import Configer\n"
     "cf=Configer(name=sys.argv[1],base='',temp=False,reopen=True,clear=False)\n"
     "cf.put(json.loads(sys.argv[2]))\n"
+    "pathlib.Path(sys.argv[3]).write_text(sys.argv[4],encoding='utf-8')\n"
 )
+
+#: What a pooled witness declares, written beside the keystore inside the volume (@hjz7b7qo). `testnet` is the point — a pool IS laboratory infrastructure,
+#: and before this its AIDs were indistinguishable from production ones. The other two say which
+#: pool, so an operator looking at a witness can find the rest of its set.
+_POOL_DECL_FILE = f"{KERI_HOME}/decls.json"
 
 _PS_FORMAT = (
     "{{.Names}}\t"
@@ -401,9 +408,17 @@ class Pool:
             "run", "--rm", "-v", f"{name}:{KERI_HOME}", "--entrypoint", "kli", image, *init
         ])
         config = {_ALIAS: {"dt": self._now(), "curls": [f"http://127.0.0.1:{http_port}/"]}}
+        seed = {
+            "tags": [decls.TESTNET, "bakobo.pool"],
+            "attribs": {"pool": self._config.name},
+        }
+        # One container writes both, which is what @hjz7b7qo says it does. An earlier draft
+        # launched a second `docker run` for the declarations, contradicting the node and paying
+        # an image startup per witness for nothing.
         self._docker([
             "run", "--rm", "-v", f"{name}:{KERI_HOME}", "--entrypoint", "python", image,
             "-c", _SEED_CONFIG, _ALIAS, json.dumps(config, separators=(",", ":")),
+            _POOL_DECL_FILE, json.dumps(seed, separators=(",", ":")),
         ])
         self._docker([
             "run", "-d", "--name", name, *labels,

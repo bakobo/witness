@@ -9,7 +9,7 @@ authors = [{ name = "Bakobo" }]
 dependencies = [
     # Public, so plain HTTPS resolves it anonymously — for anyone, with or without a Bakobo
     # account. That is now true of the whole closure (@qojsxe7s); heti was the one exception.
-    "keri @ git+https://github.com/bakobo/keripy@366d81071aea7be5b8ad35acbed815e1255224d5",
+    "keri @ git+https://github.com/bakobo/keripy@173678c0",
     "falcon",
     "waitress",
     # ops.md §7 mandates the OpenTelemetry SDK in code Bakobo writes, with OTLP on the wire

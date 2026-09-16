@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from . import decls as _decls
 from .errors import InvalidArguments
 from .supervisor import ProcessSpec
 
@@ -18,6 +19,9 @@ _MIN_PORT = 1
 _MAX_PORT = 65535
 #: Beside the keystore, so it shares the volume's lifetime and needs no extra mount.
 _DEFAULT_TELEMETRY_PATH = "/usr/local/var/keri/telemetry"
+#: @hjz7b7qo. A default rather than a required flag, because the pool cannot add arguments to the
+#: image's command; it writes this file and the control plane finds it without being told.
+_DEFAULT_DECL_FILE = "/usr/local/var/keri/decls.json"
 #: @znm5uppx. keripy holds an unanswerable query for 300s; sustained escrow depth is the
 #: attacker's request rate times this number, and the measured cost is linear in depth.
 _DEFAULT_ESCROW_TIMEOUT = 60
@@ -43,6 +47,12 @@ class ControlPlaneConfig:
     base: str = ""
     head_dir_path: str | None = None
     telemetry_path: str | None = None
+    decl_file: str | None = _DEFAULT_DECL_FILE
+    tags: tuple[str, ...] = ()
+    #: A dict inside a frozen dataclass: frozen forbids rebinding the field, which is the property
+    #: wanted here, and the alternative of a tuple of pairs would buy nothing but conversions at
+    #: every use. Built once by the door and never mutated after.
+    attribs: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -109,6 +119,48 @@ class _RaisingParser(argparse.ArgumentParser):
         raise InvalidArguments(f"The control-plane arguments are invalid: {message}.")
 
 
+def _add_declaration_arguments(parser):
+    """The repeatable ``--tag`` and ``--attribute`` the control plane takes (@nlunqygr, @e4ceoopg).
+
+    Collected as raw strings here and bounded in the config builder rather than by an argparse
+    ``type=``: argparse would report the first bad value and swallow the rest, where the
+    declarations door can say which bound was crossed and what the vocabulary is.
+    """
+    parser.add_argument(
+        "--tag",
+        action="append",
+        default=None,
+        dest="tag",
+        help=(
+            "A tag this witness broadcasts about itself. Repeatable. Defined tags: "
+            f"{', '.join(sorted(_decls.KNOWN_TAGS))}. A tag of your own needs a vendor "
+            "prefix, as in 'bakobo.pool'."
+        ),
+    )
+    parser.add_argument(
+        "--decl-file",
+        default=_DEFAULT_DECL_FILE,
+        dest="decl_file",
+        help=(
+            "A JSON file of declarations to fall back on when no --tag or --attrib is given. "
+            f"Default {_DEFAULT_DECL_FILE}; absent or unreadable means no declarations."
+        ),
+    )
+    parser.add_argument(
+        "--attrib",
+        action="append",
+        default=None,
+        dest="attrib",
+        help=(
+            "A key=value this witness publishes about itself, for a person to read rather than "
+            "for software to act on. Repeatable. Defined keys: "
+            f"{', '.join(sorted(_decls.KNOWN_ATTRIBS))}. A key of your own needs a "
+            "vendor prefix, as in 'bakobo.rack'."
+        ),
+    )
+    return parser
+
+
 def _build_parser() -> _RaisingParser:
     parser = _RaisingParser(prog="witness")
     sub = parser.add_subparsers(dest="subcommand", required=True)
@@ -130,6 +182,7 @@ def _build_parser() -> _RaisingParser:
         action="store_true",
         help="Serve without loop telemetry, for a witness started by stock `kli witness start`.",
     )
+    _add_declaration_arguments(cp)
     sup = sub.add_parser(
         "supervise", help="Run the witness runner and the control plane in one container."
     )
@@ -333,6 +386,9 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
         port=ns.port,
         base=ns.base,
         head_dir_path=ns.head_dir_path,
+        decl_file=ns.decl_file,
+        tags=_decls.tags_from_operator(ns.tag),
+        attribs=_decls.attribs_from_operator(ns.attrib),
     )
 
 

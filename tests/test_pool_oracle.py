@@ -121,6 +121,40 @@ def test_a_pool_comes_up_resolves_and_goes_away_completely(pool):
             "seeded was not read"
         )
 
+        # The same claim for the declaration seed (@hjz7b7qo), and it needs a real image to
+        # settle: the unit tests assert what the pool asks docker to do, which says nothing about
+        # whether the file lands at a path the control plane reads, with permissions it can read
+        # under, in an image whose command it never sees. A wrong path would ship pooled witnesses
+        # silently unmarked with every unit test green.
+        with urllib.request.urlopen(  # noqa: S310
+            f"{witness['control']}v1/witness/tags", timeout=20
+        ) as answer:
+            claimed = json.loads(answer.read().decode())
+        assert claimed["source"] == "seed-file", (
+            "the control plane did not read the declaration seed the pool wrote into the volume"
+        )
+        assert "testnet" in claimed["tags"], "a pool is laboratory infrastructure and must say so"
+
+        with urllib.request.urlopen(  # noqa: S310
+            f"{witness['control']}v1/witness/attribs", timeout=20
+        ) as answer:
+            published = json.loads(answer.read().decode())
+        assert published["attribs"]["pool"] == name
+
+        # Inheritance itself cannot be settled here, and the reason is worth stating rather than
+        # leaving as a gap: @jorbhpfq means a pool incepts no controller, so the only AIDs this
+        # witness holds key state for are its own and keripy's, and neither has witnesses. What
+        # this does check is that the member is served and that a witness does not spuriously
+        # inherit from itself. The inheritance path is proven against a real keripy database in
+        # tests/test_reader.py, where a controller can be incepted to designate the witness.
+        with urllib.request.urlopen(  # noqa: S310
+            f"{witness['control']}v1/witness/controller/{witness['aid']}", timeout=20
+        ) as answer:
+            held = json.loads(answer.read().decode())
+        assert held["tags"]["derived"] == [], (
+            "a witness has no witnesses, so its own AID inherits nothing"
+        )
+
     _run("down", name)
     assert _names(name) == [] and _volumes(name) == [], "down must leave nothing behind"
 
