@@ -94,7 +94,7 @@ Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated i
 | `/v1/witness/database` | Size against keripy's fixed 100 MB map ceiling, and the registered reader count. |
 | `/v1/witness/process` | CPU, memory, threads and descriptors for the witness process. |
 | `/v1/witness/tags` | What this witness claims about itself — `testnet`, and any vendor-prefixed tag its operator set. |
-| `/v1/witness/attributes` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`. |
+| `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`. |
 | `/v1/witness/controller` | Every controller whose key state this witness holds. |
 | `/v1/witness/controller/{aid}` | One controller's key state and the tags it inherits, or `404`. |
 
@@ -102,7 +102,9 @@ Tags are worth a paragraph, because what they do *not* say is the point. There i
 
 Attributes are the other half, and the split matters. A tag is a predicate a consumer *decides* on; an attribute is a key and value a consumer *displays*. That is why they are two nouns rather than one document, and why only tags are inherited. Union is well defined for names — any witness tagged `testnet` taints the AID — and undefined for pairs, since three witnesses reporting three different regions have no natural merge. An attribute also lacks the one property that makes `testnet` credible: `testnet` is a claim against the witness's own interest, whereas a self-reported operator name is worth exactly what a self-reported `production` would have been. So act on tags, show attributes to a human, and trust neither further than that.
 
-Set them with `--attribute key=value`, repeatable. Keys obey the same rule as tag names, so a key is as interoperable as a tag. Values are printable ASCII, non-empty, at most 256 characters — deliberately not Unicode, because this is a string a person reads off a screen, which makes a Cyrillic homograph or a bidi override a spoofing surface rather than an internationalization win.
+Set them with `--attrib key=value`, repeatable. Keys obey the same rule as tag names, so a key is as interoperable as a tag. Values are printable ASCII, non-empty, at most 256 characters — deliberately not Unicode, because this is a string a person reads off a screen, which makes a Cyrillic homograph or a bidi override a spoofing surface rather than an internationalization win.
+
+The full reasoning, including the two carriers that were measured and rejected before this one, is in [`docs/decls.md`](docs/decls.md).
 
 An AID inherits tags from its witnesses, and `controller/{aid}` reports that under `tags`: `derived` is the union, `from` lists the witnesses this control plane can speak for, and `unresolved` lists the ones it cannot. That last member is not an omission. This control plane never calls out to peer witnesses — it reads one LMDB and nothing else — so a co-witness's tags are genuinely unknown to it, and saying so beats guessing. A caller who wants the whole picture asks each witness itself. The rule for combining them is monotone: one `testnet` witness is enough, no quorum of untagged ones excuses it, and a consumer that has once seen a witness tagged `testnet` should never clear that marking.
 

@@ -24,7 +24,7 @@ from keri.db import basing
 
 import witness as _witness_package
 
-from . import declarations as _declarations, paths, vitals
+from . import decls as _decls, paths, vitals
 from .errors import (
     ControllerUnknown,
     DatabaseTooNew,
@@ -271,7 +271,7 @@ class WitnessReader:
         """
         return {"tags": list(self._config.tags), "source": "operator-config"}
 
-    def attributes(self) -> dict:
+    def attribs(self) -> dict:
         """What this witness publishes for a person to read, rather than for software to act on.
 
         Kept a separate noun from :meth:`tags` rather than folded into one document (@e4ceoopg).
@@ -283,7 +283,7 @@ class WitnessReader:
         key/value pairs — three witnesses reporting three regions have no natural merge — and no
         attribute carries the against-interest property that makes `testnet` worth believing.
         """
-        return {"attributes": dict(self._config.attributes), "source": "operator-config"}
+        return {"attribs": dict(self._config.attribs), "source": "operator-config"}
 
     def _own_tags(self, rdb):
         """``{our own witness AID: our tags}``, or empty when we cannot identify ourselves.
@@ -303,7 +303,7 @@ class WitnessReader:
         try:
             for held, state in _key_states(rdb):
                 if held == aid:
-                    derived = _declarations.derive(
+                    derived = _decls.derive(
                         witnesses=list(state.b), known=self._own_tags(rdb)
                     )
                     return {

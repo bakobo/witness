@@ -387,7 +387,7 @@ Operator layer over a stock keripy witness = goal:
                 witness tagged testnet taints the AID, monotonically and obviously. Three witnesses
                 reporting region=eu, region=us and region=ap have no natural merge, and every
                 artificial one is a rule somebody must agree to. So attributes are deliberately NOT
-                inherited: controller/{aid} carries derived tags and no attributes at all, and a
+                inherited: controller/{aid} carries derived tags and no attribs member at all, and a
                 test asserts that absence so the omission stays a decision rather than decaying
                 into an oversight. The second reason is evidential — @pmtzkn6j accepts `testnet`
                 because it is a claim against the witness's own interest, and no valued attribute

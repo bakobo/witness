@@ -11,7 +11,7 @@ import argparse
 import os
 from dataclasses import dataclass, field
 
-from . import declarations as _declarations
+from . import decls as _decls
 from .errors import InvalidArguments
 from .supervisor import ProcessSpec
 
@@ -48,7 +48,7 @@ class ControlPlaneConfig:
     #: A dict inside a frozen dataclass: frozen forbids rebinding the field, which is the property
     #: wanted here, and the alternative of a tuple of pairs would buy nothing but conversions at
     #: every use. Built once by the door and never mutated after.
-    attributes: dict = field(default_factory=dict)
+    attribs: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -129,19 +129,19 @@ def _add_declaration_arguments(parser):
         dest="tag",
         help=(
             "A tag this witness broadcasts about itself. Repeatable. Defined tags: "
-            f"{', '.join(sorted(_declarations.KNOWN_TAGS))}. A tag of your own needs a vendor "
+            f"{', '.join(sorted(_decls.KNOWN_TAGS))}. A tag of your own needs a vendor "
             "prefix, as in 'bakobo.pool'."
         ),
     )
     parser.add_argument(
-        "--attribute",
+        "--attrib",
         action="append",
         default=None,
-        dest="attribute",
+        dest="attrib",
         help=(
             "A key=value this witness publishes about itself, for a person to read rather than "
             "for software to act on. Repeatable. Defined keys: "
-            f"{', '.join(sorted(_declarations.KNOWN_ATTRIBUTES))}. A key of your own needs a "
+            f"{', '.join(sorted(_decls.KNOWN_ATTRIBS))}. A key of your own needs a "
             "vendor prefix, as in 'bakobo.rack'."
         ),
     )
@@ -373,8 +373,8 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
         port=ns.port,
         base=ns.base,
         head_dir_path=ns.head_dir_path,
-        tags=_declarations.tags_from_operator(ns.tag),
-        attributes=_declarations.attributes_from_operator(ns.attribute),
+        tags=_decls.tags_from_operator(ns.tag),
+        attribs=_decls.attribs_from_operator(ns.attrib),
     )
 
 

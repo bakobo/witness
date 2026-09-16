@@ -15,7 +15,7 @@ the pyproject note refuses to make about fiki.
 
 import pytest
 
-from witness import declarations as decl
+from witness import decls
 from witness.errors import InvalidArguments
 
 
@@ -25,53 +25,53 @@ def test_testnet_is_the_defined_vocabulary():
     @pmtzkn6j: a witness asserting it is production makes a self-serving claim nothing verifies.
     This asserts the absence as well as the presence, because the absence is the decision.
     """
-    assert decl.TESTNET == "testnet"
-    assert set(decl.KNOWN_TAGS) == {"testnet"}
-    assert "production" not in decl.KNOWN_TAGS
-    assert decl.KNOWN_TAGS[decl.TESTNET]
+    assert decls.TESTNET == "testnet"
+    assert set(decls.KNOWN_TAGS) == {"testnet"}
+    assert "production" not in decls.KNOWN_TAGS
+    assert decls.KNOWN_TAGS[decls.TESTNET]
 
 
 class TestOperatorDoor:
     """Everything the operator can hand us, and what happens at each bound."""
 
     def test_none_is_no_tags(self):
-        assert decl.tags_from_operator(None) == ()
+        assert decls.tags_from_operator(None) == ()
 
     def test_empty_is_no_tags(self):
-        assert decl.tags_from_operator([]) == ()
+        assert decls.tags_from_operator([]) == ()
 
     def test_a_known_name_is_admitted(self):
-        assert decl.tags_from_operator(["testnet"]) == ("testnet",)
+        assert decls.tags_from_operator(["testnet"]) == ("testnet",)
 
     def test_a_vendor_prefixed_name_is_admitted_without_being_known(self):
         """@k3tkkss2's extension point: a dotted prefix is anyone's to mint."""
-        assert decl.tags_from_operator(["bakobo.pool"]) == ("bakobo.pool",)
+        assert decls.tags_from_operator(["bakobo.pool"]) == ("bakobo.pool",)
 
     def test_output_is_sorted_and_deduplicated(self):
         """A response member is a contract, so its order cannot depend on argv order."""
-        assert decl.tags_from_operator(["testnet", "bakobo.pool", "testnet"]) == (
+        assert decls.tags_from_operator(["testnet", "bakobo.pool", "testnet"]) == (
             "bakobo.pool",
             "testnet",
         )
 
     def test_too_many_is_refused(self):
         with pytest.raises(InvalidArguments) as caught:
-            decl.tags_from_operator(["bakobo.t%d" % n for n in range(decl.MAX_TAGS + 1)])
-        assert str(decl.MAX_TAGS) in str(caught.value)
+            decls.tags_from_operator(["bakobo.t%d" % n for n in range(decls.MAX_TAGS + 1)])
+        assert str(decls.MAX_TAGS) in str(caught.value)
 
     def test_exactly_the_maximum_is_admitted(self):
         """The bound is inclusive; off-by-one here would refuse a legitimate configuration."""
-        supplied = ["bakobo.t%d" % n for n in range(decl.MAX_TAGS)]
-        assert len(decl.tags_from_operator(supplied)) == decl.MAX_TAGS
+        supplied = ["bakobo.t%d" % n for n in range(decls.MAX_TAGS)]
+        assert len(decls.tags_from_operator(supplied)) == decls.MAX_TAGS
 
     def test_too_long_is_refused(self):
         with pytest.raises(InvalidArguments) as caught:
-            decl.tags_from_operator(["bakobo." + "a" * decl.MAX_TAG_LENGTH])
-        assert str(decl.MAX_TAG_LENGTH) in str(caught.value)
+            decls.tags_from_operator(["bakobo." + "a" * decls.MAX_TAG_LENGTH])
+        assert str(decls.MAX_TAG_LENGTH) in str(caught.value)
 
     def test_exactly_the_length_limit_is_admitted(self):
-        name = "bakobo." + "a" * (decl.MAX_TAG_LENGTH - len("bakobo."))
-        assert decl.tags_from_operator([name]) == (name,)
+        name = "bakobo." + "a" * (decls.MAX_TAG_LENGTH - len("bakobo."))
+        assert decls.tags_from_operator([name]) == (name,)
 
     @pytest.mark.parametrize(
         "malformed",
@@ -89,7 +89,7 @@ class TestOperatorDoor:
     )
     def test_malformed_shape_is_refused(self, malformed):
         with pytest.raises(InvalidArguments):
-            decl.tags_from_operator([malformed])
+            decls.tags_from_operator([malformed])
 
     def test_an_unknown_bare_name_is_refused(self):
         """An operator's unknown bare name is a typo, and startup is where to catch it.
@@ -98,19 +98,19 @@ class TestOperatorDoor:
         comes up looking production-grade and nothing says otherwise.
         """
         with pytest.raises(InvalidArguments) as caught:
-            decl.tags_from_operator(["testnetz"])
+            decls.tags_from_operator(["testnetz"])
         assert "testnetz" in str(caught.value)
 
     def test_a_non_string_is_refused_rather_than_raising(self):
         """Rubric item 3: the validator is total, so a hostile type is a refusal not a TypeError."""
         with pytest.raises(InvalidArguments):
-            decl.tags_from_operator([5])
+            decls.tags_from_operator([5])
 
     def test_refusal_names_the_bound_without_echoing_the_input(self):
         """Rubric item 6: the reader gets the rule, not their own payload back."""
         flood = "bakobo." + "z" * 500
         with pytest.raises(InvalidArguments) as caught:
-            decl.tags_from_operator([flood])
+            decls.tags_from_operator([flood])
         assert flood not in str(caught.value)
 
 
@@ -118,32 +118,32 @@ class TestDerive:
     """Tag inheritance from an AID's witness set, and the honesty of a partial answer."""
 
     def test_no_witnesses_yields_nothing(self):
-        derived = decl.derive(witnesses=[], known={})
+        derived = decls.derive(witnesses=[], known={})
         assert derived.tags == ()
         assert derived.resolved == ()
         assert derived.unresolved == ()
 
     def test_an_untagged_witness_taints_nothing(self):
-        derived = decl.derive(witnesses=["B1"], known={"B1": ()})
+        derived = decls.derive(witnesses=["B1"], known={"B1": ()})
         assert derived.tags == ()
         assert derived.resolved == ("B1",)
         assert derived.unresolved == ()
 
     def test_a_testnet_witness_taints_the_aid(self):
-        derived = decl.derive(witnesses=["B1"], known={"B1": ("testnet",)})
+        derived = decls.derive(witnesses=["B1"], known={"B1": ("testnet",)})
         assert derived.tags == ("testnet",)
         assert derived.resolved == ("B1",)
 
     def test_one_testnet_witness_among_many_is_enough(self):
         """The rule is monotone: any testnet witness taints, and no quorum excuses it."""
-        derived = decl.derive(
+        derived = decls.derive(
             witnesses=["B1", "B2", "B3"],
             known={"B1": (), "B2": ("testnet",), "B3": ()},
         )
         assert derived.tags == ("testnet",)
 
     def test_tags_from_several_witnesses_union(self):
-        derived = decl.derive(
+        derived = decls.derive(
             witnesses=["B1", "B2"],
             known={"B1": ("testnet",), "B2": ("bakobo.pool",)},
         )
@@ -151,30 +151,30 @@ class TestDerive:
 
     def test_an_unknown_witness_is_reported_unresolved_not_assumed_clean(self):
         """@nlunqygr: a partial answer is the honest one, so `unresolved` is first-class."""
-        derived = decl.derive(witnesses=["B1", "B2"], known={"B1": ("testnet",)})
+        derived = decls.derive(witnesses=["B1", "B2"], known={"B1": ("testnet",)})
         assert derived.tags == ("testnet",)
         assert derived.resolved == ("B1",)
         assert derived.unresolved == ("B2",)
 
     def test_every_witness_unknown_yields_no_tags_and_full_unresolved(self):
         """Absence is never assurance (@pmtzkn6j) — empty tags here means 'we cannot say'."""
-        derived = decl.derive(witnesses=["B1", "B2"], known={})
+        derived = decls.derive(witnesses=["B1", "B2"], known={})
         assert derived.tags == ()
         assert derived.unresolved == ("B1", "B2")
 
     def test_a_repeated_witness_is_counted_once(self):
-        derived = decl.derive(witnesses=["B1", "B1"], known={"B1": ("testnet",)})
+        derived = decls.derive(witnesses=["B1", "B1"], known={"B1": ("testnet",)})
         assert derived.resolved == ("B1",)
         assert derived.tags == ("testnet",)
 
     def test_ordering_is_stable_regardless_of_witness_order(self):
         """Two orderings of the same witness set must give byte-identical answers."""
-        first = decl.derive(witnesses=["B2", "B1"], known={"B1": ("testnet",), "B2": ()})
-        second = decl.derive(witnesses=["B1", "B2"], known={"B1": ("testnet",), "B2": ()})
+        first = decls.derive(witnesses=["B2", "B1"], known={"B1": ("testnet",), "B2": ()})
+        second = decls.derive(witnesses=["B1", "B2"], known={"B1": ("testnet",), "B2": ()})
         assert first == second
 
 
-class TestAttributeDoor:
+class TestAttribDoor:
     """Key/value declarations a consumer displays rather than decides on (@e4ceoopg).
 
     Keys are bounded exactly as tag names are, so a key is as interoperable as a tag. Values are
@@ -183,65 +183,65 @@ class TestAttributeDoor:
     """
 
     def test_the_defined_keys_are_a_closed_vocabulary(self):
-        assert set(decl.KNOWN_ATTRIBUTES) == {"operator", "contact", "pool"}
-        assert all(decl.KNOWN_ATTRIBUTES[key] for key in decl.KNOWN_ATTRIBUTES)
+        assert set(decls.KNOWN_ATTRIBS) == {"operator", "contact", "pool"}
+        assert all(decls.KNOWN_ATTRIBS[key] for key in decls.KNOWN_ATTRIBS)
 
-    def test_none_is_no_attributes(self):
-        assert decl.attributes_from_operator(None) == {}
+    def test_none_is_no_attribs(self):
+        assert decls.attribs_from_operator(None) == {}
 
     def test_a_known_key_is_admitted(self):
-        assert decl.attributes_from_operator(["operator=Bakobo"]) == {"operator": "Bakobo"}
+        assert decls.attribs_from_operator(["operator=Bakobo"]) == {"operator": "Bakobo"}
 
     def test_a_vendor_prefixed_key_needs_no_definition(self):
-        assert decl.attributes_from_operator(["bakobo.rack=r7"]) == {"bakobo.rack": "r7"}
+        assert decls.attribs_from_operator(["bakobo.rack=r7"]) == {"bakobo.rack": "r7"}
 
     def test_a_value_may_contain_the_separator(self):
         """A contact is very often a URL, and a URL contains '='. Split once, not greedily."""
         supplied = ["contact=https://example.test/abuse?tag=witness"]
-        assert decl.attributes_from_operator(supplied) == {
+        assert decls.attribs_from_operator(supplied) == {
             "contact": "https://example.test/abuse?tag=witness"
         }
 
     def test_a_missing_separator_is_refused(self):
         with pytest.raises(InvalidArguments) as caught:
-            decl.attributes_from_operator(["operator"])
+            decls.attribs_from_operator(["operator"])
         assert "=" in str(caught.value)
 
     def test_an_unknown_bare_key_is_refused(self):
         with pytest.raises(InvalidArguments) as caught:
-            decl.attributes_from_operator(["region=eu-west-1"])
+            decls.attribs_from_operator(["region=eu-west-1"])
         assert "is not a defined attribute" in str(caught.value)
 
     def test_a_malformed_key_is_refused(self):
         with pytest.raises(InvalidArguments):
-            decl.attributes_from_operator(["Operator=Bakobo"])
+            decls.attribs_from_operator(["Operator=Bakobo"])
 
     def test_an_empty_value_is_refused(self):
         """A key with no value says less than the key's absence does."""
         with pytest.raises(InvalidArguments) as caught:
-            decl.attributes_from_operator(["operator="])
+            decls.attribs_from_operator(["operator="])
         assert "empty" in str(caught.value)
 
     def test_too_many_is_refused(self):
-        supplied = ["bakobo.k%d=v" % n for n in range(decl.MAX_ATTRIBUTES + 1)]
+        supplied = ["bakobo.k%d=v" % n for n in range(decls.MAX_ATTRIBS + 1)]
         with pytest.raises(InvalidArguments) as caught:
-            decl.attributes_from_operator(supplied)
-        assert str(decl.MAX_ATTRIBUTES) in str(caught.value)
+            decls.attribs_from_operator(supplied)
+        assert str(decls.MAX_ATTRIBS) in str(caught.value)
 
     def test_exactly_the_maximum_is_admitted(self):
-        supplied = ["bakobo.k%d=v" % n for n in range(decl.MAX_ATTRIBUTES)]
-        assert len(decl.attributes_from_operator(supplied)) == decl.MAX_ATTRIBUTES
+        supplied = ["bakobo.k%d=v" % n for n in range(decls.MAX_ATTRIBS)]
+        assert len(decls.attribs_from_operator(supplied)) == decls.MAX_ATTRIBS
 
     def test_an_over_long_value_is_refused_without_being_echoed(self):
-        flood = "z" * (decl.MAX_VALUE_LENGTH + 1)
+        flood = "z" * (decls.MAX_VALUE_LENGTH + 1)
         with pytest.raises(InvalidArguments) as caught:
-            decl.attributes_from_operator(["operator=" + flood])
-        assert str(decl.MAX_VALUE_LENGTH) in str(caught.value)
+            decls.attribs_from_operator(["operator=" + flood])
+        assert str(decls.MAX_VALUE_LENGTH) in str(caught.value)
         assert flood not in str(caught.value)
 
     def test_a_value_at_the_length_limit_is_admitted(self):
-        value = "z" * decl.MAX_VALUE_LENGTH
-        assert decl.attributes_from_operator(["operator=" + value]) == {"operator": value}
+        value = "z" * decls.MAX_VALUE_LENGTH
+        assert decls.attribs_from_operator(["operator=" + value]) == {"operator": value}
 
     @pytest.mark.parametrize(
         "hostile",
@@ -257,20 +257,20 @@ class TestAttributeDoor:
         """Deliberately narrow (@e4ceoopg). This value is displayed to a person, which makes
         homograph and bidi tricks a spoofing surface rather than an internationalization win."""
         with pytest.raises(InvalidArguments):
-            decl.attributes_from_operator([hostile])
+            decls.attribs_from_operator([hostile])
 
     def test_a_non_string_is_refused_rather_than_raising(self):
         with pytest.raises(InvalidArguments):
-            decl.attributes_from_operator([5])
+            decls.attribs_from_operator([5])
 
     def test_a_repeated_key_is_refused_rather_than_silently_winning(self):
         """Last-one-wins would make the meaning depend on argv order, invisibly."""
         with pytest.raises(InvalidArguments) as caught:
-            decl.attributes_from_operator(["operator=a", "operator=b"])
+            decls.attribs_from_operator(["operator=a", "operator=b"])
         assert "operator" in str(caught.value)
 
 
-class TestAttributesAreNotInherited:
+class TestAttribsAreNotInherited:
     """The why-not from @e4ceoopg, kept honest by a test rather than by memory.
 
     Union is defined for names and undefined for pairs: three witnesses reporting three different
@@ -279,10 +279,10 @@ class TestAttributesAreNotInherited:
     """
 
     def test_derive_returns_no_attribute_member_at_all(self):
-        derived = decl.derive(witnesses=["B1"], known={"B1": ("testnet",)})
-        assert not hasattr(derived, "attributes")
+        derived = decls.derive(witnesses=["B1"], known={"B1": ("testnet",)})
+        assert not hasattr(derived, "attribs")
 
     def test_derive_takes_no_attribute_argument(self):
         import inspect
 
-        assert "attributes" not in inspect.signature(decl.derive).parameters
+        assert "attribs" not in inspect.signature(decls.derive).parameters

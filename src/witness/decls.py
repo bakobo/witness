@@ -41,7 +41,7 @@ KNOWN_TAGS = {
     ),
 }
 
-KNOWN_ATTRIBUTES = {
+KNOWN_ATTRIBS = {
     "operator": "Who runs this witness, as a human-readable name.",
     "contact": "How to reach that operator about this witness — an address or a URL.",
     "pool": "The laboratory pool this witness belongs to, when it belongs to one.",
@@ -50,7 +50,7 @@ KNOWN_ATTRIBUTES = {
 #: A flood guard, not an opinion about how many tags a witness legitimately has. Sixteen is far
 #: past any real configuration and far below anything that would trouble the process.
 MAX_TAGS = 16
-MAX_ATTRIBUTES = 16
+MAX_ATTRIBS = 16
 #: Likewise a guard. A name long enough to need 64 characters is not communicating.
 MAX_TAG_LENGTH = 64
 #: Values get more room than names because a contact URL legitimately needs it, and less than a
@@ -158,7 +158,7 @@ def tags_from_operator(values):
     return tuple(sorted({_admit_name(value, KNOWN_TAGS, "tag") for value in supplied}))
 
 
-def attributes_from_operator(values):
+def attribs_from_operator(values):
     """Door for ``key=value`` attributes the operator supplied. Returns a dict.
 
     A repeated key is refused rather than resolved last-one-wins: silently letting argv order
@@ -168,9 +168,9 @@ def attributes_from_operator(values):
     if values is None:
         return {}
     supplied = list(values)
-    if len(supplied) > MAX_ATTRIBUTES:
+    if len(supplied) > MAX_ATTRIBS:
         raise InvalidArguments(
-            f"At most {MAX_ATTRIBUTES} attributes may be supplied, but {len(supplied)} were."
+            f"At most {MAX_ATTRIBS} attributes may be supplied, but {len(supplied)} were."
         )
     admitted = {}
     for item in supplied:
@@ -183,7 +183,7 @@ def attributes_from_operator(values):
                 "Every attribute must be written key=value, but one had no '=' in it."
             )
         key, _, value = item.partition(_PAIR_SEPARATOR)
-        key = _admit_name(key, KNOWN_ATTRIBUTES, "attribute")
+        key = _admit_name(key, KNOWN_ATTRIBS, "attribute")
         if key in admitted:
             raise InvalidArguments(
                 f"The attribute {key!r} was supplied more than once, and which one wins would "
