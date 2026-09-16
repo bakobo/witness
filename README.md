@@ -93,8 +93,13 @@ Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated i
 | `/v1/witness/escrow` | Depth of every escrow store, query-not-found first. |
 | `/v1/witness/database` | Size against keripy's fixed 100 MB map ceiling, and the registered reader count. |
 | `/v1/witness/process` | CPU, memory, threads and descriptors for the witness process. |
+| `/v1/witness/tags` | What this witness claims about itself — `testnet`, and any vendor-prefixed tag its operator set. |
 | `/v1/witness/controller` | Every controller whose key state this witness holds. |
-| `/v1/witness/controller/{aid}` | One controller's key state, or `404`. |
+| `/v1/witness/controller/{aid}` | One controller's key state and the tags it inherits, or `404`. |
+
+Tags are worth a paragraph, because what they do *not* say is the point. There is a `testnet` tag and deliberately no `production` tag: a witness claiming to be production makes a self-serving claim nothing verifies, whereas one claiming to be a laboratory speaks against its own interest. So an empty tag list means "nothing claimed", never "this is fine", and a reader must not treat absence as assurance. Set them with `--tag`, repeatable; an undefined bare name is refused at startup, because a misspelled `testnet` that silently fails to apply leaves the witness looking production-grade with nothing to say otherwise. A tag of your own needs a vendor prefix, as in `bakobo.pool`.
+
+An AID inherits tags from its witnesses, and `controller/{aid}` reports that under `tags`: `derived` is the union, `from` lists the witnesses this control plane can speak for, and `unresolved` lists the ones it cannot. That last member is not an omission. This control plane never calls out to peer witnesses — it reads one LMDB and nothing else — so a co-witness's tags are genuinely unknown to it, and saying so beats guessing. A caller who wants the whole picture asks each witness itself. The rule for combining them is monotone: one `testnet` witness is enough, no quorum of untagged ones excuses it, and a consumer that has once seen a witness tagged `testnet` should never clear that marking.
 
 Health is worth a sentence. A witness whose loop has wedged still has a perfectly openable database, so a probe that only opens the database stays green through the failure that has actually happened. This one reports `degraded` and names the doer, but only once that doer has held the loop past five seconds: a sample catching the loop mid-doer is normal, and treating it as a wedge would make the probe a random alarm.
 

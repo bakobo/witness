@@ -51,6 +51,7 @@ def test_console_script_serves_the_versioned_control_plane(witness_db):
             "--host", "127.0.0.1",
             "--port", str(port),
             "--no-telemetry",
+            "--tag", "testnet",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -77,6 +78,13 @@ def test_console_script_serves_the_versioned_control_plane(witness_db):
         assert info_status == 200
         assert info["aid"] == pre
         assert info["alias"] == "wit"
+
+        # The tag has to survive the real argv -> door -> endpoint path, not just the unit one:
+        # a flag the console script rejects at startup would make the container fail to come up,
+        # and no unit test watches argv reach a running process.
+        tag_status, claimed = _get_json(base + "/v1/witness/tags")
+        assert tag_status == 200
+        assert claimed == {"tags": ["testnet"], "source": "operator-config"}
     finally:
         proc.terminate()
         with contextlib.suppress(subprocess.TimeoutExpired):
