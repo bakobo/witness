@@ -46,9 +46,16 @@ _QUALIFIED = {
     ("request", "urlopen"),
     ("os", "open"),
     ("os", "getenv"),
-    ("pathlib", "read_text"),
-    ("pathlib", "read_bytes"),
 }
+
+#: Method names that cross a boundary whichever receiver they are called on, because the receiver
+#: is usually an instance rather than a module: ``Path(p).read_text()`` and ``handle.read_text()``
+#: both land here. A first draft listed these under _QUALIFIED as ("pathlib", "read_text"), which
+#: can never match — nobody calls read_text on the module — so the entries implied a coverage the
+#: scan did not have. Matching on the name over-flags rather than under-flags, and that asymmetry
+#: is the right one for a census: an over-flag costs somebody one line of accounting, where an
+#: under-flag is a boundary nobody knows about.
+_METHODS = {"read_text", "read_bytes"}
 
 #: Attribute reads that are themselves a boundary.
 _ATTRIBUTES = {("os", "environ"), ("sys", "argv"), ("sys", "stdin")}
@@ -141,7 +148,10 @@ def _crossings(source=None):
                 if isinstance(func, ast.Name) and func.id in _BARE:
                     record(node.lineno)
                 elif isinstance(func, ast.Attribute):
-                    if (root_of(func.value), func.attr) in _QUALIFIED:
+                    if (
+                        func.attr in _METHODS
+                        or (root_of(func.value), func.attr) in _QUALIFIED
+                    ):
                         record(node.lineno)
                 self.generic_visit(node)
 
@@ -237,6 +247,20 @@ class TestTheScanItself:
             "def main(pool, spec):\n    spec.argv\n    return pool.run()\n",
         )
         assert found == {}
+
+    def test_a_path_read_is_found_on_a_constructed_object(self, tmp_path):
+        """The hole a first draft had: read_text on an instance, not on the module."""
+        found = self._scan(
+            tmp_path,
+            "from pathlib import Path\ndef load():\n    return Path('/etc/x').read_text()\n",
+        )
+        assert "planted.py::load" in found
+
+    def test_a_path_read_is_found_on_a_bound_variable(self, tmp_path):
+        found = self._scan(
+            tmp_path, "def load(where):\n    return where.read_bytes()\n"
+        )
+        assert "planted.py::load" in found
 
     def test_an_unaccounted_crossing_is_what_fails_the_census(self, tmp_path):
         """The census asserts membership in ACCOUNTED, so this shows the assertion it makes."""
