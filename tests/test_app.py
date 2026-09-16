@@ -53,6 +53,11 @@ class StubReader:
     def tags(self):
         return self._answer("tags", {"tags": ["testnet"], "source": "operator-config"})
 
+    def attributes(self):
+        return self._answer(
+            "attributes", {"attributes": {"operator": "Bakobo"}, "source": "operator-config"}
+        )
+
     def controller(self, aid):
         value = self._overrides.get("controller", {"aid": aid})
         if isinstance(value, Exception):
@@ -76,6 +81,7 @@ ROUTES = [
     "/v1/witness/controller",
     "/v1/witness/controller/BSomeAid",
     "/v1/witness/tags",
+    "/v1/witness/attributes",
 ]
 
 
@@ -257,3 +263,11 @@ def test_the_tags_noun_answers_what_the_witness_claims(client):
     """The tenth noun (@nlunqygr). Its shape is a frozen contract from here on."""
     body = client.simulate_get("/v1/witness/tags").json
     assert body == {"tags": ["testnet"], "source": "operator-config"}
+
+
+def test_the_attributes_noun_answers_what_the_witness_publishes(client):
+    """The eleventh noun (@e4ceoopg), kept separate from tags because the reply routes of the
+    second increment are separate: correcting a typo in a contact address must not re-sign the
+    testnet assertion."""
+    body = client.simulate_get("/v1/witness/attributes").json
+    assert body == {"attributes": {"operator": "Bakobo"}, "source": "operator-config"}

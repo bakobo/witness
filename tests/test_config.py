@@ -209,3 +209,43 @@ class TestTagFlag:
         """
         with pytest.raises(InvalidArguments):
             config.parse_args(["run", "--name", "w", "--tag", "testnet"])
+
+
+class TestAttributeFlag:
+    """`--attribute key=value` alongside `--tag` (@e4ceoopg)."""
+
+    def test_control_plane_defaults_to_no_attributes(self):
+        _subcommand, cfg = config.parse_args(["control-plane", "--name", "w", "--port", "5621"])
+        assert cfg.attributes == {}
+
+    def test_control_plane_takes_an_attribute(self):
+        _subcommand, cfg = config.parse_args(
+            ["control-plane", "--name", "w", "--port", "5621", "--attribute", "operator=Bakobo"]
+        )
+        assert cfg.attributes == {"operator": "Bakobo"}
+
+    def test_the_flag_repeats_across_distinct_keys(self):
+        _subcommand, cfg = config.parse_args(
+            [
+                "control-plane", "--name", "w", "--port", "5621",
+                "--attribute", "operator=Bakobo", "--attribute", "pool=lab",
+            ]
+        )
+        assert cfg.attributes == {"operator": "Bakobo", "pool": "lab"}
+
+    def test_an_undefined_key_fails_closed_at_startup(self):
+        with pytest.raises(InvalidArguments) as caught:
+            config.parse_args(
+                ["control-plane", "--name", "w", "--port", "5621", "--attribute", "region=eu"]
+            )
+        assert "is not a defined attribute" in str(caught.value)
+
+    def test_tags_and_attributes_are_independent(self):
+        _subcommand, cfg = config.parse_args(
+            [
+                "control-plane", "--name", "w", "--port", "5621",
+                "--tag", "testnet", "--attribute", "pool=lab",
+            ]
+        )
+        assert cfg.tags == ("testnet",)
+        assert cfg.attributes == {"pool": "lab"}

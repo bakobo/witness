@@ -172,3 +172,117 @@ class TestDerive:
         first = decl.derive(witnesses=["B2", "B1"], known={"B1": ("testnet",), "B2": ()})
         second = decl.derive(witnesses=["B1", "B2"], known={"B1": ("testnet",), "B2": ()})
         assert first == second
+
+
+class TestAttributeDoor:
+    """Key/value declarations a consumer displays rather than decides on (@e4ceoopg).
+
+    Keys are bounded exactly as tag names are, so a key is as interoperable as a tag. Values are
+    the new surface, and they are where the rules are strictest: this is a field a human reads off
+    a screen, and a field nobody is permitted to act on loses very little by being narrow.
+    """
+
+    def test_the_defined_keys_are_a_closed_vocabulary(self):
+        assert set(decl.KNOWN_ATTRIBUTES) == {"operator", "contact", "pool"}
+        assert all(decl.KNOWN_ATTRIBUTES[key] for key in decl.KNOWN_ATTRIBUTES)
+
+    def test_none_is_no_attributes(self):
+        assert decl.attributes_from_operator(None) == {}
+
+    def test_a_known_key_is_admitted(self):
+        assert decl.attributes_from_operator(["operator=Bakobo"]) == {"operator": "Bakobo"}
+
+    def test_a_vendor_prefixed_key_needs_no_definition(self):
+        assert decl.attributes_from_operator(["bakobo.rack=r7"]) == {"bakobo.rack": "r7"}
+
+    def test_a_value_may_contain_the_separator(self):
+        """A contact is very often a URL, and a URL contains '='. Split once, not greedily."""
+        supplied = ["contact=https://example.test/abuse?tag=witness"]
+        assert decl.attributes_from_operator(supplied) == {
+            "contact": "https://example.test/abuse?tag=witness"
+        }
+
+    def test_a_missing_separator_is_refused(self):
+        with pytest.raises(InvalidArguments) as caught:
+            decl.attributes_from_operator(["operator"])
+        assert "=" in str(caught.value)
+
+    def test_an_unknown_bare_key_is_refused(self):
+        with pytest.raises(InvalidArguments) as caught:
+            decl.attributes_from_operator(["region=eu-west-1"])
+        assert "is not a defined attribute" in str(caught.value)
+
+    def test_a_malformed_key_is_refused(self):
+        with pytest.raises(InvalidArguments):
+            decl.attributes_from_operator(["Operator=Bakobo"])
+
+    def test_an_empty_value_is_refused(self):
+        """A key with no value says less than the key's absence does."""
+        with pytest.raises(InvalidArguments) as caught:
+            decl.attributes_from_operator(["operator="])
+        assert "empty" in str(caught.value)
+
+    def test_too_many_is_refused(self):
+        supplied = ["bakobo.k%d=v" % n for n in range(decl.MAX_ATTRIBUTES + 1)]
+        with pytest.raises(InvalidArguments) as caught:
+            decl.attributes_from_operator(supplied)
+        assert str(decl.MAX_ATTRIBUTES) in str(caught.value)
+
+    def test_exactly_the_maximum_is_admitted(self):
+        supplied = ["bakobo.k%d=v" % n for n in range(decl.MAX_ATTRIBUTES)]
+        assert len(decl.attributes_from_operator(supplied)) == decl.MAX_ATTRIBUTES
+
+    def test_an_over_long_value_is_refused_without_being_echoed(self):
+        flood = "z" * (decl.MAX_VALUE_LENGTH + 1)
+        with pytest.raises(InvalidArguments) as caught:
+            decl.attributes_from_operator(["operator=" + flood])
+        assert str(decl.MAX_VALUE_LENGTH) in str(caught.value)
+        assert flood not in str(caught.value)
+
+    def test_a_value_at_the_length_limit_is_admitted(self):
+        value = "z" * decl.MAX_VALUE_LENGTH
+        assert decl.attributes_from_operator(["operator=" + value]) == {"operator": value}
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "operator=two\nlines",       # newline, so a forged log line
+            "operator=bell\x07",         # control character
+            "operator=nul\x00here",      # NUL
+            "operator=Бakobo",      # Cyrillic homograph of 'B'
+            "operator=abc‮def",     # bidi override
+        ],
+    )
+    def test_a_value_outside_printable_ascii_is_refused(self, hostile):
+        """Deliberately narrow (@e4ceoopg). This value is displayed to a person, which makes
+        homograph and bidi tricks a spoofing surface rather than an internationalization win."""
+        with pytest.raises(InvalidArguments):
+            decl.attributes_from_operator([hostile])
+
+    def test_a_non_string_is_refused_rather_than_raising(self):
+        with pytest.raises(InvalidArguments):
+            decl.attributes_from_operator([5])
+
+    def test_a_repeated_key_is_refused_rather_than_silently_winning(self):
+        """Last-one-wins would make the meaning depend on argv order, invisibly."""
+        with pytest.raises(InvalidArguments) as caught:
+            decl.attributes_from_operator(["operator=a", "operator=b"])
+        assert "operator" in str(caught.value)
+
+
+class TestAttributesAreNotInherited:
+    """The why-not from @e4ceoopg, kept honest by a test rather than by memory.
+
+    Union is defined for names and undefined for pairs: three witnesses reporting three different
+    regions have no natural merge. So derivation covers tags only, and this asserts that the
+    absence stays a decision rather than quietly decaying into an oversight.
+    """
+
+    def test_derive_returns_no_attribute_member_at_all(self):
+        derived = decl.derive(witnesses=["B1"], known={"B1": ("testnet",)})
+        assert not hasattr(derived, "attributes")
+
+    def test_derive_takes_no_attribute_argument(self):
+        import inspect
+
+        assert "attributes" not in inspect.signature(decl.derive).parameters

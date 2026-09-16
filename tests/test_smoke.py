@@ -52,6 +52,7 @@ def test_console_script_serves_the_versioned_control_plane(witness_db):
             "--port", str(port),
             "--no-telemetry",
             "--tag", "testnet",
+            "--attribute", "operator=Bakobo",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -85,6 +86,13 @@ def test_console_script_serves_the_versioned_control_plane(witness_db):
         tag_status, claimed = _get_json(base + "/v1/witness/tags")
         assert tag_status == 200
         assert claimed == {"tags": ["testnet"], "source": "operator-config"}
+
+        attr_status, published = _get_json(base + "/v1/witness/attributes")
+        assert attr_status == 200
+        assert published == {
+            "attributes": {"operator": "Bakobo"},
+            "source": "operator-config",
+        }
     finally:
         proc.terminate()
         with contextlib.suppress(subprocess.TimeoutExpired):

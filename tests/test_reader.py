@@ -467,10 +467,10 @@ def test_a_failed_open_does_not_leak_the_environment_into_the_next_request(tmp_p
 class TestTags:
     """The tenth noun, and the tag member on controller/{aid} (@nlunqygr)."""
 
-    def _reader_for(self, facts, tag_tuple):
+    def _reader_for(self, facts, tag_tuple, attributes=None):
         cfg = ControlPlaneConfig(
             name=facts["name"], host="127.0.0.1", port=1, base="",
-            head_dir_path=facts["head"], tags=tag_tuple,
+            head_dir_path=facts["head"], tags=tag_tuple, attributes=attributes or {},
         )
         return WitnessReader(cfg)
 
@@ -542,3 +542,46 @@ class TestTags:
         assert answer["tags"]["derived"] == []
         assert answer["tags"]["from"] == []
         assert answer["tags"]["unresolved"] == [witnessing_db["witness_pre"]]
+
+
+class TestAttributes:
+    """The eleventh noun, and the AID inheritance it deliberately does not take part in."""
+
+    def _reader_for(self, facts, attributes):
+        cfg = ControlPlaneConfig(
+            name=facts["name"], host="127.0.0.1", port=1, base="",
+            head_dir_path=facts["head"], attributes=attributes,
+        )
+        return WitnessReader(cfg)
+
+    def test_attributes_reports_what_the_operator_configured(self, witnessing_db):
+        answer = self._reader_for(witnessing_db, {"operator": "Bakobo"}).attributes()
+        assert answer["attributes"] == {"operator": "Bakobo"}
+
+    def test_attributes_names_its_source(self, witnessing_db):
+        assert self._reader_for(witnessing_db, {}).attributes()["source"] == "operator-config"
+
+    def test_an_undeclared_witness_reports_an_empty_map(self, witnessing_db):
+        assert self._reader_for(witnessing_db, {}).attributes()["attributes"] == {}
+
+    def test_attributes_needs_no_database(self, tmp_path):
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), attributes={"operator": "Bakobo"},
+        )
+        assert WitnessReader(cfg).attributes()["attributes"] == {"operator": "Bakobo"}
+
+    def test_a_controller_inherits_no_attributes(self, witnessing_db):
+        """@e4ceoopg's why-not, asserted where a consumer would see it.
+
+        Union is defined for tag names and undefined for key/value pairs, so controller/{aid}
+        carries derived tags and nothing else. A future hand adding an attributes member here
+        would have to delete this test to do it, which is the point.
+        """
+        cfg = ControlPlaneConfig(
+            name=witnessing_db["name"], host="127.0.0.1", port=1, base="",
+            head_dir_path=witnessing_db["head"], attributes={"operator": "Bakobo"},
+        )
+        answer = WitnessReader(cfg).controller(witnessing_db["controller_pre"])
+        assert "attributes" not in answer
+        assert "attributes" not in answer["tags"]

@@ -41,11 +41,25 @@ KNOWN_TAGS = {
     ),
 }
 
+KNOWN_ATTRIBUTES = {
+    "operator": "Who runs this witness, as a human-readable name.",
+    "contact": "How to reach that operator about this witness — an address or a URL.",
+    "pool": "The laboratory pool this witness belongs to, when it belongs to one.",
+}
+
 #: A flood guard, not an opinion about how many tags a witness legitimately has. Sixteen is far
 #: past any real configuration and far below anything that would trouble the process.
 MAX_TAGS = 16
+MAX_ATTRIBUTES = 16
 #: Likewise a guard. A name long enough to need 64 characters is not communicating.
 MAX_TAG_LENGTH = 64
+#: Values get more room than names because a contact URL legitimately needs it, and less than a
+#: payload would because this is a line on a screen rather than a document.
+MAX_VALUE_LENGTH = 256
+
+#: Attributes arrive as ``key=value``. Split once, never greedily: a contact is very often a URL
+#: and a URL contains '=', so a greedy split would silently truncate the commonest real value.
+_PAIR_SEPARATOR = "="
 
 #: One segment: a letter, then letters, digits and hyphens. Segments join with dots. The inner
 #: repetition is anchored on a literal dot that no segment character can match, so the pattern
@@ -69,29 +83,60 @@ class Derived:
     unresolved: tuple[str, ...]
 
 
-def _admit(value):
-    """Bound one tag by size, then shape, then meaning, or refuse it by name."""
+def _admit_name(value, known, kind):
+    """Bound one name by size, then shape, then meaning, or refuse it.
+
+    Shared by tag names and attribute keys on purpose: a key is a name, and making it obey exactly
+    the same rule is what makes a key as interoperable as a tag (@e4ceoopg).
+    """
     if not isinstance(value, str):
-        raise InvalidArguments("Every tag must be text, but one of the supplied tags was not.")
+        raise InvalidArguments(f"Every {kind} must be text, but one of those supplied was not.")
     if len(value) > MAX_TAG_LENGTH:
         # The length, never the value: a refusal that echoes a 500-character argument back at the
         # operator has handed them their own payload instead of the rule (rubric item 6).
         raise InvalidArguments(
-            f"A tag may be at most {MAX_TAG_LENGTH} characters, but one was {len(value)}."
+            f"A {kind} may be at most {MAX_TAG_LENGTH} characters, but one was {len(value)}."
         )
     if not _SHAPE.match(value):
         raise InvalidArguments(
-            "A tag must be lowercase letters, digits and hyphens in dot-separated segments, each "
-            "beginning with a letter, as in 'testnet' or 'bakobo.pool'."
+            f"A {kind} must be lowercase letters, digits and hyphens in dot-separated segments, "
+            "each beginning with a letter, as in 'testnet' or 'bakobo.pool'."
         )
-    if "." not in value and value not in KNOWN_TAGS:
+    if "." not in value and value not in known:
         # Bare names are the shared vocabulary, so an unrecognized one is a typo rather than an
         # extension — and a misspelled `testnet` that silently fails to apply leaves the witness
         # looking production-grade with nothing to say otherwise.
         raise InvalidArguments(
-            f"{value!r} is not a defined tag. The defined tags are "
-            f"{', '.join(sorted(KNOWN_TAGS))}; a tag of your own needs a vendor prefix, as in "
+            f"{value!r} is not a defined {kind}. The defined ones are "
+            f"{', '.join(sorted(known))}; one of your own needs a vendor prefix, as in "
             "'bakobo.pool'."
+        )
+    return value
+
+
+def _admit_value(value):
+    """Bound one attribute value: non-empty, short, and printable ASCII only.
+
+    The character restriction is the deliberate one (@e4ceoopg). A value is shown to a person, so
+    a Cyrillic homograph or a bidi override is a spoofing surface rather than an
+    internationalization win, and a newline in a field that reaches a log is a forged log line —
+    the same concern app.py already applies to a caller-supplied request id. A field nobody is
+    permitted to act on loses very little by being narrow.
+    """
+    if not value:
+        raise InvalidArguments(
+            "An attribute value may not be empty; leave the key out instead, which says the same "
+            "thing more clearly."
+        )
+    if len(value) > MAX_VALUE_LENGTH:
+        raise InvalidArguments(
+            f"An attribute value may be at most {MAX_VALUE_LENGTH} characters, but one was "
+            f"{len(value)}."
+        )
+    if not all("\x20" <= character <= "\x7e" for character in value):
+        raise InvalidArguments(
+            "An attribute value must be printable ASCII, so that what a person reads on a screen "
+            "is what the operator wrote."
         )
     return value
 
@@ -110,7 +155,42 @@ def tags_from_operator(values):
         raise InvalidArguments(
             f"At most {MAX_TAGS} tags may be supplied, but {len(supplied)} were."
         )
-    return tuple(sorted({_admit(value) for value in supplied}))
+    return tuple(sorted({_admit_name(value, KNOWN_TAGS, "tag") for value in supplied}))
+
+
+def attributes_from_operator(values):
+    """Door for ``key=value`` attributes the operator supplied. Returns a dict.
+
+    A repeated key is refused rather than resolved last-one-wins: silently letting argv order
+    decide what a witness says about itself is the kind of invisible behaviour that is discovered
+    only when it has already been wrong for a while.
+    """
+    if values is None:
+        return {}
+    supplied = list(values)
+    if len(supplied) > MAX_ATTRIBUTES:
+        raise InvalidArguments(
+            f"At most {MAX_ATTRIBUTES} attributes may be supplied, but {len(supplied)} were."
+        )
+    admitted = {}
+    for item in supplied:
+        if not isinstance(item, str):
+            raise InvalidArguments(
+                "Every attribute must be text of the form key=value, but one was not text."
+            )
+        if _PAIR_SEPARATOR not in item:
+            raise InvalidArguments(
+                "Every attribute must be written key=value, but one had no '=' in it."
+            )
+        key, _, value = item.partition(_PAIR_SEPARATOR)
+        key = _admit_name(key, KNOWN_ATTRIBUTES, "attribute")
+        if key in admitted:
+            raise InvalidArguments(
+                f"The attribute {key!r} was supplied more than once, and which one wins would "
+                "otherwise depend on the order of the arguments."
+            )
+        admitted[key] = _admit_value(value)
+    return admitted
 
 
 def derive(witnesses, known):

@@ -271,6 +271,20 @@ class WitnessReader:
         """
         return {"tags": list(self._config.tags), "source": "operator-config"}
 
+    def attributes(self) -> dict:
+        """What this witness publishes for a person to read, rather than for software to act on.
+
+        Kept a separate noun from :meth:`tags` rather than folded into one document (@e4ceoopg).
+        The signed reply routes of the second increment want to be separate, because BADA orders
+        each route independently: one route would mean re-signing and re-timestamping the testnet
+        assertion in order to correct a typo in a contact address.
+
+        Nothing here is inherited by an AID. Union is defined for tag names and undefined for
+        key/value pairs — three witnesses reporting three regions have no natural merge — and no
+        attribute carries the against-interest property that makes `testnet` worth believing.
+        """
+        return {"attributes": dict(self._config.attributes), "source": "operator-config"}
+
     def _own_tags(self, rdb):
         """``{our own witness AID: our tags}``, or empty when we cannot identify ourselves.
 

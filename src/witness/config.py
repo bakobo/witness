@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import declarations as _declarations
 from .errors import InvalidArguments
@@ -45,6 +45,10 @@ class ControlPlaneConfig:
     head_dir_path: str | None = None
     telemetry_path: str | None = None
     tags: tuple[str, ...] = ()
+    #: A dict inside a frozen dataclass: frozen forbids rebinding the field, which is the property
+    #: wanted here, and the alternative of a tuple of pairs would buy nothing but conversions at
+    #: every use. Built once by the door and never mutated after.
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -111,8 +115,8 @@ class _RaisingParser(argparse.ArgumentParser):
         raise InvalidArguments(f"The control-plane arguments are invalid: {message}.")
 
 
-def _add_tag_argument(parser):
-    """The repeatable ``--tag`` the control plane takes (@nlunqygr).
+def _add_declaration_arguments(parser):
+    """The repeatable ``--tag`` and ``--attribute`` the control plane takes (@nlunqygr, @e4ceoopg).
 
     Collected as raw strings here and bounded in the config builder rather than by an argparse
     ``type=``: argparse would report the first bad value and swallow the rest, where the
@@ -127,6 +131,18 @@ def _add_tag_argument(parser):
             "A tag this witness broadcasts about itself. Repeatable. Defined tags: "
             f"{', '.join(sorted(_declarations.KNOWN_TAGS))}. A tag of your own needs a vendor "
             "prefix, as in 'bakobo.pool'."
+        ),
+    )
+    parser.add_argument(
+        "--attribute",
+        action="append",
+        default=None,
+        dest="attribute",
+        help=(
+            "A key=value this witness publishes about itself, for a person to read rather than "
+            "for software to act on. Repeatable. Defined keys: "
+            f"{', '.join(sorted(_declarations.KNOWN_ATTRIBUTES))}. A key of your own needs a "
+            "vendor prefix, as in 'bakobo.rack'."
         ),
     )
     return parser
@@ -153,7 +169,7 @@ def _build_parser() -> _RaisingParser:
         action="store_true",
         help="Serve without loop telemetry, for a witness started by stock `kli witness start`.",
     )
-    _add_tag_argument(cp)
+    _add_declaration_arguments(cp)
     sup = sub.add_parser(
         "supervise", help="Run the witness runner and the control plane in one container."
     )
@@ -358,6 +374,7 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
         base=ns.base,
         head_dir_path=ns.head_dir_path,
         tags=_declarations.tags_from_operator(ns.tag),
+        attributes=_declarations.attributes_from_operator(ns.attribute),
     )
 
 
