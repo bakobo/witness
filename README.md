@@ -70,7 +70,7 @@ uv run witness pool break --name lab --witness w2       # and `heal` to put it b
 uv run witness pool down --name lab                     # removes every container and volume
 ```
 
-The pool serves witnesses and describes them; it never incepts anything, so designating it is [`heti`](https://github.com/bakobo/heti)'s or `kli`'s job. Full documentation, including the reproducible-`--seed` caveat and what a pool is *not* good for, is in [`docs/pools.md`](docs/pools.md).
+Pooled witnesses declare themselves `testnet` and `bakobo.pool`, with a `pool` attribute naming the set, so their AIDs are no longer indistinguishable from production ones. The pool serves witnesses and describes them; it never incepts anything, so designating it is [`heti`](https://github.com/bakobo/heti)'s or `kli`'s job. Full documentation, including the reproducible-`--seed` caveat and what a pool is *not* good for, is in [`docs/pools.md`](docs/pools.md).
 
 And a witness can be backed up without being stopped:
 
@@ -104,7 +104,7 @@ Attributes are the other half, and the split matters. A tag is a predicate a con
 
 Set them with `--attrib key=value`, repeatable. Keys obey the same rule as tag names, so a key is as interoperable as a tag. Values are printable ASCII, non-empty, at most 256 characters — deliberately not Unicode, because this is a string a person reads off a screen, which makes a Cyrillic homograph or a bidi override a spoofing surface rather than an internationalization win.
 
-Both endpoints report a `source`. A witness that has published a signed declaration reports `signed-reply` and serves what it published; one that has not reports `operator-config` and serves what `--tag` and `--attrib` were set to. Signed wins, because a third party can verify it and cannot verify a local flag, and letting a flag mask what the witness has already said on the wire would hide the disagreement rather than resolve it. Both endpoints keep answering when the witness database cannot be opened, since "is this the laboratory box?" is a question operators ask precisely when something is broken.
+Both endpoints report a `source`, naming which of three places the answer came from. A witness that has published a signed declaration reports `signed-reply` and serves what it published. Failing that, `--tag` and `--attrib` give `operator-config`. Failing that, a JSON seed file in the volume gives `seed-file` — that is how `witness pool` marks its witnesses, since it will not override the image's command to pass them as arguments. Signed wins, because a third party can verify it and cannot verify a local flag, and letting a flag mask what the witness has already said on the wire would hide the disagreement rather than resolve it. Both endpoints keep answering when the witness database cannot be opened, since "is this the laboratory box?" is a question operators ask precisely when something is broken.
 
 The full reasoning, including the two carriers that were measured and rejected before this one, is in [`docs/decls.md`](docs/decls.md).
 

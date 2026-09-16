@@ -638,3 +638,49 @@ class TestRaggedDockerOutput:
         assert pool.run() == 0
         assert not docker.matching("volume rm")
         assert "0 volumes" in _printed(written)
+
+
+class TestDeclarationSeed:
+    """A pool marks its witnesses as laboratory infrastructure (@hjz7b7qo).
+
+    Through a file rather than an argument, because @n2bgpdds will not override the image's CMD
+    and so argv is closed to the pool.
+    """
+
+    def test_each_witness_is_seeded_with_testnet_and_its_pool(self):
+        docker = FakeDocker(script={"ps -a": ""})
+        pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=2)
+        pool.run()
+
+        seeds = docker.matching("decls.json")
+        assert len(seeds) == 2, "one declaration seed per witness"
+        for call in seeds:
+            assert "testnet" in call
+            assert "bakobo.pool" in call
+            assert '"pool": "lab"' in call or '"pool":"lab"' in call
+
+    def test_the_seed_is_written_before_the_witness_starts(self):
+        """A witness that came up first would answer with no declarations for a moment, and an
+        operator sampling it then would be told the wrong thing."""
+        docker = FakeDocker(script={"ps -a": ""})
+        pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=1)
+        pool.run()
+
+        indices = [n for n, call in enumerate(docker.calls) if "decls.json" in call]
+        starts = [n for n, call in enumerate(docker.calls) if "run -d" in call]
+        assert indices[0] < starts[0]
+
+    def test_what_is_seeded_parses_through_the_door_that_will_read_it(self):
+        """The pool and the control plane have to agree, so assert against the real door rather
+        than against a string shape written down twice."""
+        from witness import decls
+
+        docker = FakeDocker(script={"ps -a": ""})
+        pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=1)
+        pool.run()
+
+        call = docker.matching("decls.json")[0]
+        payload = call[call.index("{"):call.rindex("}") + 1]
+        seed = decls.from_seed(payload)
+        assert decls.TESTNET in seed.tags
+        assert seed.attribs["pool"] == "lab"

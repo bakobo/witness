@@ -274,7 +274,12 @@ class WitnessReader:
         record = self._declared("tags")
         if record is not None:
             return {"tags": list(record.tags), "source": "signed-reply"}
-        return {"tags": list(self._config.tags), "source": "operator-config"}
+        if self._config.tags:
+            return {"tags": list(self._config.tags), "source": "operator-config"}
+        seeded = self._seeded()
+        if seeded is not None and seeded.tags:
+            return {"tags": list(seeded.tags), "source": "seed-file"}
+        return {"tags": [], "source": "operator-config"}
 
     def attribs(self) -> dict:
         """What this witness publishes for a person to read, rather than for software to act on.
@@ -291,7 +296,33 @@ class WitnessReader:
         record = self._declared("attribs")
         if record is not None:
             return {"attribs": dict(record.attribs), "source": "signed-reply"}
-        return {"attribs": dict(self._config.attribs), "source": "operator-config"}
+        if self._config.attribs:
+            return {"attribs": dict(self._config.attribs), "source": "operator-config"}
+        seeded = self._seeded()
+        if seeded is not None and seeded.attribs:
+            return {"attribs": dict(seeded.attribs), "source": "seed-file"}
+        return {"attribs": {}, "source": "operator-config"}
+
+    def _seeded(self):
+        """Declarations from the seed file a pool writes into the volume, or None (@hjz7b7qo).
+
+        Fails closed on the value and open on the service: an absent, unreadable or malformed file
+        means this witness declares nothing, never that the control plane refuses to answer. A
+        typo in a provisioning script that presented as a dead control plane would be a worse
+        failure than one that presented as a witness with no declarations.
+        """
+        path = self._config.decl_file
+        if path is None:
+            return None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read(_decls.MAX_SEED_BYTES + 1)
+        except OSError:
+            return None
+        try:
+            return _decls.from_seed(text)
+        except WitnessError:
+            return None
 
     def _declared(self, kind):
         """This witness's own signed declaration of ``kind``, or None if there is not one.

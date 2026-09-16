@@ -25,8 +25,9 @@ pass through opaquely.
 
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .errors import InvalidArguments
 
@@ -56,6 +57,14 @@ MAX_TAG_LENGTH = 64
 #: Values get more room than names because a contact URL legitimately needs it, and less than a
 #: payload would because this is a line on a screen rather than a document.
 MAX_VALUE_LENGTH = 256
+
+#: A flood guard on the seed file. Eight kibibytes is far past 16 tags and 16 bounded attributes
+#: and far below anything that would trouble the process to read or parse.
+MAX_SEED_BYTES = 8192
+
+#: The members a seed file may carry. Closed rather than open, because a typo'd member silently
+#: ignored is a witness that declares less than its operator intended and says nothing about it.
+_SEED_MEMBERS = ("tags", "attribs")
 
 #: Attributes arrive as ``key=value``. Split once, never greedily: a contact is very often a URL
 #: and a URL contains '=', so a greedy split would silently truncate the commonest real value.
@@ -123,6 +132,10 @@ def _admit_value(value):
     the same concern app.py already applies to a caller-supplied request id. A field nobody is
     permitted to act on loses very little by being narrow.
     """
+    if not isinstance(value, str):
+        # Unreachable from the command line, where partition always yields text, and reachable
+        # from a seed file, where JSON will happily hand over a number or a nested object.
+        raise InvalidArguments("Every attribute value must be text, but one was not.")
     if not value:
         raise InvalidArguments(
             "An attribute value may not be empty; leave the key out instead, which says the same "
@@ -183,14 +196,73 @@ def attribs_from_operator(values):
                 "Every attribute must be written key=value, but one had no '=' in it."
             )
         key, _, value = item.partition(_PAIR_SEPARATOR)
-        key = _admit_name(key, KNOWN_ATTRIBS, "attribute")
         if key in admitted:
             raise InvalidArguments(
                 f"The attribute {key!r} was supplied more than once, and which one wins would "
                 "otherwise depend on the order of the arguments."
             )
-        admitted[key] = _admit_value(value)
-    return admitted
+        admitted[key] = value
+    return _admit_attribs(admitted)
+
+
+def _admit_attribs(mapping):
+    """Bound an already-unpacked attribute mapping, whatever door unpacked it."""
+    if len(mapping) > MAX_ATTRIBS:
+        raise InvalidArguments(
+            f"At most {MAX_ATTRIBS} attributes may be supplied, but {len(mapping)} were."
+        )
+    return {
+        _admit_name(key, KNOWN_ATTRIBS, "attribute"): _admit_value(value)
+        for key, value in mapping.items()
+    }
+
+
+@dataclass(frozen=True)
+class Seed:
+    """What a seed file declares. Empty members mean "declared nothing", never an error."""
+
+    tags: tuple[str, ...] = ()
+    attribs: dict = field(default_factory=dict)
+
+
+def from_seed(text):
+    """Door for a declaration seed file (@hjz7b7qo).
+
+    Size first, and specifically before ``json.loads``: parsing a megabyte in order to discover it
+    is too large has already paid the cost the bound exists to avoid.
+    """
+    if len(text) > MAX_SEED_BYTES:
+        raise InvalidArguments(
+            f"A declaration seed may be at most {MAX_SEED_BYTES} bytes, but one was {len(text)}."
+        )
+    try:
+        document = json.loads(text)
+    except ValueError:
+        raise InvalidArguments(
+            "A declaration seed must be JSON, and this one could not be parsed."
+        ) from None
+    if not isinstance(document, dict):
+        raise InvalidArguments(
+            "A declaration seed must be a JSON object with tags and attribs members."
+        )
+    for member in document:
+        if member not in _SEED_MEMBERS:
+            raise InvalidArguments(
+                f"{member!r} is not something a declaration seed can carry. It holds "
+                f"{' and '.join(_SEED_MEMBERS)}."
+            )
+    tags = document.get("tags")
+    if tags is not None and not isinstance(tags, list):
+        raise InvalidArguments("The tags member of a declaration seed must be a list of names.")
+    attribs = document.get("attribs")
+    if attribs is not None and not isinstance(attribs, dict):
+        raise InvalidArguments(
+            "The attribs member of a declaration seed must be an object of key to value."
+        )
+    return Seed(
+        tags=tags_from_operator(tags),
+        attribs=_admit_attribs(attribs or {}),
+    )
 
 
 def derive(witnesses, known):

@@ -19,6 +19,9 @@ _MIN_PORT = 1
 _MAX_PORT = 65535
 #: Beside the keystore, so it shares the volume's lifetime and needs no extra mount.
 _DEFAULT_TELEMETRY_PATH = "/usr/local/var/keri/telemetry"
+#: @hjz7b7qo. A default rather than a required flag, because the pool cannot add arguments to the
+#: image's command; it writes this file and the control plane finds it without being told.
+_DEFAULT_DECL_FILE = "/usr/local/var/keri/decls.json"
 #: @znm5uppx. keripy holds an unanswerable query for 300s; sustained escrow depth is the
 #: attacker's request rate times this number, and the measured cost is linear in depth.
 _DEFAULT_ESCROW_TIMEOUT = 60
@@ -44,6 +47,7 @@ class ControlPlaneConfig:
     base: str = ""
     head_dir_path: str | None = None
     telemetry_path: str | None = None
+    decl_file: str | None = _DEFAULT_DECL_FILE
     tags: tuple[str, ...] = ()
     #: A dict inside a frozen dataclass: frozen forbids rebinding the field, which is the property
     #: wanted here, and the alternative of a tuple of pairs would buy nothing but conversions at
@@ -131,6 +135,15 @@ def _add_declaration_arguments(parser):
             "A tag this witness broadcasts about itself. Repeatable. Defined tags: "
             f"{', '.join(sorted(_decls.KNOWN_TAGS))}. A tag of your own needs a vendor "
             "prefix, as in 'bakobo.pool'."
+        ),
+    )
+    parser.add_argument(
+        "--decl-file",
+        default=_DEFAULT_DECL_FILE,
+        dest="decl_file",
+        help=(
+            "A JSON file of declarations to fall back on when no --tag or --attrib is given. "
+            f"Default {_DEFAULT_DECL_FILE}; absent or unreadable means no declarations."
         ),
     )
     parser.add_argument(
@@ -373,6 +386,7 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
         port=ns.port,
         base=ns.base,
         head_dir_path=ns.head_dir_path,
+        decl_file=ns.decl_file,
         tags=_decls.tags_from_operator(ns.tag),
         attribs=_decls.attribs_from_operator(ns.attrib),
     )

@@ -43,6 +43,7 @@ from keri.core.eventing import ample
 from keri.core.signing import Salter
 from keri.help.helping import nowIso8601
 
+from . import decls
 from .errors import (
     DockerUnavailable,
     InvalidArguments,
@@ -91,6 +92,18 @@ _SEED_CONFIG = (
     "cf=Configer(name=sys.argv[1],base='',temp=False,reopen=True,clear=False)\n"
     "cf.put(json.loads(sys.argv[2]))\n"
 )
+
+#: Writes the declaration seed beside the keystore inside the volume (@hjz7b7qo). Run in the same
+#: one-shot container as the config seeding above, so a pool costs no extra container per witness.
+_SEED_DECLS = (
+    "import pathlib,sys\n"
+    "pathlib.Path(sys.argv[1]).write_text(sys.argv[2],encoding='utf-8')\n"
+)
+
+#: What a pooled witness declares. `testnet` is the point — a pool IS laboratory infrastructure,
+#: and before this its AIDs were indistinguishable from production ones. The other two say which
+#: pool, so an operator looking at a witness can find the rest of its set.
+_POOL_DECL_FILE = f"{KERI_HOME}/decls.json"
 
 _PS_FORMAT = (
     "{{.Names}}\t"
@@ -404,6 +417,14 @@ class Pool:
         self._docker([
             "run", "--rm", "-v", f"{name}:{KERI_HOME}", "--entrypoint", "python", image,
             "-c", _SEED_CONFIG, _ALIAS, json.dumps(config, separators=(",", ":")),
+        ])
+        seed = {
+            "tags": [decls.TESTNET, "bakobo.pool"],
+            "attribs": {"pool": self._config.name},
+        }
+        self._docker([
+            "run", "--rm", "-v", f"{name}:{KERI_HOME}", "--entrypoint", "python", image,
+            "-c", _SEED_DECLS, _POOL_DECL_FILE, json.dumps(seed),
         ])
         self._docker([
             "run", "-d", "--name", name, *labels,

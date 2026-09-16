@@ -13,6 +13,8 @@ writing the peer door now would mean shipping a function with no caller, which i
 the pyproject note refuses to make about fiki.
 """
 
+import json
+
 import pytest
 
 from witness import decls
@@ -286,3 +288,75 @@ class TestAttribsAreNotInherited:
         import inspect
 
         assert "attribs" not in inspect.signature(decls.derive).parameters
+
+
+class TestSeedDoor:
+    """The JSON seed file a pool writes into a witness volume (@hjz7b7qo).
+
+    A second door for the same values, so it bounds them the same way and reuses the same
+    vocabulary checks. What differs is only how the bytes arrive.
+    """
+
+    def test_a_seed_carries_both_kinds(self):
+        seed = decls.from_seed('{"tags": ["testnet"], "attribs": {"pool": "lab"}}')
+        assert seed.tags == ("testnet",)
+        assert seed.attribs == {"pool": "lab"}
+
+    def test_an_absent_member_is_empty_not_an_error(self):
+        seed = decls.from_seed('{"tags": ["testnet"]}')
+        assert seed.tags == ("testnet",)
+        assert seed.attribs == {}
+
+    def test_an_empty_object_declares_nothing(self):
+        seed = decls.from_seed("{}")
+        assert seed.tags == ()
+        assert seed.attribs == {}
+
+    def test_an_oversized_seed_is_refused_before_it_is_parsed(self):
+        """Size before shape: a megabyte of JSON should not be parsed to discover it is too big."""
+        with pytest.raises(InvalidArguments) as caught:
+            decls.from_seed("x" * (decls.MAX_SEED_BYTES + 1))
+        assert str(decls.MAX_SEED_BYTES) in str(caught.value)
+
+    def test_malformed_json_is_refused(self):
+        with pytest.raises(InvalidArguments) as caught:
+            decls.from_seed("{not json")
+        assert "JSON" in str(caught.value)
+
+    def test_a_seed_that_is_not_an_object_is_refused(self):
+        with pytest.raises(InvalidArguments):
+            decls.from_seed('["testnet"]')
+
+    def test_tags_that_are_not_a_list_are_refused(self):
+        with pytest.raises(InvalidArguments):
+            decls.from_seed('{"tags": "testnet"}')
+
+    def test_attribs_that_are_not_an_object_are_refused(self):
+        with pytest.raises(InvalidArguments):
+            decls.from_seed('{"attribs": ["pool=lab"]}')
+
+    def test_an_unknown_member_is_refused_rather_than_ignored(self):
+        """A typo'd member silently ignored is a witness that declares less than intended."""
+        with pytest.raises(InvalidArguments) as caught:
+            decls.from_seed('{"taggs": ["testnet"]}')
+        assert "taggs" in str(caught.value)
+
+    def test_the_vocabulary_applies_exactly_as_it_does_on_the_command_line(self):
+        with pytest.raises(InvalidArguments) as caught:
+            decls.from_seed('{"tags": ["testnetz"]}')
+        assert "is not a defined tag" in str(caught.value)
+
+    def test_attrib_values_are_bounded_exactly_as_they_are_on_the_command_line(self):
+        with pytest.raises(InvalidArguments):
+            decls.from_seed('{"attribs": {"operator": ""}}')
+
+    def test_too_many_attribs_in_a_seed_are_refused(self):
+        """The count is bounded on the mapping, so it fires for a file as well as for argv."""
+        crowded = {"bakobo.k%d" % n: "v" for n in range(decls.MAX_ATTRIBS + 1)}
+        with pytest.raises(InvalidArguments) as caught:
+            decls.from_seed(json.dumps({"attribs": crowded}))
+        assert str(decls.MAX_ATTRIBS) in str(caught.value)
+
+    def test_a_non_string_attrib_value_is_refused(self):
+        with pytest.raises(InvalidArguments):
+            decls.from_seed('{"attribs": {"operator": 5}}')

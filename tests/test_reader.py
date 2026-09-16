@@ -715,3 +715,60 @@ def test_a_real_signed_declaration_is_what_the_endpoint_serves(tmp_path):
     assert subject.attribs() == {
         "attribs": {"operator": "Bakobo"}, "source": "signed-reply",
     }
+
+
+class TestSeedFilePrecedence:
+    """Signed, then flag, then seed file, per endpoint (@hjz7b7qo)."""
+
+    def _reader(self, tmp_path, seed=None, tags=(), attribs=None):
+        path = tmp_path / "decls.json"
+        if seed is not None:
+            path.write_text(seed)
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), decl_file=str(path),
+            tags=tags, attribs=attribs or {},
+        )
+        return WitnessReader(cfg)
+
+    def test_a_seed_file_declares_when_no_flag_does(self, tmp_path):
+        subject = self._reader(tmp_path, seed='{"tags": ["testnet"]}')
+        assert subject.tags() == {"tags": ["testnet"], "source": "seed-file"}
+
+    def test_a_flag_beats_the_seed_file(self, tmp_path):
+        """Whoever typed the flag is acting now; the file was written when the volume was made."""
+        subject = self._reader(tmp_path, seed='{"tags": ["testnet"]}', tags=("bakobo.pool",))
+        assert subject.tags() == {"tags": ["bakobo.pool"], "source": "operator-config"}
+
+    def test_precedence_is_decided_per_endpoint(self, tmp_path):
+        """A flag for one kind does not suppress the file's answer for the other."""
+        subject = self._reader(
+            tmp_path, seed='{"tags": ["testnet"], "attribs": {"pool": "lab"}}',
+            tags=("bakobo.pool",),
+        )
+        assert subject.tags()["source"] == "operator-config"
+        assert subject.attribs() == {"attribs": {"pool": "lab"}, "source": "seed-file"}
+
+    def test_seed_attribs_are_served(self, tmp_path):
+        subject = self._reader(tmp_path, seed='{"attribs": {"operator": "Bakobo"}}')
+        assert subject.attribs() == {"attribs": {"operator": "Bakobo"}, "source": "seed-file"}
+
+    def test_a_missing_file_is_no_declarations_not_a_failure(self, tmp_path):
+        assert self._reader(tmp_path).tags() == {"tags": [], "source": "operator-config"}
+
+    def test_a_malformed_file_does_not_take_the_witness_down(self, tmp_path):
+        """Fail closed on the value, open on the service: a bad file declares nothing.
+
+        Refusing to answer would make a typo in a provisioning script look like a dead control
+        plane, which is a worse failure than declaring nothing.
+        """
+        assert self._reader(tmp_path, seed="{not json").tags() == {
+            "tags": [], "source": "operator-config",
+        }
+
+    def test_declaring_nothing_can_be_switched_off_entirely(self, tmp_path):
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), decl_file=None,
+        )
+        assert WitnessReader(cfg).tags() == {"tags": [], "source": "operator-config"}
