@@ -117,6 +117,8 @@ def derive(witnesses, known):
     clears.
 
     ``witnesses`` is an AID's witness list (``state.b``); ``known`` maps a witness AID to its tags.
+    Only the AID's own witnesses, deliberately: whether a delegated AID inherits from its
+    delegator's witnesses is undecided (~4tml).
     """
     resolved = []
     unresolved = []
