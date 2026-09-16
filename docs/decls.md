@@ -56,6 +56,12 @@ COIA's flag `6` is cleared by nothing, but no carrier available to a witness can
 
 Letting it clear at the consumer too would let a laboratory witness retroactively launder every AID it ever witnessed, simply by re-tagging itself. The accepted cost is that two consumers can legitimately disagree about the same witness — COIA's creator-indexed class — and that a consumer with no history sees only today's claim. `witness.decls.derive` is therefore a pure function, and the caller owns persistence.
 
+## Delegation
+
+A delegated AID's authority is rooted in its delegator — the delegating event has to be anchored in the delegator's KEL — so laboratory witnesses under the delegator taint the delegate, and derivation unions the witness sets of every level of the chain (`@4qrayq3j`). The counter-argument, that a delegate's ongoing key state is established by its own witnesses and the delegator's mattered only at the moment of delegation, is true and does not rescue it: what `testnet` answers is whether anything consequential should rest here, and a history only laboratory witnesses ever receipted is not one to build on regardless of who receipts today.
+
+The walk goes as far as the local database reaches and stops. Nothing obliges a witness to hold key state for a delegator, so stopping early is the normal outcome rather than a defect, and the delegator it stopped at is named in `unfollowed`. There is no resolution path for it, because `@k3p7wr` forbids the control plane making outbound calls — the same constraint that produces `unresolved` for co-witnesses.
+
 ## Partial answers are first-class
 
 `controller/{aid}` reports `derived`, `from` and `unresolved`. The last is a member rather than an omission, because the control plane never calls out to peer witnesses: it is a read-only observer (`@k3p7wr`), and an outbound fetch would add an SSRF surface and a network dependency to the one process whose whole charter is not having one. A co-witness's tags are genuinely unknown to it, and saying so beats guessing. A caller who wants the whole picture asks each witness itself.
@@ -63,5 +69,4 @@ Letting it clear at the consumer too would let a laboratory witness retroactivel
 ## What is not built
 
 - **Nothing declares automatically outside a pool.** A production witness says nothing about itself until an operator gives it `--tag`, `--attrib` or a seed file, which is correct: absence is not assurance, and a witness that declared something by default would be declaring something nobody chose.
-- **Delegation** (`~4tml`). Inheritance walks an AID's own witness list and stops. Whether a delegated AID inherits from its delegator's witnesses is undecided.
 - **A door census** (`~4v2j`). The declaration doors are bounded; nothing yet proves the repo's set of doors is complete.

@@ -817,3 +817,97 @@ def test_a_controller_inherits_the_tags_the_endpoint_reports(tmp_path):
 
     assert subject.tags()["source"] == "seed-file"
     assert subject.controller(ctl.pre)["tags"]["derived"] == ["testnet"]
+
+
+class _FakeState:
+    """A key state record as _chain reads one: witnesses in `b`, delegator in `di`."""
+
+    def __init__(self, i, b=(), di=""):
+        self.i = i
+        self.b = list(b)
+        self.di = di
+
+
+class _FakeStates:
+    def __init__(self, states):
+        self._states = {state.i: state for state in states}
+
+    def get(self, keys):
+        return self._states.get(keys)
+
+
+class _ChainDb:
+    def __init__(self, *states):
+        self.states = _FakeStates(states)
+
+
+class TestDelegationChain:
+    """Walking a delegation chain for witnesses (@4qrayq3j).
+
+    Driven against a fake key-state store rather than a real witness database, and the reason is
+    worth stating: a genuinely delegated AID is not acceptable to a bare witness until its
+    delegator anchors the delegation and the approval is exchanged, which needs keripy's full
+    delegation runtime rather than a fixture. ~25n4 records that gap. What is exercised here is
+    the walk itself, which is where the decisions live.
+    """
+
+    def test_an_undelegated_state_walks_one_level(self):
+        state = _FakeState("EAid", b=["B1"])
+        assert reader_mod._chain(_ChainDb(state), state) == (["B1"], [])
+
+    def test_a_delegate_collects_its_delegators_witnesses_too(self):
+        upper = _FakeState("EUpper", b=["B2"])
+        lower = _FakeState("ELower", b=["B1"], di="EUpper")
+        witnesses, unfollowed = reader_mod._chain(_ChainDb(upper, lower), lower)
+        assert sorted(witnesses) == ["B1", "B2"]
+        assert unfollowed == []
+
+    def test_a_delegate_with_no_witnesses_of_its_own_is_still_tainted(self):
+        """The case the rule exists for: the chain is the only thing that can reach it."""
+        upper = _FakeState("EUpper", b=["B2"])
+        lower = _FakeState("ELower", b=[], di="EUpper")
+        witnesses, _ = reader_mod._chain(_ChainDb(upper, lower), lower)
+        assert witnesses == ["B2"]
+
+    def test_the_whole_chain_is_walked_not_only_one_level(self):
+        top = _FakeState("ETop", b=["B3"])
+        mid = _FakeState("EMid", b=["B2"], di="ETop")
+        low = _FakeState("ELow", b=["B1"], di="EMid")
+        witnesses, unfollowed = reader_mod._chain(_ChainDb(top, mid, low), low)
+        assert sorted(witnesses) == ["B1", "B2", "B3"]
+        assert unfollowed == []
+
+    def test_a_delegator_we_hold_no_state_for_is_reported_unfollowed(self):
+        low = _FakeState("ELow", b=["B1"], di="EAbsent")
+        witnesses, unfollowed = reader_mod._chain(_ChainDb(low), low)
+        assert witnesses == ["B1"]
+        assert unfollowed == ["EAbsent"], "saying we could not look beats implying we did"
+
+    def test_a_cycle_terminates_instead_of_spinning(self):
+        """Not reachable through valid KERI, which cannot close a delegation loop. Reachable
+        through a corrupt store, and a read-only observer must not hang on one."""
+        a = _FakeState("EA", b=["B1"], di="EB")
+        b = _FakeState("EB", b=["B2"], di="EA")
+        witnesses, unfollowed = reader_mod._chain(_ChainDb(a, b), a)
+        assert sorted(witnesses) == ["B1", "B2"]
+        assert unfollowed == []
+
+    def test_a_chain_longer_than_the_depth_guard_reports_the_remainder(self):
+        depth = reader_mod._MAX_DELEGATION_DEPTH
+        states = [
+            _FakeState(f"E{n}", b=[f"B{n}"], di=f"E{n + 1}") for n in range(depth + 2)
+        ]
+        witnesses, unfollowed = reader_mod._chain(_ChainDb(*states), states[0])
+        assert len(witnesses) == depth
+        assert unfollowed == [f"E{depth}"], "the chain did not end, so say where we stopped"
+
+
+def test_an_undelegated_controller_reports_nothing_unfollowed(witnessing_db):
+    """Against a real witness database, so the member's presence is not only a fake's property."""
+    cfg = ControlPlaneConfig(
+        name=witnessing_db["name"], host="127.0.0.1", port=1, base="",
+        head_dir_path=witnessing_db["head"], tags=("testnet",),
+    )
+    answer = WitnessReader(cfg).controller(witnessing_db["controller_pre"])
+    assert answer["tags"]["unfollowed"] == []
+    assert answer["tags"]["derived"] == ["testnet"]

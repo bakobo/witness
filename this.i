@@ -439,6 +439,33 @@ Operator layer over a stock keripy witness = goal:
                 the others (size, then shape, then meaning) and a missing or unreadable file is a
                 witness with no declarations rather than a witness that fails to start.
 
+            Testnet taints a whole delegation chain  as far as we can follow it = decision:
+              id: 4qrayq3j
+              why: >
+                A delegated AID's authority is rooted in its delegator: the delegating event has to
+                be anchored in the delegator's KEL, so anyone who accepts the delegate has already
+                accepted the delegator. If laboratory witnesses receipted the events that brought a
+                delegate into existence, the delegate rests on infrastructure nobody promised to
+                keep, and the taint carries. So derivation unions the witness sets of every level
+                of the chain, not just the AID's own.
+                Rejected stopping at the AID's own witness set, which was what shipped in
+                @vqqh6zdk's first increment and was recorded as undecided rather than decided. The
+                argument for stopping is that a delegate's ONGOING key state is established by its
+                own witnesses and the delegator's mattered only at the moment of delegation. That is
+                true and does not rescue it: the question testnet answers is whether anything
+                consequential should rest here, and a history that only laboratory witnesses ever
+                receipted is not a history to build on, whoever is receipting today.
+                The chain is followed only as far as the local database reaches, and that is
+                expected rather than a defect. A witness is under no obligation to hold key state
+                for a delegator, so the walk commonly stops early. A delegator we cannot follow is
+                reported in an `unfollowed` member, separate from the `unresolved` witnesses,
+                because the two call for different follow-up: a witness we cannot speak for is
+                somebody to go and ask, where a delegator we cannot follow means there may be
+                witness sets we never saw at all. Accepted tradeoff: an incomplete answer is the
+                normal answer, and a consumer wanting certainty has to resolve the chain itself.
+                Rejected inventing a resolution path for it — @k3p7wr forbids the control plane
+                making outbound calls, and that holds here exactly as it does for co-witnesses.
+
             The read surface gains a tenth noun and controller/{aid} gains a tags member = decision:
               id: nlunqygr
               why: >

@@ -169,6 +169,23 @@ class TestDerive:
         assert derived.resolved == ("B1",)
         assert derived.tags == ("testnet",)
 
+    def test_an_unfollowed_delegator_is_reported_separately(self):
+        """@4qrayq3j: a witness we cannot speak for and a delegator we cannot follow are
+        different problems. One is somebody to ask; the other means there may be witness sets we
+        never saw at all."""
+        derived = decls.derive(witnesses=["B1"], known={"B1": ()}, unfollowed=["EDelegator"])
+        assert derived.unresolved == ()
+        assert derived.unfollowed == ("EDelegator",)
+
+    def test_unfollowed_defaults_to_empty(self):
+        assert decls.derive(witnesses=[], known={}).unfollowed == ()
+
+    def test_unfollowed_is_sorted_and_deduplicated(self):
+        derived = decls.derive(
+            witnesses=[], known={}, unfollowed=["EB", "EA", "EB"]
+        )
+        assert derived.unfollowed == ("EA", "EB")
+
     def test_ordering_is_stable_regardless_of_witness_order(self):
         """Two orderings of the same witness set must give byte-identical answers."""
         first = decls.derive(witnesses=["B2", "B1"], known={"B1": ("testnet",), "B2": ()})
