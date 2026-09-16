@@ -1,4 +1,9 @@
-"""What a witness says about itself, and what an AID inherits from its witnesses (@vqqh6zdk).
+"""What a witness declares about itself, and what an AID inherits from it (@vqqh6zdk).
+
+Two kinds of declaration, split by whether a consumer DECIDES on the value or merely DISPLAYS it
+(@e4ceoopg). A **tag** is a predicate a consumer acts on, so it is a bare name from an agreed
+vocabulary and it unions across an AID's witness set. An **attribute** is a key and a value a
+consumer shows a human, so it needs no merge rule and no AID inherits one.
 
 A tag is a bare name and the collection is a list, because the consumer question is always
 membership — "does this witness claim X" — and a map would invite a schema argument per key
@@ -12,7 +17,7 @@ speaks against its own interest, which is the only kind of self-assertion worth 
 answer is three-valued — tagged, untagged, and never production-asserted — and an empty tuple here
 means "we cannot say", never "this is fine".
 
-:func:`from_operator` is a door in the sense of dev/standards/input-handling.md: size, then shape,
+:func:`tags_from_operator` is a door in the sense of dev/standards/input-handling.md: size, then shape,
 then meaning, each only trustworthy if the one before it ran. Its peer counterpart arrives with the
 signed reply route, where an unknown bare name means a newer vocabulary rather than a typo and must
 pass through opaquely.
@@ -29,7 +34,7 @@ from .errors import InvalidArguments
 #: an experimental, test or demonstration environment with no real-world consequence.
 TESTNET = "testnet"
 
-KNOWN = {
+KNOWN_TAGS = {
     TESTNET: (
         "This witness belongs to an experimental, test or demonstration environment and carries "
         "no real-world consequence to reputation, governance or cost."
@@ -79,19 +84,19 @@ def _admit(value):
             "A tag must be lowercase letters, digits and hyphens in dot-separated segments, each "
             "beginning with a letter, as in 'testnet' or 'bakobo.pool'."
         )
-    if "." not in value and value not in KNOWN:
+    if "." not in value and value not in KNOWN_TAGS:
         # Bare names are the shared vocabulary, so an unrecognized one is a typo rather than an
         # extension — and a misspelled `testnet` that silently fails to apply leaves the witness
         # looking production-grade with nothing to say otherwise.
         raise InvalidArguments(
             f"{value!r} is not a defined tag. The defined tags are "
-            f"{', '.join(sorted(KNOWN))}; a tag of your own needs a vendor prefix, as in "
+            f"{', '.join(sorted(KNOWN_TAGS))}; a tag of your own needs a vendor prefix, as in "
             "'bakobo.pool'."
         )
     return value
 
 
-def from_operator(values):
+def tags_from_operator(values):
     """Door for tags the operator supplied. Returns them sorted and deduplicated.
 
     Sorted because the result reaches an HTTP response, and a contract whose member order depends

@@ -24,7 +24,7 @@ from keri.db import basing
 
 import witness as _witness_package
 
-from . import paths, tags as _tags, vitals
+from . import declarations as _declarations, paths, vitals
 from .errors import (
     ControllerUnknown,
     DatabaseTooNew,
@@ -289,7 +289,7 @@ class WitnessReader:
         try:
             for held, state in _key_states(rdb):
                 if held == aid:
-                    derived = _tags.derive(
+                    derived = _declarations.derive(
                         witnesses=list(state.b), known=self._own_tags(rdb)
                     )
                     return {

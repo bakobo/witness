@@ -11,7 +11,7 @@ import argparse
 import os
 from dataclasses import dataclass
 
-from . import tags as _tags
+from . import declarations as _declarations
 from .errors import InvalidArguments
 from .supervisor import ProcessSpec
 
@@ -115,8 +115,8 @@ def _add_tag_argument(parser):
     """The repeatable ``--tag`` the control plane takes (@nlunqygr).
 
     Collected as raw strings here and bounded in the config builder rather than by an argparse
-    ``type=``: argparse would report the first bad value and swallow the rest, where the tags door
-    can say which bound was crossed and what the vocabulary is.
+    ``type=``: argparse would report the first bad value and swallow the rest, where the
+    declarations door can say which bound was crossed and what the vocabulary is.
     """
     parser.add_argument(
         "--tag",
@@ -125,8 +125,8 @@ def _add_tag_argument(parser):
         dest="tag",
         help=(
             "A tag this witness broadcasts about itself. Repeatable. Defined tags: "
-            f"{', '.join(sorted(_tags.KNOWN))}. A tag of your own needs a vendor prefix, as in "
-            "'bakobo.pool'."
+            f"{', '.join(sorted(_declarations.KNOWN_TAGS))}. A tag of your own needs a vendor "
+            "prefix, as in 'bakobo.pool'."
         ),
     )
     return parser
@@ -357,7 +357,7 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
         port=ns.port,
         base=ns.base,
         head_dir_path=ns.head_dir_path,
-        tags=_tags.from_operator(ns.tag),
+        tags=_declarations.tags_from_operator(ns.tag),
     )
 
 
