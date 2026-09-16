@@ -423,7 +423,19 @@ Operator layer over a stock keripy witness = goal:
                 so `unresolved` is a first-class part of the response rather than an omission, and
                 a caller that wants the whole picture must resolve the other witnesses itself. The
                 repeatable --tag flag is an external contract under the methodology §3 trigger and
-                is frozen by this node. It goes on `control-plane` ONLY, and deliberately not on
+                is frozen by this node.
+                Precedence resolved 2026-09-16, when the read path was built: a signed declaration
+                WINS over operator configuration, rather than configuration overriding it. A third
+                party can verify the signed one and cannot verify the flag, so letting a local flag
+                mask what the witness has published on the wire would make the endpoint disagree
+                with the protocol and would hide the disagreement. Rejected the opposite
+                precedence, which reads like an operator escape hatch and is really a way to lie
+                locally about what you have already said publicly. The endpoint still answers when
+                the database cannot be opened, because an operator asks whether this is the
+                laboratory box precisely when things are broken; four different absences -- no
+                database, a keripy predating the decl routes, an unidentifiable keystore, and
+                nothing declared yet -- all fall back rather than fail, since a witness whose
+                declarations are still configuration is in a normal state and not a degraded one. It goes on `control-plane` ONLY, and deliberately not on
                 `run`: the control plane is the process that serves tags, so a `run --tag` would be
                 a flag whose value nothing reads — the same unsupported claim the pyproject note
                 refuses to make about fiki. `run` grows one when @vqqh6zdk's second increment makes

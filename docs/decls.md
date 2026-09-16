@@ -1,6 +1,6 @@
 # What a witness declares about itself
 
-> **Status: tags and attributes are built; the signed channel is not.** The control plane serves `/v1/witness/tags` and `/v1/witness/attribs` from operator configuration, and `controller/{aid}` reports the tags an AID inherits. Nothing here is cryptographically bound to anything yet — that is the second increment, a signed `rpy` route in keripy, and it is the part intended to go upstream. The decisions are `this.i` `@vqqh6zdk` and its children; this document is derived from them and carries no authority of its own.
+> **Status: built on both sides; not yet connected by a pin.** The control plane serves `/v1/witness/tags` and `/v1/witness/attribs`, prefers a signed declaration when one exists and falls back to operator configuration when it does not, and `controller/{aid}` reports the tags an AID inherits. The signed channel itself — `/decl/tags` and `/decl/attribs` reply routes, disseminated through OOBI — is implemented in keripy and proposed upstream, not merged. Until the keripy pin moves to a build carrying those routes, the fallback is the live path and `source` reads `operator-config` in practice. `tests/test_keripy_contract.py` pins that absence, so the pin bump announces itself. The decisions are `this.i` `@vqqh6zdk` and its children; this document is derived from them and carries no authority of its own.
 
 *Written 2026-09-16, when the question was where a "this witness is laboratory infrastructure" marker can live in KERI. Two carriers looked right and were measured and rejected, and the measurements are recorded here because `@vqqh6zdk` rests on them — the node states the conclusions, and this is the evidence a challenger would need to disagree with them.*
 
@@ -62,7 +62,7 @@ Letting it clear at the consumer too would let a laboratory witness retroactivel
 
 ## What is not built
 
-- **The signed `rpy` routes.** Until they land, declarations are operator configuration with no cryptographic binding, served only to whoever can reach the control plane. This is the increment intended for upstream.
+- **The keripy pin.** The reply routes exist on a branch proposed upstream; the pin still names a keripy without them, because moving it would mean running diverged code, which `@w7c4mz` decided against. So the control plane's read path is written and tested but dormant. Bumping the pin is what activates it, and the route names may change first — the upstream proposal explicitly invites a different spelling than `/decl`.
 - **Tagging pooled witnesses** (`~2xf6`). `witness pool` deliberately does not override the image CMD, so `--tag` and `--attribute` cannot reach a pooled control plane on argv. The delivery mechanism is an open question and needs a node of its own.
 - **Delegation** (`~4tml`). Inheritance walks an AID's own witness list and stops. Whether a delegated AID inherits from its delegator's witnesses is undecided.
 - **A door census** (`~4v2j`). The declaration doors are bounded; nothing yet proves the repo's set of doors is complete.

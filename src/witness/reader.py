@@ -266,9 +266,14 @@ class WitnessReader:
         database will not open is exactly when they ask it — so making this endpoint depend on the
         database would make it unavailable precisely when it is wanted.
 
-        ``source`` is the seam for the signed reply route (@nlunqygr): moving the origin of tags
-        later becomes a new value in an existing member rather than a change to a frozen shape.
+        ``source`` is the seam @nlunqygr named, and it now carries two values. A signed
+        declaration published by this witness wins over operator configuration, because it is the
+        thing a third party can actually verify; configuration is what a witness has to say for
+        itself before it has said anything on the wire.
         """
+        record = self._declared("tags")
+        if record is not None:
+            return {"tags": list(record.tags), "source": "signed-reply"}
         return {"tags": list(self._config.tags), "source": "operator-config"}
 
     def attribs(self) -> dict:
@@ -283,7 +288,39 @@ class WitnessReader:
         key/value pairs — three witnesses reporting three regions have no natural merge — and no
         attribute carries the against-interest property that makes `testnet` worth believing.
         """
+        record = self._declared("attribs")
+        if record is not None:
+            return {"attribs": dict(record.attribs), "source": "signed-reply"}
         return {"attribs": dict(self._config.attribs), "source": "operator-config"}
+
+    def _declared(self, kind):
+        """This witness's own signed declaration of ``kind``, or None if there is not one.
+
+        Four different absences collapse to None on purpose, because they call for the same
+        answer. The database may not open, which is the case @nlunqygr cares about most: an
+        operator asks "is this the laboratory box?" precisely when things are broken, so a
+        declaration endpoint that fails with the database would be missing exactly when wanted.
+        The installed keripy may predate the decl reply routes, and it does today — read through
+        ``getattr`` for the same reason escrow() does, rather than assuming a store exists. The
+        keystore may not identify a witness. And the witness may simply not have declared yet.
+
+        None of the four is an error. A witness whose declarations are still operator
+        configuration is in a normal state, not a degraded one.
+        """
+        try:
+            rdb = self._open()
+        except WitnessError:
+            return None
+        try:
+            store = getattr(rdb, "decls", None)  # ~4ky2 — dormant until the keripy pin moves
+            if store is None:
+                return None
+            hab = _select_witness_hab(rdb.habs.getTopItemIter())
+            if hab is None:
+                return None
+            return store.get(keys=(hab.hid, kind))
+        finally:
+            rdb.close()
 
     def _own_tags(self, rdb):
         """``{our own witness AID: our tags}``, or empty when we cannot identify ourselves.

@@ -585,3 +585,102 @@ class TestAttribs:
         answer = WitnessReader(cfg).controller(witnessing_db["controller_pre"])
         assert "attribs" not in answer
         assert "attribs" not in answer["tags"]
+
+
+class _FakeStore:
+    """Stands in for keripy's Komer over decl records, keyed (aid, kind)."""
+
+    def __init__(self, items):
+        self._items = items
+
+    def get(self, keys):
+        return self._items.get(tuple(keys))
+
+
+class _FakeDecl:
+    def __init__(self, tags=(), attribs=None):
+        self.tags = list(tags)
+        self.attribs = dict(attribs or {})
+
+
+class _FakeRdb:
+    """A witness database whose decl store may or may not exist, as the pin dictates."""
+
+    def __init__(self, hab_pre, decls=None, has_store=True):
+        self._hab_pre = hab_pre
+        if has_store:
+            self.decls = _FakeStore(decls or {})
+
+        class _Habs:
+            def getTopItemIter(inner):
+                if hab_pre is None:
+                    return iter(())
+                return iter([(("k",), _FakeHab(mid=None, hid=hab_pre))])
+
+        self.habs = _Habs()
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class TestSignedDeclarations:
+    """Preferring a signed declaration over operator config, when one is available (@vqqh6zdk).
+
+    The installed keripy decides whether that is possible at all: the decl stores exist only in a
+    keripy carrying the reply routes, so this reads through `getattr` exactly as escrow() already
+    does for a store an upstream bump may have moved. Falling back is not a degraded mode, it is
+    the honest answer for a witness whose declarations are still operator configuration.
+    """
+
+    def _reader(self, tmp_path, rdb, tags=(), attribs=None):
+        cfg = ControlPlaneConfig(
+            name="w", host="127.0.0.1", port=1, base="", head_dir_path=str(tmp_path),
+            tags=tags, attribs=attribs or {},
+        )
+        subject = WitnessReader(cfg)
+        subject._open = lambda: rdb
+        return subject
+
+    def test_a_signed_tag_declaration_wins_over_config(self, tmp_path):
+        rdb = _FakeRdb(_NONTRANSFERABLE,
+                       decls={(_NONTRANSFERABLE, "tags"): _FakeDecl(tags=["testnet"])})
+        answer = self._reader(tmp_path, rdb, tags=("bakobo.pool",)).tags()
+        assert answer == {"tags": ["testnet"], "source": "signed-reply"}
+
+    def test_a_signed_attrib_declaration_wins_over_config(self, tmp_path):
+        rdb = _FakeRdb(_NONTRANSFERABLE,
+                       decls={(_NONTRANSFERABLE, "attribs"): _FakeDecl(attribs={"operator": "B"})})
+        answer = self._reader(tmp_path, rdb, attribs={"operator": "other"}).attribs()
+        assert answer == {"attribs": {"operator": "B"}, "source": "signed-reply"}
+
+    def test_the_database_is_closed_even_when_it_answers(self, tmp_path):
+        rdb = _FakeRdb(_NONTRANSFERABLE,
+                       decls={(_NONTRANSFERABLE, "tags"): _FakeDecl(tags=["testnet"])})
+        self._reader(tmp_path, rdb).tags()
+        assert rdb.closed, "the control plane opens per request and closes what it opens (@c7v3kp)"
+
+    def test_a_keripy_without_the_decl_store_falls_back(self, tmp_path):
+        """True of the pinned keripy today, so this is the live path rather than a hypothetical."""
+        rdb = _FakeRdb(_NONTRANSFERABLE, has_store=False)
+        answer = self._reader(tmp_path, rdb, tags=("testnet",)).tags()
+        assert answer == {"tags": ["testnet"], "source": "operator-config"}
+
+    def test_no_declaration_published_yet_falls_back(self, tmp_path):
+        rdb = _FakeRdb(_NONTRANSFERABLE, decls={})
+        answer = self._reader(tmp_path, rdb, tags=("testnet",)).tags()
+        assert answer["source"] == "operator-config"
+
+    def test_a_keystore_we_cannot_identify_falls_back(self, tmp_path):
+        rdb = _FakeRdb(None, decls={})
+        assert self._reader(tmp_path, rdb, tags=("testnet",)).tags()["source"] == "operator-config"
+
+    def test_an_unopenable_database_still_answers_from_config(self, tmp_path):
+        """@nlunqygr: an operator asks "is this the laboratory box?" precisely when things are
+        broken, so a database that will not open must not take the answer away."""
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), tags=("testnet",),
+        )
+        answer = WitnessReader(cfg).tags()
+        assert answer == {"tags": ["testnet"], "source": "operator-config"}
