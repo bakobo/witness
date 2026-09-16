@@ -407,6 +407,38 @@ Operator layer over a stock keripy witness = goal:
                 is permitted to decide on loses little by being restricted. Rejected allowing empty
                 values, since a key with no value says less than the key's absence does.
 
+            A seed file in the volume carries declarations a pooled witness cannot get on argv = decision:
+              id: hjz7b7qo
+              why: >
+                A pool is laboratory infrastructure by definition, so its witnesses should say so —
+                and until now they could not. @nlunqygr put --tag and --attrib on the control
+                plane's command line, and @n2bgpdds deliberately does NOT override the image's CMD,
+                because restating the image's own command inside pool.py would drift silently the
+                first time that command changed. So argv is closed to the pool by a decision worth
+                keeping, and the declarations had to arrive some other way.
+                Chosen: a JSON file the pool writes into the volume at KERI_HOME/decls.json, read by
+                the control plane from that path by default, so the image's CMD stays untouched and
+                a pooled witness declares itself with no new argument anywhere. It rides the
+                one-shot seeding container the pool already runs for the advertised URL rather than
+                adding a second, so `pool up` costs no extra container per witness. Rejected a
+                WITNESS_TAGS environment variable: it also leaves CMD alone, but tags and attribs
+                would need either two variables or a packed encoding invented here, where one file
+                carries both in a shape that already exists. Rejected folding declarations into
+                keripy's own cf/<name>.json, which is keripy's file and whose keys are keripy's to
+                define; when the /decl routes land upstream that file becomes the right home, and
+                this one goes away.
+                Precedence per endpoint, highest first: a signed declaration, then --tag/--attrib,
+                then the seed file. A flag beats the file because whoever typed it is acting now,
+                where the file was written when the volume was provisioned; that is the ordinary
+                command-line-over-config rule and inverting it would make a flag silently
+                ineffective. `source` therefore has a third value, seed-file, rather than reporting
+                the file as operator-config — an operator debugging a witness that claims something
+                unexpected needs to know which of three places to go and look.
+                Accepted tradeoff: this is a second input door for the same values, and a file in a
+                volume is easier to forget than an argument in a command. The door is bounded like
+                the others (size, then shape, then meaning) and a missing or unreadable file is a
+                witness with no declarations rather than a witness that fails to start.
+
             The read surface gains a tenth noun and controller/{aid} gains a tags member = decision:
               id: nlunqygr
               why: >
