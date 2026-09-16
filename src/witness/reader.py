@@ -24,7 +24,7 @@ from keri.db import basing
 
 import witness as _witness_package
 
-from . import paths, vitals
+from . import paths, tags as _tags, vitals
 from .errors import (
     ControllerUnknown,
     DatabaseTooNew,
@@ -258,18 +258,51 @@ class WitnessReader:
         finally:
             rdb.close()
 
+    def tags(self) -> dict:
+        """What this witness says about itself (@vqqh6zdk).
+
+        Answers from configuration alone, deliberately touching no database. The question an
+        operator asks during a bad deploy is "is this the laboratory box?", and a witness whose
+        database will not open is exactly when they ask it — so making this endpoint depend on the
+        database would make it unavailable precisely when it is wanted.
+
+        ``source`` is the seam for the signed reply route (@nlunqygr): moving the origin of tags
+        later becomes a new value in an existing member rather than a change to a frozen shape.
+        """
+        return {"tags": list(self._config.tags), "source": "operator-config"}
+
+    def _own_tags(self, rdb):
+        """``{our own witness AID: our tags}``, or empty when we cannot identify ourselves.
+
+        Empty rather than raising. This feeds a member added to an endpoint that already worked,
+        and a keystore we cannot make sense of should cost the caller the tag derivation, not the
+        key state they actually asked for.
+        """
+        hab = _select_witness_hab(rdb.habs.getTopItemIter())
+        if hab is None:
+            return {}
+        return {hab.hid: self._config.tags}
+
     def controller(self, aid) -> dict:
         """One controller's current key state, or a 404 if this witness does not hold it."""
         rdb = self._open()
         try:
             for held, state in _key_states(rdb):
                 if held == aid:
+                    derived = _tags.derive(
+                        witnesses=list(state.b), known=self._own_tags(rdb)
+                    )
                     return {
                         "aid": held,
                         "sequence_number": int(state.s, 16),
                         "said": state.d,
                         "witnesses": list(state.b),
                         "threshold": state.bt,
+                        "tags": {
+                            "derived": list(derived.tags),
+                            "from": list(derived.resolved),
+                            "unresolved": list(derived.unresolved),
+                        },
                     }
             raise ControllerUnknown(
                 f"This witness holds no key state for {aid}; it may not witness that controller.",

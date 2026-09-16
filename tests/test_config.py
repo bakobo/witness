@@ -160,3 +160,52 @@ def test_the_pool_manifest_format_is_one_of_three():
 def test_pool_down_can_be_told_to_sweep_everything():
     _subcommand, cfg = config.parse_args(["pool", "down", "--all"])
     assert cfg.all_pools is True
+
+
+class TestTagFlag:
+    """`--tag` on the control plane, which is the process that serves them (@nlunqygr).
+
+    Parsed through the tags door rather than accepted verbatim, so a misspelling is a startup
+    failure instead of a witness that quietly looks production-grade.
+    """
+
+    def test_control_plane_defaults_to_no_tags(self):
+        _subcommand, cfg = config.parse_args(["control-plane", "--name", "w", "--port", "5621"])
+        assert cfg.tags == ()
+
+    def test_control_plane_takes_a_tag(self):
+        _subcommand, cfg = config.parse_args(
+            ["control-plane", "--name", "w", "--port", "5621", "--tag", "testnet"]
+        )
+        assert cfg.tags == ("testnet",)
+
+    def test_the_flag_repeats_and_the_result_is_sorted(self):
+        _subcommand, cfg = config.parse_args(
+            [
+                "control-plane", "--name", "w", "--port", "5621",
+                "--tag", "testnet", "--tag", "bakobo.pool", "--tag", "testnet",
+            ]
+        )
+        assert cfg.tags == ("bakobo.pool", "testnet")
+
+    def test_an_undefined_tag_fails_closed_at_startup(self):
+        """Asserts the door's own refusal, not merely that something refused.
+
+        Before `--tag` existed this passed for the wrong reason — argparse rejecting an unknown
+        flag raises the same typed error — so it names the message only the vocabulary check can
+        produce.
+        """
+        with pytest.raises(InvalidArguments) as caught:
+            config.parse_args(
+                ["control-plane", "--name", "w", "--port", "5621", "--tag", "testnetz"]
+            )
+        assert "is not a defined tag" in str(caught.value)
+
+    def test_run_does_not_take_a_tag_yet(self):
+        """The runner has no use for a tag until it is the thing that publishes them.
+
+        A flag whose value nothing reads is a claim the code does not support, so `run` grows one
+        when the signed reply route gives it something to do (@nlunqygr).
+        """
+        with pytest.raises(InvalidArguments):
+            config.parse_args(["run", "--name", "w", "--tag", "testnet"])

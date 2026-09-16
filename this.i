@@ -388,8 +388,12 @@ Operator layer over a stock keripy witness = goal:
                 not having one. Accepted tradeoff: the controller answer is partial by construction,
                 so `unresolved` is a first-class part of the response rather than an omission, and
                 a caller that wants the whole picture must resolve the other witnesses itself. The
-                repeatable --tag flag on `control-plane` and `run` is an external contract under the
-                methodology §3 trigger and is frozen by this node.
+                repeatable --tag flag is an external contract under the methodology §3 trigger and
+                is frozen by this node. It goes on `control-plane` ONLY, and deliberately not on
+                `run`: the control plane is the process that serves tags, so a `run --tag` would be
+                a flag whose value nothing reads — the same unsupported claim the pyproject note
+                refuses to make about fiki. `run` grows one when @vqqh6zdk's second increment makes
+                the runner the thing that publishes them.
 
         Metrics leave over OTLP  and only when an endpoint is configured = decision:
           id: wea6qjmk

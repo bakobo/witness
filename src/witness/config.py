@@ -11,6 +11,7 @@ import argparse
 import os
 from dataclasses import dataclass
 
+from . import tags as _tags
 from .errors import InvalidArguments
 from .supervisor import ProcessSpec
 
@@ -43,6 +44,7 @@ class ControlPlaneConfig:
     base: str = ""
     head_dir_path: str | None = None
     telemetry_path: str | None = None
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,27 @@ class _RaisingParser(argparse.ArgumentParser):
         raise InvalidArguments(f"The control-plane arguments are invalid: {message}.")
 
 
+def _add_tag_argument(parser):
+    """The repeatable ``--tag`` the control plane takes (@nlunqygr).
+
+    Collected as raw strings here and bounded in the config builder rather than by an argparse
+    ``type=``: argparse would report the first bad value and swallow the rest, where the tags door
+    can say which bound was crossed and what the vocabulary is.
+    """
+    parser.add_argument(
+        "--tag",
+        action="append",
+        default=None,
+        dest="tag",
+        help=(
+            "A tag this witness broadcasts about itself. Repeatable. Defined tags: "
+            f"{', '.join(sorted(_tags.KNOWN))}. A tag of your own needs a vendor prefix, as in "
+            "'bakobo.pool'."
+        ),
+    )
+    return parser
+
+
 def _build_parser() -> _RaisingParser:
     parser = _RaisingParser(prog="witness")
     sub = parser.add_subparsers(dest="subcommand", required=True)
@@ -130,6 +153,7 @@ def _build_parser() -> _RaisingParser:
         action="store_true",
         help="Serve without loop telemetry, for a witness started by stock `kli witness start`.",
     )
+    _add_tag_argument(cp)
     sup = sub.add_parser(
         "supervise", help="Run the witness runner and the control plane in one container."
     )
@@ -333,6 +357,7 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
         port=ns.port,
         base=ns.base,
         head_dir_path=ns.head_dir_path,
+        tags=_tags.from_operator(ns.tag),
     )
 
 

@@ -50,6 +50,9 @@ class StubReader:
     def controllers(self):
         return self._answer("controllers", {"controllers": []})
 
+    def tags(self):
+        return self._answer("tags", {"tags": ["testnet"], "source": "operator-config"})
+
     def controller(self, aid):
         value = self._overrides.get("controller", {"aid": aid})
         if isinstance(value, Exception):
@@ -72,6 +75,7 @@ ROUTES = [
     "/v1/witness/process",
     "/v1/witness/controller",
     "/v1/witness/controller/BSomeAid",
+    "/v1/witness/tags",
 ]
 
 
@@ -247,3 +251,9 @@ def test_a_well_formed_request_id_is_still_carried_through():
     )
 
     assert response.headers["Bakobo-Request-Id"] == "01K1M4YQ8ZP3V7.trace-9"
+
+
+def test_the_tags_noun_answers_what_the_witness_claims(client):
+    """The tenth noun (@nlunqygr). Its shape is a frozen contract from here on."""
+    body = client.simulate_get("/v1/witness/tags").json
+    assert body == {"tags": ["testnet"], "source": "operator-config"}

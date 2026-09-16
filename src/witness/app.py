@@ -123,6 +123,7 @@ def make_app(reader, counter=None):
     app.add_route("/v1/witness/escrow", Endpoint(reader.escrow))
     app.add_route("/v1/witness/database", Endpoint(reader.database))
     app.add_route("/v1/witness/process", Endpoint(reader.process))
+    app.add_route("/v1/witness/tags", Endpoint(reader.tags))
     app.add_route("/v1/witness/controller", Endpoint(reader.controllers))
     app.add_route("/v1/witness/controller/{aid}", Endpoint(reader.controller))
     return app

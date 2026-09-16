@@ -462,3 +462,83 @@ def test_a_failed_open_does_not_leak_the_environment_into_the_next_request(tmp_p
     assert causes == ["DatabaseError"] * 3, (
         f"the reason changed between requests: {causes} — an environment leaked"
     )
+
+
+class TestTags:
+    """The tenth noun, and the tag member on controller/{aid} (@nlunqygr)."""
+
+    def _reader_for(self, facts, tag_tuple):
+        cfg = ControlPlaneConfig(
+            name=facts["name"], host="127.0.0.1", port=1, base="",
+            head_dir_path=facts["head"], tags=tag_tuple,
+        )
+        return WitnessReader(cfg)
+
+    def test_tags_reports_what_the_operator_configured(self, witnessing_db):
+        answer = self._reader_for(witnessing_db, ("testnet",)).tags()
+        assert answer["tags"] == ["testnet"]
+
+    def test_tags_names_where_the_value_came_from(self, witnessing_db):
+        """The `source` member is the seam for the signed reply route, so it ships from day one.
+
+        Without it, moving the origin of tags later would be a breaking change to a frozen shape
+        rather than a new value in an existing member.
+        """
+        assert self._reader_for(witnessing_db, ()).tags()["source"] == "operator-config"
+
+    def test_an_untagged_witness_reports_an_empty_list_not_an_absent_member(self, witnessing_db):
+        """Absence is never assurance (@pmtzkn6j); an empty list says 'nothing claimed'."""
+        assert self._reader_for(witnessing_db, ()).tags()["tags"] == []
+
+    def test_tags_needs_no_database(self, tmp_path):
+        """Configured tags are answerable even when the witness has not come up yet.
+
+        Failing this endpoint on a missing database would make the one question an operator asks
+        during a bad deploy — "is this the laboratory box?" — unanswerable exactly then.
+        """
+        cfg = ControlPlaneConfig(
+            name="nosuch", host="127.0.0.1", port=1, base="",
+            head_dir_path=str(tmp_path / "absent"), tags=("testnet",),
+        )
+        assert WitnessReader(cfg).tags()["tags"] == ["testnet"]
+
+    def test_a_controller_inherits_this_witnesss_tag(self, witnessing_db):
+        answer = self._reader_for(witnessing_db, ("testnet",)).controller(
+            witnessing_db["controller_pre"]
+        )
+        assert answer["tags"]["derived"] == ["testnet"]
+        assert answer["tags"]["from"] == [witnessing_db["witness_pre"]]
+        assert answer["tags"]["unresolved"] == []
+
+    def test_an_untagged_witness_taints_no_controller(self, witnessing_db):
+        answer = self._reader_for(witnessing_db, ()).controller(witnessing_db["controller_pre"])
+        assert answer["tags"]["derived"] == []
+        assert answer["tags"]["from"] == [witnessing_db["witness_pre"]]
+
+    def test_a_co_witness_we_cannot_speak_for_is_reported_unresolved(self, fully_witnessed_db):
+        """The control plane does not fetch peers (@nlunqygr), so it says so rather than guessing.
+
+        The fixture's controller designates two witnesses and this reader is only one of them.
+        """
+        answer = self._reader_for(fully_witnessed_db, ("testnet",)).controller(
+            fully_witnessed_db["controller_pre"]
+        )
+        ours, theirs = fully_witnessed_db["witness_pres"]
+        assert answer["tags"]["from"] == [ours]
+        assert answer["tags"]["unresolved"] == [theirs]
+        assert answer["tags"]["derived"] == ["testnet"]
+
+    def test_a_keystore_we_cannot_identify_leaves_every_witness_unresolved(
+        self, witnessing_db, monkeypatch
+    ):
+        """An unidentifiable keystore must not fail the controller endpoint.
+
+        `tags` is an added member on a shape that already worked; a reader that cannot work out
+        its own AID should say it can speak for nobody, not turn an existing 200 into a 409.
+        """
+        subject = self._reader_for(witnessing_db, ("testnet",))
+        monkeypatch.setattr(reader_mod, "_select_witness_hab", lambda items: None)
+        answer = subject.controller(witnessing_db["controller_pre"])
+        assert answer["tags"]["derived"] == []
+        assert answer["tags"]["from"] == []
+        assert answer["tags"]["unresolved"] == [witnessing_db["witness_pre"]]
