@@ -85,11 +85,16 @@ class Derived:
     ``unresolved`` is a member rather than an omission because the control plane does not fetch
     peer witnesses (@nlunqygr): a partial answer stated as partial is honest, and a partial answer
     presented as complete is the failure this feature exists to prevent.
+
+    ``unfollowed`` is kept apart from it because the two failures call for different work
+    (@4qrayq3j). An unresolved witness is one to go and ask. An unfollowed delegator means the
+    chain stopped, so there may be whole witness sets nobody here has ever seen.
     """
 
     tags: tuple[str, ...]
     resolved: tuple[str, ...]
     unresolved: tuple[str, ...]
+    unfollowed: tuple[str, ...] = ()
 
 
 def _admit_name(value, known, kind):
@@ -290,7 +295,7 @@ def from_seed(text):
     return Seed(tags=tags_from_operator(tags), attribs=_admit_attribs(attribs))
 
 
-def derive(witnesses, known):
+def derive(witnesses, known, unfollowed=()):
     """Union the tags of every witness in ``witnesses`` whose tags ``known`` holds.
 
     Monotone by construction: one tagged witness is enough, and no quorum of untagged ones excuses
@@ -298,9 +303,11 @@ def derive(witnesses, known):
     production-ready member, and @dhh2gnvv makes the resulting marking one the consumer never
     clears.
 
-    ``witnesses`` is an AID's witness list (``state.b``); ``known`` maps a witness AID to its tags.
-    Only the AID's own witnesses, deliberately: whether a delegated AID inherits from its
-    delegator's witnesses is undecided (~4tml).
+    ``witnesses`` is every witness the caller could reach for this AID, which for a delegated AID
+    means its own set plus each level of its delegation chain (@4qrayq3j); the caller does the
+    walking, because the walk needs a database and this does not. ``known`` maps a witness AID to
+    its tags. ``unfollowed`` names delegators the caller could not follow, which is reported
+    rather than treated as an absence of delegation.
     """
     resolved = []
     unresolved = []
@@ -315,4 +322,5 @@ def derive(witnesses, known):
         tags=tuple(sorted(collected)),
         resolved=tuple(sorted(resolved)),
         unresolved=tuple(sorted(unresolved)),
+        unfollowed=tuple(sorted(set(unfollowed))),
     )

@@ -37,6 +37,14 @@ from .errors import (
 )
 from .telemetry import SegmentReader
 
+#: How many delegation levels to follow before giving up and reporting the rest unfollowed.
+#:
+#: A guard rather than an opinion about real chains, which are short. KERI should not permit a
+#: delegation cycle, but this walks a database rather than a proof, and a malformed store must not
+#: be able to spin the request forever. A `seen` set catches an actual cycle; this catches a chain
+#: long enough that answering it would cost more than the answer is worth.
+_MAX_DELEGATION_DEPTH = 8
+
 #: How long a doer must hold the loop before the witness is called degraded.
 #:
 #: `current_doer` being set does NOT mean the loop is stuck — on a healthy witness the loop is
@@ -385,8 +393,11 @@ class WitnessReader:
         try:
             for held, state in _key_states(rdb):
                 if held == aid:
+                    witnesses, unfollowed = _chain(rdb, state)
                     derived = _decls.derive(
-                        witnesses=list(state.b), known=self._own_tags(rdb)
+                        witnesses=witnesses,
+                        known=self._own_tags(rdb),
+                        unfollowed=unfollowed,
                     )
                     return {
                         "aid": held,
@@ -398,6 +409,7 @@ class WitnessReader:
                             "derived": list(derived.tags),
                             "from": list(derived.resolved),
                             "unresolved": list(derived.unresolved),
+                            "unfollowed": list(derived.unfollowed),
                         },
                     }
             raise ControllerUnknown(
@@ -429,6 +441,41 @@ class WitnessReader:
             return {"aid": hab.hid, "alias": hab.name}
         finally:
             rdb.close()
+
+
+def _chain(rdb, state):
+    """Every witness reachable for this AID, and the delegators we could not follow (@4qrayq3j).
+
+    A delegated AID's authority is rooted in its delegator, so laboratory witnesses under the
+    delegator taint the delegate. The walk goes as far as this database reaches and no further:
+    nothing obliges a witness to hold key state for a delegator, so stopping early is the normal
+    outcome and is reported rather than papered over.
+    """
+    witnesses = []
+    unfollowed = []
+    seen = {state.i}
+    current = state
+    for _level in range(_MAX_DELEGATION_DEPTH):
+        witnesses.extend(current.b)
+        delegator = getattr(current, "di", "")
+        if not delegator:
+            return witnesses, unfollowed
+        if delegator in seen:
+            # Not reachable through valid KERI, which anchors a delegation in the delegator's own
+            # KEL and so cannot close a loop. Reachable through a corrupt store, and a read-only
+            # observer that hangs on one is worse than one that declines to answer the last hop.
+            return witnesses, unfollowed
+        seen.add(delegator)
+        upper = rdb.states.get(keys=delegator)
+        if upper is None:
+            unfollowed.append(delegator)
+            return witnesses, unfollowed
+        current = upper
+    # Depth exhausted. `current` was fetched on the last pass and its witnesses were never
+    # collected, so IT is the first level we failed to account for — naming its delegator instead
+    # would skip a whole witness set while claiming to say where we stopped.
+    unfollowed.append(current.i)
+    return witnesses, unfollowed
 
 
 def _declared_in(rdb, kind):

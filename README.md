@@ -31,6 +31,8 @@ docker build -t witness:dev .
 WITNESS_IMAGE=witness:dev uv run pytest tests/test_image_smoke.py
 ```
 
+`tests/test_doors.py` is the door census that `dev/standards/input-handling.md` asks for: an AST scan that fails if any boundary read in `src/witness` is neither inside a named door nor exempted with a written reason. It carries a `LAST_REVIEWED` date, because the scan catches a new call site by itself but only a person re-reading the exemptions catches one whose reason stopped being true.
+
 There is also a load oracle that measures what a flood of unanswerable queries costs the witness — slow, gated behind `WITNESS_LOAD`, and documented with its measured curve in [`docs/escrow-load.md`](docs/escrow-load.md).
 
 ## Running it
@@ -108,7 +110,7 @@ Both endpoints report a `source`, naming which of three places the answer came f
 
 The full reasoning, including the two carriers that were measured and rejected before this one, is in [`docs/decls.md`](docs/decls.md).
 
-An AID inherits tags from its witnesses, and `controller/{aid}` reports that under `tags`: `derived` is the union, `from` lists the witnesses this control plane can speak for, and `unresolved` lists the ones it cannot. That last member is not an omission. This control plane never calls out to peer witnesses — it reads one LMDB and nothing else — so a co-witness's tags are genuinely unknown to it, and saying so beats guessing. A caller who wants the whole picture asks each witness itself. The rule for combining them is monotone: one `testnet` witness is enough, no quorum of untagged ones excuses it, and a consumer that has once seen a witness tagged `testnet` should never clear that marking.
+An AID inherits tags from its witnesses — and, if it is delegated, from every level of its delegation chain, since a delegate's authority is rooted in its delegator. `controller/{aid}` reports that under `tags`: `derived` is the union, `from` lists the witnesses this control plane can speak for, `unresolved` lists the ones it cannot, and `unfollowed` names delegators whose key state this witness does not hold. The last two are different problems — an unresolved witness is somebody to go and ask, where an unfollowed delegator means there may be witness sets nobody here has seen. That last member is not an omission. This control plane never calls out to peer witnesses — it reads one LMDB and nothing else — so a co-witness's tags are genuinely unknown to it, and saying so beats guessing. A caller who wants the whole picture asks each witness itself. The rule for combining them is monotone: one `testnet` witness is enough, no quorum of untagged ones excuses it, and a consumer that has once seen a witness tagged `testnet` should never clear that marking.
 
 Health is worth a sentence. A witness whose loop has wedged still has a perfectly openable database, so a probe that only opens the database stays green through the failure that has actually happened. This one reports `degraded` and names the doer, but only once that doer has held the loop past five seconds: a sample catching the loop mid-doer is normal, and treating it as a wedge would make the probe a random alarm.
 
