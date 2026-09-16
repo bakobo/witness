@@ -612,7 +612,7 @@ class _FakeRdb:
             self.decls = _FakeStore(decls or {})
 
         class _Habs:
-            def getTopItemIter(inner):
+            def getTopItemIter(self):
                 if hab_pre is None:
                     return iter(())
                 return iter([(("k",), _FakeHab(mid=None, hid=hab_pre))])
@@ -772,3 +772,48 @@ class TestSeedFilePrecedence:
             head_dir_path=str(tmp_path / "absent"), decl_file=None,
         )
         assert WitnessReader(cfg).tags() == {"tags": [], "source": "operator-config"}
+
+
+def test_a_seed_file_that_is_not_utf8_declares_nothing_rather_than_failing(tmp_path):
+    """A UnicodeDecodeError is a ValueError, not an OSError, so it escaped the read guard.
+
+    An operator who copied a seed file through a tool that mangled the encoding would have got a
+    500 from the endpoint documented as always answering.
+    """
+    path = tmp_path / "decls.json"
+    path.write_bytes(b'{"tags": ["\xff\xfe invalid utf-8"]}')
+    cfg = ControlPlaneConfig(
+        name="nosuch", host="127.0.0.1", port=1, base="",
+        head_dir_path=str(tmp_path / "absent"), decl_file=str(path),
+    )
+    assert WitnessReader(cfg).tags() == {"tags": [], "source": "operator-config"}
+
+
+def test_a_controller_inherits_the_tags_the_endpoint_reports(tmp_path):
+    """The two readings of one question have to agree (@hjz7b7qo).
+
+    Before this, controller/{aid} derived inheritance from --tag alone, so a pooled witness
+    reported testnet on /v1/witness/tags while the AIDs it witnesses inherited nothing — which
+    defeats the feature for the case it was built for.
+    """
+    head = str(tmp_path / "seeded")
+    hby = habbing.Habery(
+        name="seeded", base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    wit = hby.makeHab(name="wit", transferable=False)
+    ctl_hby = habbing.Habery(name="ctlseed", base="", temp=True, bran="0987654321kjihgfedcba")
+    ctl = ctl_hby.makeHab(name="ctl", transferable=True, wits=[wit.pre], toad=1)
+    wit.psr.parse(bytearray(ctl.msgOwnInception(framed=True)))
+    ctl_hby.close()
+    hby.close()
+
+    seed = tmp_path / "decls.json"
+    seed.write_text('{"tags": ["testnet"]}')
+    cfg = ControlPlaneConfig(
+        name="seeded", host="127.0.0.1", port=1, base="", head_dir_path=head,
+        decl_file=str(seed),
+    )
+    subject = WitnessReader(cfg)
+
+    assert subject.tags()["source"] == "seed-file"
+    assert subject.controller(ctl.pre)["tags"]["derived"] == ["testnet"]

@@ -341,6 +341,26 @@ class TestSeedDoor:
             decls.from_seed('{"taggs": ["testnet"]}')
         assert "taggs" in str(caught.value)
 
+    def test_a_repeated_member_is_refused(self):
+        """json.loads would keep the last silently; attribs_from_operator refuses the same
+        mistake on argv, so the two doors would otherwise disagree about a stated invariant."""
+        with pytest.raises(InvalidArguments) as caught:
+            decls.from_seed('{"tags": ["testnet"], "tags": ["bakobo.pool"]}')
+        assert "tags" in str(caught.value)
+        assert "more than once" in str(caught.value)
+
+    def test_a_repeated_attrib_key_is_refused(self):
+        with pytest.raises(InvalidArguments) as caught:
+            decls.from_seed('{"attribs": {"pool": "a", "pool": "b"}}')
+        assert "pool" in str(caught.value)
+
+    def test_an_explicit_null_is_malformed_rather_than_absent(self):
+        """A null is a value someone wrote, not a member they left out, so it fails the shape."""
+        with pytest.raises(InvalidArguments):
+            decls.from_seed('{"tags": null}')
+        with pytest.raises(InvalidArguments):
+            decls.from_seed('{"attribs": null}')
+
     def test_the_vocabulary_applies_exactly_as_it_does_on_the_command_line(self):
         with pytest.raises(InvalidArguments) as caught:
             decls.from_seed('{"tags": ["testnetz"]}')

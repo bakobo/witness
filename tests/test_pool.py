@@ -40,12 +40,17 @@ class FakeDocker:
 
     def __init__(self, script=None, fails=()):
         self.calls = []
+        #: The argv lists as passed, not just joined. Recovering an argument by splitting the
+        #: joined string breaks the moment a command grows a second JSON payload, which is what
+        #: happened when the declaration seed joined the config seed in one container.
+        self.argvs = []
         self._script = script or {}
         self._fails = set(fails)
 
     def __call__(self, args, *, check=True, timeout=None):
         joined = " ".join(args)
         self.calls.append(joined)
+        self.argvs.append(list(args))
         for fragment in self._fails:
             if fragment in joined:
                 raise DockerUnavailable(f"Docker refused: {fragment}.")
@@ -56,6 +61,9 @@ class FakeDocker:
 
     def matching(self, fragment):
         return [call for call in self.calls if fragment in call]
+
+    def matching_argv(self, fragment):
+        return [argv for argv in self.argvs if fragment in " ".join(argv)]
 
 
 class FakeFetch:
@@ -144,8 +152,8 @@ class TestUp:
         pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=1)
         pool.run()
 
-        seeded = docker.matching("configing")[0]
-        payload = json.loads(seeded.rsplit(" ", 1)[-1])
+        seeded = docker.matching_argv("configing")[0]
+        payload = json.loads(seeded[-3])
         assert payload == {
             "witness": {
                 "dt": "2026-09-11T00:00:00.000000+00:00",
@@ -659,6 +667,20 @@ class TestDeclarationSeed:
             assert "bakobo.pool" in call
             assert '"pool": "lab"' in call or '"pool":"lab"' in call
 
+    def test_the_seed_rides_the_container_that_already_seeds_the_config(self):
+        """@hjz7b7qo says one container does both, so assert that rather than trusting the note.
+
+        An earlier draft launched a second `docker run` per witness, which contradicted the node
+        and paid an image startup for nothing.
+        """
+        docker = FakeDocker(script={"ps -a": ""})
+        pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=2)
+        pool.run()
+
+        assert len(docker.matching("decls.json")) == 2
+        for call in docker.matching("decls.json"):
+            assert "configing" in call, "the declarations ride the config seeding container"
+
     def test_the_seed_is_written_before_the_witness_starts(self):
         """A witness that came up first would answer with no declarations for a moment, and an
         operator sampling it then would be told the wrong thing."""
@@ -679,8 +701,7 @@ class TestDeclarationSeed:
         pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=1)
         pool.run()
 
-        call = docker.matching("decls.json")[0]
-        payload = call[call.index("{"):call.rindex("}") + 1]
-        seed = decls.from_seed(payload)
+        seeded = docker.matching_argv("decls.json")[0]
+        seed = decls.from_seed(seeded[-1])
         assert decls.TESTNET in seed.tags
         assert seed.attribs["pool"] == "lab"

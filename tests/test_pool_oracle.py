@@ -121,6 +121,37 @@ def test_a_pool_comes_up_resolves_and_goes_away_completely(pool):
             "seeded was not read"
         )
 
+        # The same claim for the declaration seed (@hjz7b7qo), and it needs a real image to
+        # settle: the unit tests assert what the pool asks docker to do, which says nothing about
+        # whether the file lands at a path the control plane reads, with permissions it can read
+        # under, in an image whose command it never sees. A wrong path would ship pooled witnesses
+        # silently unmarked with every unit test green.
+        with urllib.request.urlopen(  # noqa: S310
+            f"{witness['control']}v1/witness/tags", timeout=20
+        ) as answer:
+            claimed = json.loads(answer.read().decode())
+        assert claimed["source"] == "seed-file", (
+            "the control plane did not read the declaration seed the pool wrote into the volume"
+        )
+        assert "testnet" in claimed["tags"], "a pool is laboratory infrastructure and must say so"
+
+        with urllib.request.urlopen(  # noqa: S310
+            f"{witness['control']}v1/witness/attribs", timeout=20
+        ) as answer:
+            published = json.loads(answer.read().decode())
+        assert published["attribs"]["pool"] == name
+
+        # And the inheritance the feature exists for: the witness's own tags reach the AIDs it
+        # witnesses, through the endpoint a consumer would ask.
+        with urllib.request.urlopen(  # noqa: S310
+            f"{witness['control']}v1/witness/controller/{witness['aid']}", timeout=20
+        ) as answer:
+            held = json.loads(answer.read().decode())
+        assert "testnet" in held["tags"]["derived"], (
+            "a witness that declares testnet must taint what it witnesses, or the derivation is "
+            "only true in unit tests"
+        )
+
     _run("down", name)
     assert _names(name) == [] and _volumes(name) == [], "down must leave nothing behind"
 

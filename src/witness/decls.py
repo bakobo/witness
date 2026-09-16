@@ -217,6 +217,24 @@ def _admit_attribs(mapping):
     }
 
 
+class _DuplicateMember(ValueError):
+    """Raised through json.loads when an object repeats a member name."""
+
+    def __init__(self, member):
+        super().__init__(member)
+        self.member = member
+
+
+def _no_duplicate_members(pairs):
+    """An ``object_pairs_hook`` that refuses a repeated member instead of keeping the last."""
+    seen = {}
+    for key, value in pairs:
+        if key in seen:
+            raise _DuplicateMember(key)
+        seen[key] = value
+    return seen
+
+
 @dataclass(frozen=True)
 class Seed:
     """What a seed file declares. Empty members mean "declared nothing", never an error."""
@@ -236,7 +254,15 @@ def from_seed(text):
             f"A declaration seed may be at most {MAX_SEED_BYTES} bytes, but one was {len(text)}."
         )
     try:
-        document = json.loads(text)
+        document = json.loads(text, object_pairs_hook=_no_duplicate_members)
+    except _DuplicateMember as exc:
+        # attribs_from_operator refuses a repeated key rather than letting argv order decide;
+        # json.loads would silently collapse the same mistake to last-one-wins, so the two doors
+        # would disagree about an invariant one of them states explicitly.
+        raise InvalidArguments(
+            f"The member {exc.member!r} appears more than once in the declaration seed, and "
+            "which one wins would otherwise depend on the order they are written in."
+        ) from None
     except ValueError:
         raise InvalidArguments(
             "A declaration seed must be JSON, and this one could not be parsed."
@@ -251,18 +277,17 @@ def from_seed(text):
                 f"{member!r} is not something a declaration seed can carry. It holds "
                 f"{' and '.join(_SEED_MEMBERS)}."
             )
-    tags = document.get("tags")
-    if tags is not None and not isinstance(tags, list):
+    # Membership rather than .get(): an explicit null is a malformed value, not an absent
+    # member, and collapsing the two would let {"tags": null} pass as "declared nothing".
+    tags = document["tags"] if "tags" in document else []
+    if not isinstance(tags, list):
         raise InvalidArguments("The tags member of a declaration seed must be a list of names.")
-    attribs = document.get("attribs")
-    if attribs is not None and not isinstance(attribs, dict):
+    attribs = document["attribs"] if "attribs" in document else {}
+    if not isinstance(attribs, dict):
         raise InvalidArguments(
             "The attribs member of a declaration seed must be an object of key to value."
         )
-    return Seed(
-        tags=tags_from_operator(tags),
-        attribs=_admit_attribs(attribs or {}),
-    )
+    return Seed(tags=tags_from_operator(tags), attribs=_admit_attribs(attribs))
 
 
 def derive(witnesses, known):

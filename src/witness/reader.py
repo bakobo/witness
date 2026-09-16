@@ -271,15 +271,8 @@ class WitnessReader:
         thing a third party can actually verify; configuration is what a witness has to say for
         itself before it has said anything on the wire.
         """
-        record = self._declared("tags")
-        if record is not None:
-            return {"tags": list(record.tags), "source": "signed-reply"}
-        if self._config.tags:
-            return {"tags": list(self._config.tags), "source": "operator-config"}
-        seeded = self._seeded()
-        if seeded is not None and seeded.tags:
-            return {"tags": list(seeded.tags), "source": "seed-file"}
-        return {"tags": [], "source": "operator-config"}
+        tags, source = self._effective_tags()
+        return {"tags": list(tags), "source": source}
 
     def attribs(self) -> dict:
         """What this witness publishes for a person to read, rather than for software to act on.
@@ -317,14 +310,38 @@ class WitnessReader:
         try:
             with open(path, encoding="utf-8") as handle:
                 text = handle.read(_decls.MAX_SEED_BYTES + 1)
-        except OSError:
+        except (OSError, UnicodeError):
+            # UnicodeError as well as OSError: bytes that are not UTF-8 raise during read, and a
+            # UnicodeDecodeError is a ValueError rather than an OSError, so it would otherwise
+            # escape and turn a malformed file into a 500 — the opposite of what this promises.
             return None
         try:
             return _decls.from_seed(text)
         except WitnessError:
             return None
 
-    def _declared(self, kind):
+    def _effective_tags(self, rdb=None):
+        """The tags this witness effectively claims, and where they came from.
+
+        One place, because the alternative is what shipped in an earlier draft of this branch:
+        /v1/witness/tags applied the full precedence while controller/{aid} read the flag alone,
+        so a pooled witness declared `testnet` on one endpoint and the AIDs it witnessed inherited
+        nothing on the other. Two readings of the same question have to come from one function.
+
+        ``rdb`` lets a caller that already has the database open lend it, so answering inside
+        controller() costs no second open.
+        """
+        record = self._declared("tags", rdb=rdb)
+        if record is not None:
+            return tuple(record.tags), "signed-reply"
+        if self._config.tags:
+            return tuple(self._config.tags), "operator-config"
+        seeded = self._seeded()
+        if seeded is not None and seeded.tags:
+            return tuple(seeded.tags), "seed-file"
+        return (), "operator-config"
+
+    def _declared(self, kind, rdb=None):
         """This witness's own signed declaration of ``kind``, or None if there is not one.
 
         Four different absences collapse to None on purpose, because they call for the same
@@ -338,23 +355,19 @@ class WitnessReader:
         None of the four is an error. A witness whose declarations are still operator
         configuration is in a normal state, not a degraded one.
         """
+        if rdb is not None:
+            return _declared_in(rdb, kind)
         try:
-            rdb = self._open()
+            opened = self._open()
         except WitnessError:
             return None
         try:
-            store = getattr(rdb, "decls", None)  # ~4ky2 — dormant until the keripy pin moves
-            if store is None:
-                return None
-            hab = _select_witness_hab(rdb.habs.getTopItemIter())
-            if hab is None:
-                return None
-            return store.get(keys=(hab.hid, kind))
+            return _declared_in(opened, kind)
         finally:
-            rdb.close()
+            opened.close()
 
     def _own_tags(self, rdb):
-        """``{our own witness AID: our tags}``, or empty when we cannot identify ourselves.
+        """``{our own witness AID: the tags we effectively claim}``, or empty if we cannot say.
 
         Empty rather than raising. This feeds a member added to an endpoint that already worked,
         and a keystore we cannot make sense of should cost the caller the tag derivation, not the
@@ -363,7 +376,8 @@ class WitnessReader:
         hab = _select_witness_hab(rdb.habs.getTopItemIter())
         if hab is None:
             return {}
-        return {hab.hid: self._config.tags}
+        tags, _source = self._effective_tags(rdb=rdb)
+        return {hab.hid: tags}
 
     def controller(self, aid) -> dict:
         """One controller's current key state, or a 404 if this witness does not hold it."""
@@ -415,6 +429,21 @@ class WitnessReader:
             return {"aid": hab.hid, "alias": hab.name}
         finally:
             rdb.close()
+
+
+def _declared_in(rdb, kind):
+    """Read one signed declaration out of an already-open database, or None.
+
+    Read through ``getattr`` for the same reason escrow() does — a keripy without the decl reply
+    routes has no such store, and assuming one would fail rather than fall back.
+    """
+    store = getattr(rdb, "decls", None)  # ~4ky2
+    if store is None:
+        return None
+    hab = _select_witness_hab(rdb.habs.getTopItemIter())
+    if hab is None:
+        return None
+    return store.get(keys=(hab.hid, kind))
 
 
 def _classify_open_failure(exc):
