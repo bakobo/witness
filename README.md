@@ -31,6 +31,8 @@ docker build -t witness:dev .
 WITNESS_IMAGE=witness:dev uv run pytest tests/test_image_smoke.py
 ```
 
+`tests/test_doors.py` is the door census that `dev/standards/input-handling.md` asks for: an AST scan that fails if any boundary read in `src/witness` is neither inside a named door nor exempted with a written reason. It carries a `LAST_REVIEWED` date, because the scan catches a new call site by itself but only a person re-reading the exemptions catches one whose reason stopped being true.
+
 There is also a load oracle that measures what a flood of unanswerable queries costs the witness — slow, gated behind `WITNESS_LOAD`, and documented with its measured curve in [`docs/escrow-load.md`](docs/escrow-load.md).
 
 ## Running it

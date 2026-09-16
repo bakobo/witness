@@ -69,4 +69,3 @@ The walk goes as far as the local database reaches and stops. Nothing obliges a 
 ## What is not built
 
 - **Nothing declares automatically outside a pool.** A production witness says nothing about itself until an operator gives it `--tag`, `--attrib` or a seed file, which is correct: absence is not assurance, and a witness that declared something by default would be declaring something nobody chose.
-- **A door census** (`~4v2j`). The declaration doors are bounded; nothing yet proves the repo's set of doors is complete.

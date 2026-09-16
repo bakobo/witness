@@ -208,6 +208,33 @@ Operator layer over a stock keripy witness = goal:
                 too late to be useful. Accepted tradeoff: one extra generator frame per doer per
                 pass, and a wrapper whose correctness the witness now depends on.
 
+    Input completeness is enforced by a door census  with a review date = decision:
+      id: bb3yndtf
+      why: >
+        dev/standards/input-handling.md asks every repo that handles input to carry ONE test
+        enumerating the primitives that bring bytes across a boundary and assert each call site
+        sits inside a named door or is exempted with a written reason. This repo had doors and no
+        census, so nothing established the set was complete — which the standard names as the part
+        that decays, because a new call site that reads a file directly does not look wrong when
+        you write it.
+        Built as an AST scan over src/witness rather than a grep or a review checklist, matching
+        the pattern Bakobo already runs in the alias quarantine and the untrusted-output filter. It
+        fails in BOTH directions: an unlisted crossing fails it, and a listed entry that no longer
+        matches any crossing fails it too, so the inventory cannot rot into a description of code
+        that has gone. The scan is itself tested against planted source, because a census that
+        silently found nothing would pass just as quietly as a correct one.
+        A LAST_REVIEWED date sits beside the inventory. The census catches a new call site by
+        itself; what it cannot catch is an exemption whose REASON quietly stopped being true, and
+        only a person re-reading them catches that. Recorded rather than enforced: the date is
+        asserted to parse and to not be in the future, and staleness does not fail the build.
+        Rejected failing on age, which would invent a review cadence nobody has chosen and would
+        be satisfied by bumping a constant rather than by reading anything.
+        Rejected a minimum length on exemption reasons, which a first draft had. The shortest
+        reason here — that a call writes rather than reads — tripped it while being complete, and
+        a length bar cannot distinguish a padded sentence from a substantial one, so it teaches
+        padding. Accepted tradeoff: the census proves accounting, not correctness. An exemption can
+        be wrong, and only the review date says when anyone last looked.
+
     keripy stays an unforked upstream-tracking dependency = decision:
       id: w7c4mz
       why: >
