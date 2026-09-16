@@ -280,20 +280,17 @@ def test_a_database_ahead_of_the_library_raises_configurationerror(tmp_path):
     assert not isinstance(caught.value, kering.DatabaseError)
 
 
-def test_the_pinned_keripy_has_no_decl_stores_yet():
-    """Pins the fact the control plane's fallback depends on (@vqqh6zdk).
+def test_the_pinned_keripy_carries_the_decl_stores():
+    """The stores witness.reader reads declarations out of (@vqqh6zdk).
 
-    witness.reader reads declarations through getattr rather than assuming db.decls exists,
-    because the pinned keripy predates the /decl reply routes -- they are proposed upstream, not
-    merged. When the pin moves to a keripy that carries them this test fails, which is the signal
-    that the signed-declaration path has gone live and that the control plane's `source` member
-    can start reporting signed-reply against a real witness rather than only in unit tests.
+    Read through getattr in reader._declared rather than assumed, because these arrived with the
+    pin bump to 173678c0 and the routes behind them are proposed upstream rather than merged. If
+    a later bump lands a renamed version of this feature, this fails here instead of silently
+    turning every witness back into operator-config.
     """
     db = basing.Baser(name="declcontract" + os.urandom(4).hex(), temp=True, reopen=True)
     try:
-        assert not hasattr(db, "decls"), (
-            "the keripy pin now carries decl stores; bump @vqqh6zdk's second increment and "
-            "delete this test"
-        )
+        assert hasattr(db, "decls"), "the decl record store is gone; reader._declared reads it"
+        assert hasattr(db, "dans"), "the decl authorization index is gone"
     finally:
         db.close(clear=True)

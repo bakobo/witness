@@ -684,3 +684,34 @@ class TestSignedDeclarations:
         )
         answer = WitnessReader(cfg).tags()
         assert answer == {"tags": ["testnet"], "source": "operator-config"}
+
+
+def test_a_real_signed_declaration_is_what_the_endpoint_serves(tmp_path):
+    """End to end against a genuine witness database, now that the pin carries the decl routes.
+
+    Everything above this stubs the store, which proves the branching and proves nothing about
+    keripy. This builds a real witness, has it declare itself test infrastructure through keripy's
+    own reply machinery, and then reads it back the way the control plane does -- so the claim
+    that /v1/witness/tags reports what a witness actually published rests on a witness actually
+    publishing it.
+    """
+    head = str(tmp_path / "declaring")
+    hby = habbing.Habery(
+        name="declaring", base="", temp=False, headDirPath=head, bran="abcdefghijk1234567890"
+    )
+    hab = hby.makeHab(name="wit", transferable=False)
+    hab.psr.parse(bytearray(hab.makeDeclTags(tags=["testnet"])))
+    hab.psr.parse(bytearray(hab.makeDeclAttribs(attribs={"operator": "Bakobo"})))
+    hby.close()
+
+    # Operator configuration deliberately disagrees, so the assertion shows which one wins.
+    cfg = ControlPlaneConfig(
+        name="declaring", host="127.0.0.1", port=1, base="", head_dir_path=head,
+        tags=("bakobo.pool",), attribs={"operator": "someone else"},
+    )
+    subject = WitnessReader(cfg)
+
+    assert subject.tags() == {"tags": ["testnet"], "source": "signed-reply"}
+    assert subject.attribs() == {
+        "attribs": {"operator": "Bakobo"}, "source": "signed-reply",
+    }
