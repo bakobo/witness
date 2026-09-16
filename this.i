@@ -373,6 +373,40 @@ Operator layer over a stock keripy witness = goal:
                 creator-indexed class, and a consumer with no history sees only today's claim. The
                 derivation function is therefore pure and the caller owns persistence.
 
+            Attributes are a separate map that no AID inherits = decision:
+              id: e4ceoopg
+              why: >
+                @k3tkkss2 said a tag needing a value would arrive as a separate member rather than
+                by stringly-typing the name, and this is that member: `attributes`, a map of key to
+                value, alongside `tags`. The line between them is not mutability but whether a
+                consumer DECIDES on the value or merely DISPLAYS it. A consumer acts on `testnet`,
+                so it must be a predicate with agreed semantics; a consumer shows a human
+                `operator` or `contact`, and should act on neither.
+                The decisive reason they cannot be one thing is that union is defined for names and
+                undefined for pairs. Tag inheritance is a union over an AID's witness set — any
+                witness tagged testnet taints the AID, monotonically and obviously. Three witnesses
+                reporting region=eu, region=us and region=ap have no natural merge, and every
+                artificial one is a rule somebody must agree to. So attributes are deliberately NOT
+                inherited: controller/{aid} carries derived tags and no attributes at all, and a
+                test asserts that absence so the omission stays a decision rather than decaying
+                into an oversight. The second reason is evidential — @pmtzkn6j accepts `testnet`
+                because it is a claim against the witness's own interest, and no valued attribute
+                has that property, so a self-reported region is worth exactly what a self-reported
+                `production` would have been.
+                Rejected folding both into one noun. The signed reply routes of @vqqh6zdk's second
+                increment want to be separate, because BADA orders each route independently and
+                tags change almost never while a contact address changes often: one route would
+                mean re-signing and re-timestamping the testnet assertion to correct a typo in an
+                email address. Two nouns keep the local surface isomorphic to the protocol surface.
+                Accepted tradeoff: a consumer that wants both makes two requests.
+                Keys follow the same rule as tag names — bare keys are a defined vocabulary
+                (operator, contact, pool), a dotted vendor prefix is anyone's to mint — so a key is
+                exactly as interoperable as a tag name is. Values are printable ASCII, non-empty,
+                at most 256 characters. Deliberately not Unicode: this is a field a human reads off
+                a screen, which makes it a homograph and bidi spoofing surface, and a field nobody
+                is permitted to decide on loses little by being restricted. Rejected allowing empty
+                values, since a key with no value says less than the key's absence does.
+
             The read surface gains a tenth noun and controller/{aid} gains a tags member = decision:
               id: nlunqygr
               why: >
