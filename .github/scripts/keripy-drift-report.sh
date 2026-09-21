@@ -23,8 +23,32 @@
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY}"
-FORK_ONLY_COMMITS="$(cat fork-only-commits.txt 2>/dev/null || echo '  (none recorded)')"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+
+# The measuring job's findings, which are UNTRUSTED DATA: upstream code ran in the job that
+# produced them. They are quoted into prose and never evaluated, and they live outside the
+# workspace so that nothing in them can be mistaken for code to run. Defaults to the working
+# directory so the script can still be exercised by hand.
+FINDINGS_DIR="${FINDINGS_DIR:-.}"
+SUITE_LOG="${FINDINGS_DIR}/suite.log"
+FORK_ONLY_COMMITS="$(cat "${FINDINGS_DIR}/fork-only-commits.txt" 2>/dev/null || echo '  (none recorded)')"
+
+# `grep` exits 1 on no match, which under `pipefail` is indistinguishable from a failed read
+# unless the file is checked separately — so a drift run whose failures do not happen to start
+# with FAILED or ERROR would claim the log was unavailable. Distinguish the three cases.
+suite_failures() {
+    local found
+    if [ ! -f "$SUITE_LOG" ]; then
+        echo "(the test log did not reach this job — see the run log)"
+        return 0
+    fi
+    found=$(grep -E '^(FAILED|ERROR)' "$SUITE_LOG" | sed -n '1,20p') || true
+    if [ -n "$found" ]; then
+        printf '%s\n' "$found"
+    else
+        echo "(no FAILED/ERROR lines in the log — see the run log)"
+    fi
+}
 if [ -n "${TRACKING_PR:-}" ]; then
     PR_REF="${UPSTREAM}#${TRACKING_PR}"
 else
@@ -76,6 +100,14 @@ for rc in "${SUITE_RC:-}" "${LANDED_RC:-}"; do
 done
 
 inconclusive=0
+# The measuring job's own verdict, passed explicitly rather than inferred from which outputs
+# happen to be empty. `TRACKING_PR` is legitimately empty when no PR exists, so absence is a
+# genuinely ambiguous signal here and guessing from it is how a job ends up reporting a
+# conclusion nobody measured.
+case "${MEASURE_RESULT:-success}" in
+success) ;;
+*) inconclusive=1 ;;
+esac
 if [ -z "${PINNED:-}" ] || [ "$suite_verdict" = absent ] || [ "$suite_verdict" = unmeasured ]; then
     inconclusive=1
 fi
@@ -123,6 +155,7 @@ if [ "$inconclusive" = 1 ]; then
         echo "No issue was filed, deliberately: there is nothing yet to say."
         echo
         echo "\`\`\`"
+        echo "measure job  : ${MEASURE_RESULT:-<unknown>}"
         echo "pinned       : ${PINNED:-<unread>}"
         echo "suite exit   : ${SUITE_RC:-<never ran>}  (${suite_verdict})"
         echo "inverse exit : ${LANDED_RC:-<never ran>}  (${landed_verdict})"
@@ -237,7 +270,7 @@ week they did not all pass. Something upstream moved.
 Failures:
 
 \`\`\`
-$(grep -E '^(FAILED|ERROR)' suite.log 2>/dev/null | head -20 || echo 'see the run log')
+$(suite_failures)
 \`\`\`
 
 ## Is anything broken *now*?
