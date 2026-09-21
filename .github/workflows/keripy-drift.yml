@@ -327,23 +327,34 @@ jobs:
           name: keripy-drift-findings
           path: ${{ runner.temp }}/findings
 
-      # Accept exactly two regular files and nothing else. A symlink in the archive would let the
-      # untrusted side choose what the trusted side reads; an unexpected entry means the artifact
-      # is not what this job was promised, and a promise that can be broken silently is not one.
+      # Accept exactly two regular files, of a sane size, and nothing else. A symlink in the
+      # archive would let the untrusted side choose what the trusted side reads; an unexpected
+      # entry means the artifact is not what this job was promised, and a promise that can be
+      # broken silently is not one. The size bound matters for the same reason the others do:
+      # an artifact-sized findings file would exhaust this job before it could say anything,
+      # which is a way of silencing the canary using the canary's own trust boundary. Sixteen
+      # megabytes is thousands of times any real output of these two commands.
       - name: Take only the two data files, and only if they are data
         env:
           FINDINGS_DIR: ${{ runner.temp }}/findings
+          MAX_BYTES: "16777216"
         run: |
           set -euo pipefail
           mkdir -p "$FINDINGS_DIR"
           find "$FINDINGS_DIR" -mindepth 1 ! -name suite.log ! -name fork-only-commits.txt -delete
           for f in suite.log fork-only-commits.txt; do
             p="$FINDINGS_DIR/$f"
-            if [ -e "$p" ] && { [ -L "$p" ] || [ ! -f "$p" ]; }; then
+            [ -e "$p" ] || continue
+            if [ -L "$p" ] || [ ! -f "$p" ]; then
               echo "::warning::[e.self.corrupt.f] The findings artifact offered ${f} as something" \
                 "other than a regular file. Discarding it; the report will say that part was not" \
                 "measured rather than read it."
               rm -rf "$p"
+            elif [ "$(stat -c %s "$p")" -gt "$MAX_BYTES" ]; then
+              echo "::warning::[e.self.corrupt.f] The findings artifact offered ${f} at" \
+                "$(stat -c %s "$p") bytes, past the ${MAX_BYTES} this job will read. Discarding" \
+                "it; the report will say that part was not measured rather than read it."
+              rm -f "$p"
             fi
           done
           ls -la "$FINDINGS_DIR"

@@ -31,7 +31,38 @@ SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 # directory so the script can still be exercised by hand.
 FINDINGS_DIR="${FINDINGS_DIR:-.}"
 SUITE_LOG="${FINDINGS_DIR}/suite.log"
-FORK_ONLY_COMMITS="$(cat "${FINDINGS_DIR}/fork-only-commits.txt" 2>/dev/null || echo '  (none recorded)')"
+COMMITS_FILE="${FINDINGS_DIR}/fork-only-commits.txt"
+
+# Render untrusted text so that it cannot BE anything except text.
+#
+# Both findings files are attacker-controlled under this job's threat model, and they are
+# interpolated into an issue body that a bot with `issues: write` then publishes. Without this,
+# a single backtick fence in suite.log closes the code block it is printed inside, and
+# fork-only-commits.txt was being dropped into Markdown with no fence at all — so upstream code
+# could have our bot publish headings, links, images, @mentions, or a counterfeit conclusion
+# under its own trusted identity. That is not code execution and it is still a route from
+# upstream to attacker-chosen writes, and it attacks the one thing this rewrite is FOR: a
+# reader who can believe what the issue says.
+#
+# So: backticks deleted, since one of them is the whole fence-escape; control characters
+# deleted, keeping tab and newline; lines capped, because the reader needs twenty and an
+# attacker would prefer a million; and each line truncated, because one long line is a scroll
+# bar rather than a report.
+quote_untrusted() {
+    LC_ALL=C tr -d '\000-\010\013\014\016-\037\140' | sed -n "1,${1}p" | cut -c1-200
+}
+
+# Read a bounded prefix, never the whole file. `cat` of an artifact-sized findings file would
+# put it in shell memory and could exhaust the report job before it says anything at all —
+# which would silence the canary using the canary's own trust boundary.
+read_bounded() {
+    head -c 262144 "$1" 2>/dev/null || true
+}
+
+if [ -f "$COMMITS_FILE" ]; then
+    FORK_ONLY_COMMITS="$(read_bounded "$COMMITS_FILE" | quote_untrusted 50)"
+fi
+[ -n "${FORK_ONLY_COMMITS:-}" ] || FORK_ONLY_COMMITS="(none recorded)"
 
 # `grep` exits 1 on no match, which under `pipefail` is indistinguishable from a failed read
 # unless the file is checked separately — so a drift run whose failures do not happen to start
@@ -42,7 +73,7 @@ suite_failures() {
         echo "(the test log did not reach this job — see the run log)"
         return 0
     fi
-    found=$(grep -E '^(FAILED|ERROR)' "$SUITE_LOG" | sed -n '1,20p') || true
+    found=$(read_bounded "$SUITE_LOG" | grep -E '^(FAILED|ERROR)' | quote_untrusted 20) || true
     if [ -n "$found" ]; then
         printf '%s\n' "$found"
     else
@@ -185,7 +216,9 @@ thinking about it, witness quietly becomes a project that depends on a private f
 
 Commits we carry that \`${UPSTREAM}\` does not:
 
+\`\`\`
 ${FORK_ONLY_COMMITS}
+\`\`\`
 
 ## Is anything broken?
 
