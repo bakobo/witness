@@ -198,7 +198,12 @@ def baseline_volume():
 
     The keystore matters as much as the database here: `kli init` runs from the baseline, so the
     stores this image inherits are in every respect the ones the deployed version wrote.
+
+    The premise is checked BEFORE the volume is built, not in the test body afterwards. A
+    misconfigured baseline would otherwise create a volume and run `kli init` in a container before
+    anything noticed, which is a slow way to reach a message that needed no containers at all.
     """
+    _two_images_or_fail()
     yield from _volume_for(BASELINE)
 
 
@@ -305,7 +310,6 @@ def test_this_image_takes_over_a_volume_the_deployed_one_wrote(baseline_volume):
     state, and accept a FURTHER event. The last clause is again the one with teeth: holding the
     history proves storage, receipting a new event proves the signing keys came across too.
     """
-    _two_images_or_fail()
     _same_pin_or_skip()
     name, containers = baseline_volume
     old, new = f"{name}-old", f"{name}-new"
@@ -341,7 +345,6 @@ def test_the_deployed_image_takes_the_volume_back(baseline_volume):
     anything the previous one cannot read, and the harm from discovering that during an incident
     is that the escape hatch is the thing that is broken.
     """
-    _two_images_or_fail()
     _same_pin_or_skip()
     name, containers = baseline_volume
     new, back = f"{name}-new", f"{name}-back"
