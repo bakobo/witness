@@ -1,15 +1,36 @@
-name: keripy drift canary
+name: keripy drift canary — not a broken build; read the issue it files
 
 # The half of w7c4mz's bargain that did not exist yet.
 #
 # w7c4mz accepts riding semi-internal keripy accessors unforked, on the strength of a commit pin
 # plus contract tests. Together those catch drift — but only at the moment somebody bumps the pin,
 # which could be months after upstream moved and long after the cheap time to react. This job runs
-# the suite against keripy `main` on a schedule so drift surfaces while it is still small.
+# the suite against upstream keripy on a schedule so drift surfaces while it is still small.
 #
-# A FAILURE HERE IS NOT A BROKEN BUILD. It means upstream moved under us. Nothing on main is
-# affected: the pin is unchanged and ci.yml still gates every push. Read the failure, then decide
-# whether to follow keripy or record why not.
+# A FAILURE HERE IS NOT A BROKEN BUILD. Nothing on main is affected: the pin is unchanged and
+# ci.yml still gates every push.
+#
+# The job answers three separate questions and says which one it is unhappy about (@7enojuyn);
+# before 2026-09-21 it answered all three with one exit code, and the resulting failure took a
+# research session to interpret. Every outcome writes a plain-language paragraph to the job
+# summary, to an annotation, and — for anything actionable — to a GitHub issue, because an issue
+# body is the only channel here whose full text reaches a mailbox.
+#
+#   1. Is the pin fork-only, and if so does an open upstream PR carry it home? @enyp5khx says a
+#      fork-only pin is legitimate exactly while such a PR exists. No PR, red build.
+#   2. Has upstream moved under the accessors we ride? That is the original question. Tests marked
+#      fork_only_keripy are deselected first, since they cannot pass upstream by construction.
+#   3. Have the fork-only features landed upstream? Measured by running ONLY the marked tests
+#      against upstream and expecting them to FAIL. If they pass, it is time to re-pin (tick 4ky2).
+#
+# TWO JOBS, AND THE SPLIT IS A SECURITY BOUNDARY RATHER THAN TIDINESS. `measure` deliberately
+# resolves and executes UNPINNED upstream code — that is the whole point of a canary — so
+# `uv sync` runs arbitrary build hooks and pytest imports arbitrary modules from a repository
+# nobody here controls. It therefore holds a read-only token and can write nothing. `report`
+# holds `issues: write`, and never runs a line of upstream code: it takes a fresh checkout and
+# reads the previous job's findings as an artifact. Running both in one job meant a compromised
+# upstream could overwrite the report script in the workspace and have the workflow execute it
+# moments later with a write-capable token.
 
 on:
   schedule:
@@ -19,25 +40,189 @@ on:
 permissions:
   contents: read
 
+env:
+  UPSTREAM: WebOfTrust/keripy
+  FORK: bakobo/keripy
+  # Titles are the dedup key, so they are fixed strings and not composed from run data.
+  UNTRACKED_TITLE: "keripy pin: fork-only commits with no upstream PR carrying them home"
+  DRIFT_TITLE: "keripy drift: upstream has moved under the accessors witness rides"
+  LANDED_TITLE: "keripy pin: our fork-only commits have landed upstream — time to re-pin"
+
 jobs:
-  drift:
+  measure:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # Read-only on purpose: this job runs upstream keripy's code.
+    outputs:
+      pin: ${{ steps.pin.outputs.sha }}
+      upstream_head: ${{ steps.locate.outputs.upstream_head }}
+      fork_only: ${{ steps.locate.outputs.fork_only }}
+      tracking_pr: ${{ steps.track.outputs.pr }}
+      tracking_known: ${{ steps.track.outputs.known }}
+      suite_rc: ${{ steps.suite.outputs.rc }}
+      landed_rc: ${{ steps.landed.outputs.rc }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # An override rather than an edit to the keri line. When heti was a dependency this was
-      # load-bearing — heti pinned keripy too, so repointing only witness's pin made the two
-      # disagree and the job failed on resolution rather than on drift (@f5j3wc, now dissolved).
-      # Kept as an override anyway: it leaves pyproject.toml's pin untouched, so the diff this
-      # job produces is about keripy's main and never about the file it edited to look there.
-      - name: Repoint keripy at main
+      # Read the pin from the committed file, never from the working tree: the next step edits
+      # pyproject.toml, and a measurement of our own edit is worth nothing.
+      - name: Read the keripy pin
+        id: pin
         run: |
-          cat >> pyproject.toml <<'EOF'
+          set -euo pipefail
+          # Anchored to the WHOLE quoted dependency value, and exactly 40 hex. A pattern with a
+          # trailing `.*` matched the first 40 characters of `keripy@<40hex>oops` and reported
+          # them as the pin, so the canary would have measured one commit while uv resolved
+          # another — the failure mode this job exists to prevent, inside the job itself. Two
+          # lines out means two `keri` deps, which is also a pin we cannot name; both fail closed.
+          pinned=$(git show HEAD:pyproject.toml |
+            sed -n 's|^[[:space:]]*"keri @ git+https://github.com/[^@"]\{1,\}@\([0-9a-f]\{40\}\)",[[:space:]]*$|\1|p')
+          if [ "$(printf '%s\n' "$pinned" | grep -c .)" -ne 1 ]; then
+            # Coded per dev/standards/error-codes.md, like copilot-review-gate.yml's annotations.
+            # `.f`, computed rather than assumed: the pattern and the file disagree, and they will
+            # go on disagreeing however many times this runs.
+            echo "::error::[e.self.config.keripy-pin.f] pyproject.toml does not hold exactly one" \
+              "keri dependency pinned to a full 40-character commit SHA, which is the only shape" \
+              "this job can measure. Nothing was measured — this is a broken canary, not a report" \
+              "about keripy. Fix the pin in pyproject.toml, or the pattern in" \
+              ".github/workflows/keripy-drift.yml if the dependency legitimately changed shape."
+            exit 1
+          fi
+          echo "sha=$pinned" >> "$GITHUB_OUTPUT"
+          echo "Pinned keripy commit: $pinned"
+
+      # Is the pinned commit upstream, or only ours? Ancestry against the real upstream, not
+      # against the bakobo mirror of it — the mirror lags, and drift measured against a stale
+      # mirror arrives however late the mirror is (@enyp5khx).
+      - name: Locate the pin relative to upstream
+        id: locate
+        run: |
+          set -euo pipefail
+          pinned='${{ steps.pin.outputs.sha }}'
+          git init -q probe && cd probe
+          git remote add upstream "https://github.com/${UPSTREAM}"
+          git remote add fork "https://github.com/${FORK}"
+          git fetch -q --filter=blob:none upstream main:refs/remotes/upstream/main
+          git fetch -q --filter=blob:none fork "$pinned"
+          upstream_head=$(git rev-parse upstream/main)
+          echo "upstream_head=$upstream_head" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "$pinned" upstream/main; then
+            echo "fork_only=false" >> "$GITHUB_OUTPUT"
+            echo "The pin is an ancestor of ${UPSTREAM} main. Nothing fork-only in play."
+          else
+            echo "fork_only=true" >> "$GITHUB_OUTPUT"
+            git log --no-merges --format='- %h %s' "$(git merge-base "$pinned" upstream/main)..$pinned" \
+              > ../fork-only-commits.txt
+            echo "Commits we carry that ${UPSTREAM} does not:"
+            cat ../fork-only-commits.txt
+          fi
+
+      # @enyp5khx's actual rule: a fork-only pin owes an OPEN upstream PR whose head contains the
+      # pinned commit. Found by ancestry rather than by a PR number written down somewhere, so it
+      # stays right when the PR is reopened, renumbered or superseded.
+      - name: Find the upstream PR that carries the pin home
+        id: track
+        if: steps.locate.outputs.fork_only == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pinned='${{ steps.pin.outputs.sha }}'
+          cd probe
+          # Fetch the candidate list in its own statement so an API failure is distinguishable
+          # from a genuinely empty list. Reading a transient 502 as "nobody is carrying this
+          # upstream" would file an alarming issue about nothing.
+          limit=500
+          if ! raw=$(gh pr list --repo "$UPSTREAM" --state open --limit "$limit" \
+                       --json number,headRepositoryOwner); then
+            echo "::error::[e.env.github.unreadable.r] Could not ask GitHub which upstream PRs" \
+              "are open, so the canary cannot tell whether one is carrying our fork-only commits" \
+              "home. It is reporting nothing rather than guessing. Run the job again."
+            exit 1
+          fi
+          # The bakobo filter is applied HERE, client-side, so the limit bounds the unfiltered
+          # list. A saturated page means our PR could be sitting just past the edge, unexamined,
+          # and the job would call the pin untracked on the strength of not having looked. Fail
+          # closed instead: the number is raisable, the false alarm is not retractable.
+          if [ "$(jq 'length' <<<"$raw")" -ge "$limit" ]; then
+            echo "::error::[e.self.config.pr-scan-limit.f] ${UPSTREAM} has at least ${limit} open" \
+              "pull requests, so this job's scan may not have reached the one carrying our" \
+              "fork-only commits. It is reporting nothing rather than guessing. Raise the limit" \
+              "in .github/workflows/keripy-drift.yml."
+            exit 1
+          fi
+          candidates=$(jq -r '.[] | select(.headRepositoryOwner.login=="bakobo") | .number' <<<"$raw")
+          found=""
+          for n in $candidates; do
+            # Every failure in this loop is inconclusive, never "no PR". A fetch that 502s and a
+            # repo with no such PR are the same empty variable, and the difference between them
+            # is the difference between silence and an issue saying nobody is carrying our work
+            # upstream. `|| continue` here would have manufactured exactly that false alarm.
+            if ! git fetch -q --filter=blob:none upstream "refs/pull/${n}/head"; then
+              echo "::error::[e.env.github.unreadable.r] Could not read the head of" \
+                "${UPSTREAM}#${n}, so the canary cannot rule it in or out as the PR carrying our" \
+                "fork-only commits home. It is reporting nothing rather than guessing. Run the" \
+                "job again."
+              exit 1
+            fi
+            # Ancestry against what was actually FETCHED, never against a SHA read from the API
+            # a moment earlier: a force-push between the two leaves that SHA absent locally, and
+            # `merge-base` then fails for want of the object rather than for want of ancestry.
+            # Which is why its status is classified rather than swallowed — 1 means genuinely
+            # not an ancestor, and anything else means the question was never answered.
+            if ! head_sha=$(git rev-parse FETCH_HEAD); then
+              echo "::error::[e.self.unknown.r] Fetched ${UPSTREAM}#${n} and then could not" \
+                "resolve what was fetched, so the canary cannot rule that PR in or out. It is" \
+                "reporting nothing rather than guessing. Run the job again."
+              exit 1
+            fi
+            rc=0
+            git merge-base --is-ancestor "$pinned" "$head_sha" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              found="$n"
+              break
+            elif [ "$rc" -ne 1 ]; then
+              # `self`, not `env`: this is git failing locally, most likely for want of an
+              # object, and blaming GitHub for it would send the reader to the wrong place.
+              # Still `.r`, because every fetch this step depends on is redone from scratch on
+              # the next run, so a retry genuinely can succeed where this one did not.
+              echo "::error::[e.self.unknown.r] git exited ${rc} deciding whether the pinned" \
+                "commit is contained in ${UPSTREAM}#${n}, so the question went unanswered. It is" \
+                "reporting nothing rather than guessing. Run the job again."
+              exit 1
+            fi
+          done
+          # Only reached when the search actually completed, so the report step can tell "no PR
+          # exists" from "we never found out" and decline to alarm about the second.
+          echo "known=true" >> "$GITHUB_OUTPUT"
+          # The number and never the TITLE: a PR title is text somebody else writes, and a newline
+          # in it would forge extra lines in $GITHUB_OUTPUT. GitHub renders the title from a link.
+          if [ -n "$found" ]; then
+            echo "pr=$found" >> "$GITHUB_OUTPUT"
+            echo "Tracked by ${UPSTREAM}#${found}."
+          else
+            echo "pr=" >> "$GITHUB_OUTPUT"
+            echo "No open upstream PR contains the pinned commit."
+          fi
+
+      # The COMMIT the previous step resolved, not the branch name. Resolving `@main` again here
+      # would fetch whatever upstream's tip is a minute later, so a push landing mid-run would
+      # leave the tests measuring one tree and the report naming another — and the report is the
+      # whole product (@7enojuyn). Pinning the override makes the run reproducible from its own
+      # report. An override rather than an edit to the keri line, so the diff this job produces
+      # is about upstream and never about the file it edited to look there.
+      - name: Repoint keripy at the upstream commit this run measured
+        env:
+          UPSTREAM_HEAD: ${{ steps.locate.outputs.upstream_head }}
+        run: |
+          set -euo pipefail
+          cat >> pyproject.toml <<EOF
 
           [tool.uv]
-          override-dependencies = ["keri @ git+https://github.com/bakobo/keripy@main"]
+          override-dependencies = ["keri @ git+https://github.com/${UPSTREAM}@${UPSTREAM_HEAD}"]
           EOF
 
       - name: Install uv
@@ -46,29 +231,147 @@ jobs:
           python-version: "3.14"
           enable-cache: false
 
-      - name: Resolve and install against keripy main
+      - name: Resolve and install against upstream keripy
         run: |
+          set -euo pipefail
           uv lock
           uv sync
 
-      - name: Report how far the pin has fallen behind
-        run: |
-          pinned=$(git show HEAD:pyproject.toml | sed -n 's|.*keripy@\([0-9a-f]\{40\}\).*|\1|p')
-          resolved=$(python3 -c "
-          import tomllib
-          lock = tomllib.load(open('uv.lock','rb'))
-          keri = [p for p in lock['package'] if p['name'] == 'keri']
-          print(keri[0]['source']['git'].split('#')[-1])
-          ")
-          echo "pinned   : $pinned"
-          echo "main     : $resolved"
-          if [ "$pinned" = "$resolved" ]; then
-            echo "No drift: keripy main is still at the pinned commit."
-          else
-            echo "::notice::keripy main has moved from $pinned to $resolved."
-          fi
-
       # No coverage gate here. Coverage measures src/witness, which this job does not change, so
       # a coverage failure could only be noise dressed up as a drift signal.
-      - name: Run the suite against keripy main
-        run: uv run --no-sync pytest --no-cov -q
+      - name: Question 2 — has upstream moved under the accessors we ride?
+        id: suite
+        run: |
+          # `set +e` is load-bearing and not hygiene. GitHub runs this under `bash -e {0}`, so
+          # errexit is ALREADY on and a plain `set -uo pipefail` does not clear it — the step
+          # would die on the pytest exit code before recording it, and the report step would
+          # read the missing output as "the canary could not run" instead of as drift. The whole
+          # design here is that a test failure is DATA, so the shell must not treat it as fatal.
+          set +e
+          uv run --no-sync pytest --no-cov -q -m "not fork_only_keripy" > suite.log 2>&1
+          # The EXACT status, not a boolean. pytest returns 1 for failing tests but 2-5 for
+          # interrupted, internal error, usage error and no-tests-collected — and only the first
+          # of those is drift. The report step is where that distinction is applied.
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          tail -40 suite.log
+          exit 0
+
+      # The inverse canary. These are EXPECTED to fail against upstream; passing means the feature
+      # landed there and the pin should come home. Skipped entirely when the pin is already
+      # upstream, where the question is meaningless.
+      - name: Question 3 — have our fork-only commits landed upstream?
+        id: landed
+        if: steps.locate.outputs.fork_only == 'true'
+        run: |
+          # See the note on `set +e` above. Here it matters even more: a NON-ZERO exit is the
+          # expected, healthy answer, so letting errexit act on it would make the ordinary week
+          # a red build — the exact thing this rewrite exists to stop.
+          set +e
+          uv run --no-sync pytest --no-cov -q -m "fork_only_keripy" > landed.log 2>&1
+          rc=$?
+          # Again the exact status. "Failed" is the expected answer here, but "no tests were
+          # collected" is NOT — a marker typo would select nothing, exit 5, and read as the
+          # healthy week while measuring nothing at all. The report step separates them.
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          case "$rc" in
+            0) echo "The fork-only tests PASS against upstream — the feature has landed." ;;
+            1) echo "The fork-only tests fail against upstream, which is the expected result." ;;
+            *) echo "pytest exited $rc: the marked tests were not run. Nothing was measured." ;;
+          esac
+          tail -20 landed.log
+          exit 0
+
+      # The two files the report quotes. This `path:` filter is a convenience, NOT a boundary —
+      # it is enforced by a client-side action running in a job where upstream code has already
+      # executed, so under the threat model the artifact's contents are attacker-controlled and
+      # the trusted side has to treat them that way. It does; see `report`.
+      - name: Hand the findings to the reporting job
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: keripy-drift-findings
+          path: |
+            suite.log
+            fork-only-commits.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Holds the write-capable token and runs no upstream code. `!cancelled()` rather than
+  # `always()`: a `measure` that died is a thing the reader needs told about, but a run somebody
+  # cancelled on purpose is not, and filing "the canary could not run" for their own keystroke
+  # is the kind of noise this rewrite exists to remove.
+  report:
+    needs: measure
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # @7enojuyn: the explanation has to land somewhere that emails its own body.
+    steps:
+      # A clean checkout, so the script executed here is the committed one and not whatever was
+      # left in the other job's workspace.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # INTO RUNNER_TEMP, NEVER THE WORKSPACE, and this is the whole point rather than a
+      # preference. `download-artifact` with no `path:` unpacks into the checkout, so an archive
+      # whose entries are attacker-chosen — which this one is, since upstream code ran in the job
+      # that produced it — could land a new `.github/scripts/keripy-drift-report.sh` on top of
+      # the clean one a step before this job executes it with a write-capable token. That is the
+      # same escalation the job split was made to remove, rebuilt by the download. Unpacking to a
+      # scratch directory the report never executes from closes it for good.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true # No artifact means no measurements, which the script handles.
+        with:
+          name: keripy-drift-findings
+          path: ${{ runner.temp }}/findings
+
+      # Accept exactly two regular files, of a sane size, and nothing else. A symlink in the
+      # archive would let the untrusted side choose what the trusted side reads; an unexpected
+      # entry means the artifact is not what this job was promised, and a promise that can be
+      # broken silently is not one. The size bound matters for the same reason the others do:
+      # an artifact-sized findings file would exhaust this job before it could say anything,
+      # which is a way of silencing the canary using the canary's own trust boundary. Sixteen
+      # megabytes is thousands of times any real output of these two commands.
+      - name: Take only the two data files, and only if they are data
+        env:
+          FINDINGS_DIR: ${{ runner.temp }}/findings
+          MAX_BYTES: "16777216"
+        run: |
+          set -euo pipefail
+          mkdir -p "$FINDINGS_DIR"
+          find "$FINDINGS_DIR" -mindepth 1 ! -name suite.log ! -name fork-only-commits.txt -delete
+          for f in suite.log fork-only-commits.txt; do
+            p="$FINDINGS_DIR/$f"
+            [ -e "$p" ] || continue
+            if [ -L "$p" ] || [ ! -f "$p" ]; then
+              echo "::warning::[e.self.corrupt.f] The findings artifact offered ${f} as something" \
+                "other than a regular file. Discarding it; the report will say that part was not" \
+                "measured rather than read it."
+              rm -rf "$p"
+            elif [ "$(stat -c %s "$p")" -gt "$MAX_BYTES" ]; then
+              echo "::warning::[e.self.corrupt.f] The findings artifact offered ${f} at" \
+                "$(stat -c %s "$p") bytes, past the ${MAX_BYTES} this job will read. Discarding" \
+                "it; the report will say that part was not measured rather than read it."
+              rm -f "$p"
+            fi
+          done
+          ls -la "$FINDINGS_DIR"
+
+      # One step writes every paragraph, so the wording cannot diverge between the annotation, the
+      # summary and the issue body (@7enojuyn).
+      - name: Say what happened, in words, wherever a human might read them
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINDINGS_DIR: ${{ runner.temp }}/findings
+          MEASURE_RESULT: ${{ needs.measure.result }}
+          PINNED: ${{ needs.measure.outputs.pin }}
+          UPSTREAM_HEAD: ${{ needs.measure.outputs.upstream_head }}
+          FORK_ONLY: ${{ needs.measure.outputs.fork_only }}
+          TRACKING_PR: ${{ needs.measure.outputs.tracking_pr }}
+          TRACKING_KNOWN: ${{ needs.measure.outputs.tracking_known }}
+          SUITE_RC: ${{ needs.measure.outputs.suite_rc }}
+          LANDED_RC: ${{ needs.measure.outputs.landed_rc }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/keripy-drift-report.sh

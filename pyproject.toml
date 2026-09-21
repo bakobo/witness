@@ -9,7 +9,11 @@ authors = [{ name = "Bakobo" }]
 dependencies = [
     # Public, so plain HTTPS resolves it anonymously — for anyone, with or without a Bakobo
     # account. That is now true of the whole closure (@qojsxe7s); heti was the one exception.
-    "keri @ git+https://github.com/bakobo/keripy@173678c0",
+    # A FORK-ONLY pin: 173678c0 sits on bakobo/keripy's feature/witness-decls, which upstream has
+    # not taken. @enyp5khx permits that only while an open upstream PR carries the commit home,
+    # and keripy-drift.yml fails the week that stops being true. Full 40-char SHA, like fiki's
+    # below: a short ref is ambiguous by construction, and the canary parses this line.
+    "keri @ git+https://github.com/bakobo/keripy@173678c0bad44203609942fd9b52134453f0d936",
     "falcon",
     "waitress",
     # ops.md §7 mandates the OpenTelemetry SDK in code Bakobo writes, with OTLP on the wire
@@ -49,6 +53,12 @@ packages = ["src/witness"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=witness --cov-branch --cov-report=term-missing --cov-fail-under=100"
+# @enyp5khx. CI runs everything against the pin, where these pass. The drift canary runs against
+# upstream keripy, where they cannot, so it deselects them — and separately runs ONLY them, to
+# learn whether the feature has landed upstream yet. Both directions read this one marker.
+markers = [
+    "fork_only_keripy: needs keripy code that exists only on the bakobo fork, not upstream",
+]
 
 [tool.coverage.run]
 branch = true

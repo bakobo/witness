@@ -264,6 +264,55 @@ Operator layer over a stock keripy witness = goal:
             hazard and the gated-bump ceremony around it. Kept rather than deleted because this node
             is why the pin is where it is, and a reader finding 366d8107 deserves the history.
 
+        A fork-only pin is legitimate only while an upstream PR tracks it = constraint:
+          id: enyp5khx
+          why: >
+            @w7c4mz forbids diverging code, and on 2026-09-16 the pin moved to 173678c0 — a commit
+            on bakobo/keripy's feature/witness-decls branch, which upstream has not taken. That is
+            divergence unless it is temporary, and the only thing that makes it temporary is a live
+            upstream PR somebody is shepherding. So the rule is not "never pin to the fork" but
+            "a fork-only pin owes an open upstream PR containing the pinned commit", and the drift
+            canary enforces it: it fetches WebOfTrust/keripy main, asks whether the pinned commit is
+            an ancestor, and when it is not, hunts the open bakobo-headed PR whose head contains it.
+            No such PR is a red build, because at that moment nothing but memory is carrying the
+            change home. Rejected asserting the PR number in a file, which is a second copy of a
+            fact GitHub already holds and would rot the day the PR is reopened under a new number.
+
+            The canary also stopped conflating two questions it had been answering with one exit
+            code. "Has upstream moved under our accessors?" and "is our own feature upstream yet?"
+            failed identically on 2026-09-21, and the second one will keep being true for as long
+            as review takes — weeks in which a weekly red build teaches the reader to skip the mail
+            that matters. Tests that can only pass where fork-only code exists now carry the
+            `fork_only_keripy` marker; the canary deselects them, so a failure of the rest is
+            unambiguously upstream drift. Running ONLY the marked tests against upstream is then
+            the inverse canary: they are expected to fail there, and their passing means the
+            feature landed and the pin should come home. One marker, both directions, no second
+            list of test names to keep in step.
+
+            Accepted tradeoff: a marked test is unexercised against upstream main until it merges,
+            so drift in the fork-only code itself surfaces only at re-pin. That is the same bargain
+            @w7c4mz already struck for everything else, and the code in question is ours.
+
+        The canary explains itself to someone who has only the email = constraint:
+          id: 7enojuyn
+          why: >
+            An operator who gets "Run failed: keripy drift canary" at 06:00 on a Monday cannot act
+            on it. The run page says which assertion failed, not what the failure MEANS, and the
+            meaning here is genuinely non-obvious — nothing on main is broken, no deploy is at
+            risk, and the correct response is usually to do nothing yet. Reconstructing that from
+            a stack trace is a research task, and one this repo has now paid for twice.
+
+            So every outcome the canary can reach writes a paragraph naming the situation, what is
+            and is not at risk, what would resolve it, and where the governing decision lives — and
+            that paragraph goes into a GitHub issue, because an issue body is the only channel here
+            whose full text reaches a mailbox. Workflow annotations and job summaries are one click
+            away from the failure mail and are used too, but they are not the artifact; the issue
+            is, and it stays open for exactly as long as the condition holds. Rejected commenting
+            on each weekly run (52 mails saying the same thing) and rejected composing the mail
+            ourselves through an SMTP action (a credential to hold, and a second delivery path to
+            keep working). Accepted tradeoff: the job needs `issues: write`, and a reader who
+            watches the repo gets an issue they did not open.
+
     v1 is read-only audit and inspection = decision:
       id: t3k6ps
       why: >
