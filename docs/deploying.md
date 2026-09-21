@@ -88,6 +88,16 @@ An upgrade is a digest change and a container replacement over the same volume. 
 
 **Same keripy pin — the ordinary case.** Replace the container, keep the volume. The witness keeps its AID, its KEL and every receipt, and goes on witnessing. This is exercised end to end by `tests/test_image_upgrade.py`, which starts a container, gets a controller's inception accepted, replaces the container entirely, and then checks both that the state survived *and* that the new container still accepts a further event — the second being the part that separates "the data is on disk" from "the witness works".
 
+Point that oracle at the digest you are upgrading **from** and it proves the thing an upgrade actually claims rather than a proxy for it:
+
+```
+WITNESS_IMAGE=witness:candidate \
+WITNESS_BASELINE_IMAGE=ghcr.io/bakobo/witness@sha256:<deployed> \
+    uv run pytest tests/test_image_upgrade.py -v --no-cov
+```
+
+With a baseline set, the deployed image creates the volume, initialises the keystore and gets a controller witnessed; the candidate takes the volume over and has to serve the same AID, return the same key state, and accept a further event — and then the deployed image takes it **back**, which is the rollback this document promises two paragraphs down. Without one, those two tests skip and say so; they deliberately do not fall back to using the candidate as its own baseline, because that proves container replacement while reading as version compatibility (`@ktljhcyt`). In CI the baseline comes from the `DEPLOYED_WITNESS_IMAGE` repository variable, which `bakobo/infra` updates when it bumps its pin.
+
 **A keripy pin that moves forward past a migration.** keripy records a version in the database and refuses to open one that is behind the library, so the witness will not start. The control plane reports `e.self.config.migration.f` — permanent, not retryable, because no amount of waiting clears it:
 
 ```
@@ -134,4 +144,4 @@ docker run -d --name witness -v witness-data:/usr/local/var/keri ...
 
 Exercised end to end by `tests/test_image_upgrade.py`, which backs up a running witness, **destroys the volume**, restores from the backup alone, and then checks not only that the AID and witnessed key state came back but that the restored witness accepts and receipts a **new** event — the assertion that proves the signing keys came with it.
 
-**Not yet proven:** no upgrade across an actual migration has been rehearsed, because the pin has not moved since this repo started building images. The mechanism above is verified — the version check, both refusals, and the same-pin replacement all have tests — but the migration itself has only been read, not run. Rehearse it in sandbox before the first real pin bump.
+**Not yet proven:** no upgrade across an actual migration has been rehearsed, because the pin has not moved since this repo started building images. The mechanism above is verified — the version check, both refusals, and the same-pin handover in **both directions between two real digests** all have tests — but the migration itself has only been read, not run. The oracle declines to guess about it: when the two images carry different keripy versions it skips and names both, because a failure there would read as a broken upgrade when what happened is that it was pointed at a pin bump. Rehearse it in sandbox before the first real pin bump.

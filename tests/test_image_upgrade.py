@@ -27,8 +27,21 @@ import pytest
 
 IMAGE = os.environ.get("WITNESS_IMAGE")
 
+# The image this one is upgrading FROM -- in practice the digest production is running (@ktljhcyt).
+# Absent rather than defaulted to IMAGE, deliberately: falling back would make a run with no
+# baseline configured produce output indistinguishable from a real two-version handover, which is
+# the weaker claim wearing the stronger one's clothes. Unset means the handover tests SKIP and say
+# which variable would have run them.
+BASELINE = os.environ.get("WITNESS_BASELINE_IMAGE")
+
 pytestmark = pytest.mark.skipif(
     not IMAGE, reason="set WITNESS_IMAGE to the image under test to run the upgrade oracle"
+)
+
+needs_baseline = pytest.mark.skipif(
+    not BASELINE,
+    reason="set WITNESS_BASELINE_IMAGE to the image being upgraded FROM (the deployed digest) "
+    "to run the two-version handover",
 )
 
 _KERI_HOME = "/usr/local/var/keri"
@@ -72,14 +85,27 @@ def _await_ready(container, port, timeout=120.0):
     raise AssertionError(f"never became ready:\n{logs.stdout}\n{logs.stderr}")
 
 
-def _start(volume, container, control_port):
+def _start(volume, container, control_port, image=None):
     _docker(
         "run", "-d", "--name", container,
         "-v", f"{volume}:{_KERI_HOME}",
         "-p", f"127.0.0.1:{control_port}:5633",
-        IMAGE,
+        image or IMAGE,
     )
     _await_ready(container, control_port)
+
+
+def _keripy_version(image):
+    """The keripy an image carries, read from the image rather than from a label.
+
+    A label would be this repo asserting the version; this asks the interpreter that will actually
+    open the database. The two agree today and the difference is the whole question when a pin
+    moves, which is when this matters.
+    """
+    result = _docker(
+        "run", "--rm", "--entrypoint", "python", image, "-c", "import keri; print(keri.__version__)"
+    )
+    return result.stdout.strip().splitlines()[-1]
 
 
 # A controller submitting a real, signed inception to the witness over its own HTTP port, exactly
@@ -112,12 +138,38 @@ def _submit_inception(container, witness_aid, bran, alias):
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-@pytest.fixture
-def volume():
+def _await_controller(port, controller, timeout=30.0):
+    """The key state this witness holds for a controller, once it has finished accepting it."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            return _get(port, f"/v1/witness/controller/{controller}")
+        except urllib.error.HTTPError:
+            time.sleep(0.5)
+    raise AssertionError(f"the witness never reported key state for {controller}")
+
+
+def _witness_for(container, port, bran, alias):
+    """Have a controller incept with this witness designated, and return what the witness holds.
+
+    Returns (witness_aid, controller_aid, key_state). The assertions are here rather than at each
+    call site because every caller wants the same three, and a caller that forgot one would be
+    proving less than it reads as proving.
+    """
+    witness_aid = _get(port, "/v1/witness/identity")["aid"]
+    accepted = _submit_inception(container, witness_aid, bran, alias)
+    assert accepted["status"] == 204
+    controller = accepted["controller"]
+    state = _await_controller(port, controller)
+    assert state["witnesses"] == [witness_aid], "the witness should be designated"
+    return witness_aid, controller, state
+
+
+def _volume_for(image):
     name = f"witness-upgrade-{uuid.uuid4().hex[:8]}"
     _docker("volume", "create", name)
     _docker(
-        "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "kli", IMAGE,
+        "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "kli", image,
         "init", "--name", "witness", "--nopasscode",
     )
     containers = []
@@ -126,7 +178,28 @@ def volume():
     finally:
         for container in containers:
             _docker("rm", "-f", container, check=False)
-        _docker("volume", "rm", "-f", name, check=False)
+        # Swept by PREFIX rather than by the single name created here. A test that makes a
+        # second volume -- the backup one makes <name>-backup -- otherwise leaves it behind on
+        # every local run, and CI hides that by being ephemeral. `--filter name=` is a substring
+        # match, which is what makes one call cover both.
+        listed = _docker("volume", "ls", "-q", "--filter", f"name={name}", check=False)
+        for leftover in listed.stdout.split():
+            _docker("volume", "rm", "-f", leftover, check=False)
+
+
+@pytest.fixture
+def volume():
+    yield from _volume_for(IMAGE)
+
+
+@pytest.fixture
+def baseline_volume():
+    """A volume created and initialised by the image being upgraded FROM (@ktljhcyt).
+
+    The keystore matters as much as the database here: `kli init` runs from the baseline, so the
+    stores this image inherits are in every respect the ones the deployed version wrote.
+    """
+    yield from _volume_for(BASELINE)
 
 
 def test_a_replacement_container_keeps_the_identity_and_still_witnesses(volume):
@@ -141,20 +214,9 @@ def test_a_replacement_container_keeps_the_identity_and_still_witnesses(volume):
 
     containers.append(first)
     _start(name, first, port_a)
-    witness_aid = _get(port_a, "/v1/witness/identity")["aid"]
-
-    accepted = _submit_inception(first, witness_aid, "0987654321kjihgfedcba", "before")
-    assert accepted["status"] == 204
-    before_aid = accepted["controller"]
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            _get(port_a, f"/v1/witness/controller/{before_aid}")
-            break
-        except urllib.error.HTTPError:
-            time.sleep(0.5)
-    before_state = _get(port_a, f"/v1/witness/controller/{before_aid}")
-    assert before_state["witnesses"] == [witness_aid], "the witness should be designated"
+    witness_aid, before_aid, before_state = _witness_for(
+        first, port_a, "0987654321kjihgfedcba", "before"
+    )
 
     # Replace the container entirely, keeping only the volume — a new image digest, in effect.
     _docker("rm", "-f", first)
@@ -170,17 +232,97 @@ def test_a_replacement_container_keeps_the_identity_and_still_witnesses(volume):
     )
 
     # And the half that matters: it is still a working witness, not just intact storage.
-    after = _submit_inception(second, witness_aid, "mnopqrstuvw1122334455", "after")
-    assert after["status"] == 204
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            fresh = _get(port_b, f"/v1/witness/controller/{after['controller']}")
-            assert fresh["witnesses"] == [witness_aid]
-            return
-        except urllib.error.HTTPError:
-            time.sleep(0.5)
-    raise AssertionError("the replacement container accepted no new event")
+    _witness_for(second, port_b, "mnopqrstuvw1122334455", "after")
+
+
+def _same_pin_or_skip():
+    """Both images must carry the same keripy, or the handover is a different operation.
+
+    When the pins differ the upgrade crosses a migration: keripy refuses to open a database
+    written by a newer library, `kli migrate run` is required in one direction and the other
+    direction does not work at all (@a24p3kbw, docs/deploying.md). Failing here would read as a
+    broken upgrade when what actually happened is that the test was pointed at a pin bump, so this
+    skips and names both versions. Rehearsing the migration itself is separate work.
+    """
+    candidate, baseline = _keripy_version(IMAGE), _keripy_version(BASELINE)
+    if candidate != baseline:
+        pytest.skip(
+            f"the baseline carries keripy {baseline} and this image carries {candidate}, so this "
+            "upgrade crosses a migration rather than replacing a container -- a one-way door with "
+            "its own procedure in docs/deploying.md, which this oracle does not exercise"
+        )
+    return candidate
+
+
+@needs_baseline
+def test_this_image_takes_over_a_volume_the_deployed_one_wrote(baseline_volume):
+    """The claim every upgrade actually makes, which the same-image test could not make.
+
+    Its sibling above replaces a container over a volume, which proves that replacing a CONTAINER
+    is safe. Both containers are the same image there, so version compatibility -- the one
+    property an operator is buying when a digest changes -- was the part not under test.
+
+    Here the baseline creates the volume, incepts the keystore, and gets a controller witnessed;
+    then this image takes the volume over and has to serve the same AID, return the same key
+    state, and accept a FURTHER event. The last clause is again the one with teeth: holding the
+    history proves storage, receipting a new event proves the signing keys came across too.
+    """
+    _same_pin_or_skip()
+    name, containers = baseline_volume
+    old, new = f"{name}-old", f"{name}-new"
+    port_old, port_new = _free_port(), _free_port()
+
+    containers.append(old)
+    _start(name, old, port_old, image=BASELINE)
+    witness_aid, controller, before = _witness_for(old, port_old, "0987654321kjihgfedcba", "before")
+
+    _docker("rm", "-f", old)
+    containers.append(new)
+    _start(name, new, port_new)
+
+    assert _get(port_new, "/v1/witness/identity")["aid"] == witness_aid, (
+        "the witness lost its AID when this image took over from the deployed one; every "
+        "controller that designated it would have to rotate"
+    )
+    assert _get(port_new, f"/v1/witness/controller/{controller}") == before, (
+        "the witnessed key state did not survive the version change"
+    )
+
+    _, fresh, _ = _witness_for(new, port_new, "mnopqrstuvw1122334455", "after")
+    assert fresh != controller
+
+
+@needs_baseline
+def test_the_deployed_image_takes_the_volume_back(baseline_volume):
+    """The rollback direction, which within one keripy pin is just redeploying the old digest.
+
+    docs/deploying.md promises exactly that -- "within a pin, rollback is just redeploying the
+    previous digest and is free" -- and a rollback nobody has run is a hope, which is @7b34ohbo's
+    argument applied one level up. It is also the direction that fails first if this image writes
+    anything the previous one cannot read, and the harm from discovering that during an incident
+    is that the escape hatch is the thing that is broken.
+    """
+    _same_pin_or_skip()
+    name, containers = baseline_volume
+    new, back = f"{name}-new", f"{name}-back"
+    port_new, port_back = _free_port(), _free_port()
+
+    containers.append(new)
+    _start(name, new, port_new)
+    witness_aid, controller, written = _witness_for(new, port_new, "0987654321kjihgfedcba", "fwd")
+
+    _docker("rm", "-f", new)
+    containers.append(back)
+    _start(name, back, port_back, image=BASELINE)
+
+    assert _get(port_back, "/v1/witness/identity")["aid"] == witness_aid
+    assert _get(port_back, f"/v1/witness/controller/{controller}") == written, (
+        "the deployed image could not read what this one wrote, so redeploying the previous "
+        "digest is not a rollback path and the runbook is wrong to say it is"
+    )
+
+    _, fresh, _ = _witness_for(back, port_back, "mnopqrstuvw1122334455", "rolled")
+    assert fresh != controller
 
 
 def test_the_database_version_matches_the_keripy_the_image_carries(volume):
@@ -237,18 +379,9 @@ def test_a_witness_restored_from_backup_still_witnesses(volume):
             "-p", f"127.0.0.1:{port_a}:5633", IMAGE,
         )
         _await_ready(live, port_a)
-        witness_aid = _get(port_a, "/v1/witness/identity")["aid"]
-        accepted = _submit_inception(live, witness_aid, "0987654321kjihgfedcba", "pre")
-        assert accepted["status"] == 204
-        controller = accepted["controller"]
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                _get(port_a, f"/v1/witness/controller/{controller}")
-                break
-            except urllib.error.HTTPError:
-                time.sleep(0.5)
-        witnessed = _get(port_a, f"/v1/witness/controller/{controller}")
+        witness_aid, controller, witnessed = _witness_for(
+            live, port_a, "0987654321kjihgfedcba", "pre"
+        )
 
         # Back up WHILE THE WITNESS RUNS — the property env.copy buys over stopping and tarring.
         result = _docker(
@@ -276,20 +409,9 @@ def test_a_witness_restored_from_backup_still_witnesses(volume):
         assert _get(port_b, "/v1/witness/identity")["aid"] == witness_aid
         assert _get(port_b, f"/v1/witness/controller/{controller}") == witnessed
 
-        after = _submit_inception(restored, witness_aid, "mnopqrstuvw1122334455", "post")
-        assert after["status"] == 204
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                fresh = _get(port_b, f"/v1/witness/controller/{after['controller']}")
-                assert fresh["witnesses"] == [witness_aid]
-                return
-            except urllib.error.HTTPError:
-                time.sleep(0.5)
-        raise AssertionError(
-            "the restored witness accepted no new event — it holds the history but cannot sign, "
-            "which is what a backup missing the keystore looks like"
-        )
+        # It holds the history AND can still sign; a backup missing the keystore passes everything
+        # above and fails here, which is the whole reason this assertion is last rather than first.
+        _witness_for(restored, port_b, "mnopqrstuvw1122334455", "post")
     finally:
         _docker("volume", "rm", "-f", backup_volume, check=False)
 
