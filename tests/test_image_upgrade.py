@@ -240,8 +240,17 @@ def _image_id(image):
 
     Two references can name one image -- a tag and the digest it points at, or a stale variable
     pointing at the build under test -- and the digests in their names would still differ.
+
+    PULLS WHAT IT IS ASKED ABOUT. `docker image inspect` only sees the local store, and the
+    documented command in docs/deploying.md names two published digests -- which is what an
+    operator verifying a release actually runs, from a box where neither is cached. Inspecting
+    first and pulling only on a miss keeps the ordinary case free while making that one work.
     """
-    return _docker("image", "inspect", image, "--format", "{{.Id}}").stdout.strip()
+    local = _docker("image", "inspect", image, "--format", "{{.Id}}", check=False)
+    if local.returncode != 0:
+        _docker("pull", "--quiet", image)
+        local = _docker("image", "inspect", image, "--format", "{{.Id}}")
+    return local.stdout.strip()
 
 
 def _two_images_or_fail():
