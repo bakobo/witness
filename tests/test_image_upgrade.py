@@ -235,6 +235,35 @@ def test_a_replacement_container_keeps_the_identity_and_still_witnesses(volume):
     _witness_for(second, port_b, "mnopqrstuvw1122334455", "after")
 
 
+def _image_id(image):
+    """The local image ID a reference resolves to, which is what makes two references comparable.
+
+    Two references can name one image -- a tag and the digest it points at, or a stale variable
+    pointing at the build under test -- and the digests in their names would still differ.
+    """
+    return _docker("image", "inspect", image, "--format", "{{.Id}}").stdout.strip()
+
+
+def _two_images_or_fail():
+    """The handover's own premise: the baseline is a DIFFERENT image from the candidate.
+
+    FAILS rather than skips, unlike the pin check below, and the difference is the point. An unset
+    baseline is a claim nobody made, which is a skip. A baseline that resolves to the candidate is
+    a claim made falsely: the test would pass, having replaced a container with itself, and report
+    cross-version compatibility it never exercised. That is the same hole the absent-rather-than-
+    defaulted rule closes, reached by a stale variable instead of a missing one -- and the likely
+    route is real, since DEPLOYED_WITNESS_IMAGE points at this build the moment infra deploys it.
+    Raised by Copilot on #17.
+    """
+    if _image_id(IMAGE) == _image_id(BASELINE):
+        pytest.fail(
+            f"WITNESS_BASELINE_IMAGE ({BASELINE}) resolves to the same image as WITNESS_IMAGE "
+            f"({IMAGE}), so this would replace a container with itself and prove nothing about "
+            "upgrading. Point it at the digest being upgraded FROM, or unset it and let the "
+            "handover tests skip."
+        )
+
+
 def _same_pin_or_skip():
     """Both images must carry the same keripy, or the handover is a different operation.
 
@@ -267,6 +296,7 @@ def test_this_image_takes_over_a_volume_the_deployed_one_wrote(baseline_volume):
     state, and accept a FURTHER event. The last clause is again the one with teeth: holding the
     history proves storage, receipting a new event proves the signing keys came across too.
     """
+    _two_images_or_fail()
     _same_pin_or_skip()
     name, containers = baseline_volume
     old, new = f"{name}-old", f"{name}-new"
@@ -302,6 +332,7 @@ def test_the_deployed_image_takes_the_volume_back(baseline_volume):
     anything the previous one cannot read, and the harm from discovering that during an incident
     is that the escape hatch is the thing that is broken.
     """
+    _two_images_or_fail()
     _same_pin_or_skip()
     name, containers = baseline_volume
     new, back = f"{name}-new", f"{name}-back"
