@@ -306,11 +306,32 @@ note_sync_failure() {
         "The verdict itself stands. Run the job again to sync the issue."
 }
 
-# No `head -1` in this pipeline: it closes the pipe on jq, and under `pipefail` that SIGPIPE
-# would read as "the lookup failed" on a repo with enough open issues to fill a pipe buffer.
-# jq picks the first match itself.
+# Scoped by LABEL, not by page size. The dedup search was `--limit 100` over every open issue,
+# which is a lookup that silently stops being correct as the repo fills up: past a hundred, an
+# actionable run files a duplicate instead of refreshing, and a clean run fails to close the
+# stale one. The canary owns at most three issues ever, so labelling them bounds the set to
+# three by construction and the page size stops mattering. It also gives a human one filter for
+# "everything this job has ever said".
+#
+# The invariant that makes this safe, and it is worth stating because it will not be obvious
+# later: the label arrives in the SAME change as the issue-filing itself, so there has never
+# been an unlabelled generation to strand. If this scoping were ever bolted onto a job that had
+# already filed issues, those would be invisible to every lookup — duplicated instead of
+# refreshed, and never closable — so that variant would owe a one-time relabel first.
+#
+# No `head -1` in this pipeline either: it closes the pipe on jq, and under `pipefail` that
+# SIGPIPE would read as a failed lookup. jq picks the first match itself.
+ISSUE_LABEL="keripy-drift"
+
+ensure_label() {
+    gh label create "$ISSUE_LABEL" --repo "$REPO" --force --color d4c5f9 \
+        --description "Filed by the keripy drift canary; closed by it when the condition clears" \
+        > /dev/null
+}
+
 open_issue_number() {
-    gh issue list --repo "$REPO" --state open --limit 100 --json number,title |
+    gh issue list --repo "$REPO" --state open --label "$ISSUE_LABEL" --limit 100 \
+        --json number,title |
         jq -r --arg t "$1" 'map(select(.title == $t)) | .[0].number // empty'
 }
 
@@ -325,8 +346,14 @@ raise() {
         gh issue edit "$existing" --repo "$REPO" --body-file "$body_file" ||
             note_sync_failure "refresh"
     else
-        gh issue create --repo "$REPO" --title "$title" --body-file "$body_file" ||
-            note_sync_failure "file"
+        # The label has to exist before an issue can carry it, and `--force` makes that
+        # idempotent. Only needed on the create path; a refresh or a close already has it.
+        if ! ensure_label; then
+            note_sync_failure "label"
+            return 0
+        fi
+        gh issue create --repo "$REPO" --title "$title" --body-file "$body_file" \
+            --label "$ISSUE_LABEL" || note_sync_failure "file"
     fi
 }
 

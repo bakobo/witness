@@ -54,15 +54,22 @@ jobs:
         id: pin
         run: |
           set -euo pipefail
-          pinned=$(git show HEAD:pyproject.toml | sed -n 's|.*keripy@\([0-9a-f]\{7,40\}\).*|\1|p')
-          if [ -z "$pinned" ]; then
+          # Anchored to the WHOLE quoted dependency value, and exactly 40 hex. A pattern with a
+          # trailing `.*` matched the first 40 characters of `keripy@<40hex>oops` and reported
+          # them as the pin, so the canary would have measured one commit while uv resolved
+          # another — the failure mode this job exists to prevent, inside the job itself. Two
+          # lines out means two `keri` deps, which is also a pin we cannot name; both fail closed.
+          pinned=$(git show HEAD:pyproject.toml |
+            sed -n 's|^[[:space:]]*"keri @ git+https://github.com/[^@"]\{1,\}@\([0-9a-f]\{40\}\)",[[:space:]]*$|\1|p')
+          if [ "$(printf '%s\n' "$pinned" | grep -c .)" -ne 1 ]; then
             # Coded per dev/standards/error-codes.md, like copilot-review-gate.yml's annotations.
             # `.f`, computed rather than assumed: the pattern and the file disagree, and they will
             # go on disagreeing however many times this runs.
-            echo "::error::[e.self.config.keripy-pin.f] pyproject.toml no longer matches the" \
-              "pattern this job parses (keripy@<hex>). Nothing was measured — this is a broken" \
-              "canary, not a report about keripy. Fix the pattern in" \
-              ".github/workflows/keripy-drift.yml, or the pin in pyproject.toml."
+            echo "::error::[e.self.config.keripy-pin.f] pyproject.toml does not hold exactly one" \
+              "keri dependency pinned to a full 40-character commit SHA, which is the only shape" \
+              "this job can measure. Nothing was measured — this is a broken canary, not a report" \
+              "about keripy. Fix the pin in pyproject.toml, or the pattern in" \
+              ".github/workflows/keripy-drift.yml if the dependency legitimately changed shape."
             exit 1
           fi
           echo "sha=$pinned" >> "$GITHUB_OUTPUT"
@@ -110,31 +117,64 @@ jobs:
           # Fetch the candidate list in its own statement so an API failure is distinguishable
           # from a genuinely empty list. Reading a transient 502 as "nobody is carrying this
           # upstream" would file an alarming issue about nothing.
-          if ! candidates=$(gh pr list --repo "$UPSTREAM" --state open --limit 100 \
-                              --json number,headRepositoryOwner \
-                              --jq '.[] | select(.headRepositoryOwner.login=="bakobo") | .number'); then
+          limit=500
+          if ! raw=$(gh pr list --repo "$UPSTREAM" --state open --limit "$limit" \
+                       --json number,headRepositoryOwner); then
             echo "::error::[e.env.github.unreadable.r] Could not ask GitHub which upstream PRs" \
               "are open, so the canary cannot tell whether one is carrying our fork-only commits" \
               "home. It is reporting nothing rather than guessing. Run the job again."
             exit 1
           fi
+          # The bakobo filter is applied HERE, client-side, so the limit bounds the unfiltered
+          # list. A saturated page means our PR could be sitting just past the edge, unexamined,
+          # and the job would call the pin untracked on the strength of not having looked. Fail
+          # closed instead: the number is raisable, the false alarm is not retractable.
+          if [ "$(jq 'length' <<<"$raw")" -ge "$limit" ]; then
+            echo "::error::[e.self.config.pr-scan-limit.f] ${UPSTREAM} has at least ${limit} open" \
+              "pull requests, so this job's scan may not have reached the one carrying our" \
+              "fork-only commits. It is reporting nothing rather than guessing. Raise the limit" \
+              "in .github/workflows/keripy-drift.yml."
+            exit 1
+          fi
+          candidates=$(jq -r '.[] | select(.headRepositoryOwner.login=="bakobo") | .number' <<<"$raw")
           found=""
           for n in $candidates; do
             # Every failure in this loop is inconclusive, never "no PR". A fetch that 502s and a
             # repo with no such PR are the same empty variable, and the difference between them
             # is the difference between silence and an issue saying nobody is carrying our work
             # upstream. `|| continue` here would have manufactured exactly that false alarm.
-            if ! head_sha=$(gh api "repos/${UPSTREAM}/pulls/${n}" --jq .head.sha) ||
-               ! git fetch -q --filter=blob:none upstream "refs/pull/${n}/head"; then
+            if ! git fetch -q --filter=blob:none upstream "refs/pull/${n}/head"; then
               echo "::error::[e.env.github.unreadable.r] Could not read the head of" \
                 "${UPSTREAM}#${n}, so the canary cannot rule it in or out as the PR carrying our" \
                 "fork-only commits home. It is reporting nothing rather than guessing. Run the" \
                 "job again."
               exit 1
             fi
-            if git merge-base --is-ancestor "$pinned" "$head_sha" 2>/dev/null; then
+            # Ancestry against what was actually FETCHED, never against a SHA read from the API
+            # a moment earlier: a force-push between the two leaves that SHA absent locally, and
+            # `merge-base` then fails for want of the object rather than for want of ancestry.
+            # Which is why its status is classified rather than swallowed — 1 means genuinely
+            # not an ancestor, and anything else means the question was never answered.
+            if ! head_sha=$(git rev-parse FETCH_HEAD); then
+              echo "::error::[e.self.unknown.r] Fetched ${UPSTREAM}#${n} and then could not" \
+                "resolve what was fetched, so the canary cannot rule that PR in or out. It is" \
+                "reporting nothing rather than guessing. Run the job again."
+              exit 1
+            fi
+            rc=0
+            git merge-base --is-ancestor "$pinned" "$head_sha" || rc=$?
+            if [ "$rc" -eq 0 ]; then
               found="$n"
               break
+            elif [ "$rc" -ne 1 ]; then
+              # `self`, not `env`: this is git failing locally, most likely for want of an
+              # object, and blaming GitHub for it would send the reader to the wrong place.
+              # Still `.r`, because every fetch this step depends on is redone from scratch on
+              # the next run, so a retry genuinely can succeed where this one did not.
+              echo "::error::[e.self.unknown.r] git exited ${rc} deciding whether the pinned" \
+                "commit is contained in ${UPSTREAM}#${n}, so the question went unanswered. It is" \
+                "reporting nothing rather than guessing. Run the job again."
+              exit 1
             fi
           done
           # Only reached when the search actually completed, so the report step can tell "no PR
