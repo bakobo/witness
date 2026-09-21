@@ -13,6 +13,11 @@
 # (editing a body sends no mail, so a condition open for a month costs one message, not four), and
 # closed by the run that finds it cleared.
 #
+# THE ORDER OF THE THREE PHASES BELOW IS LOAD-BEARING. Decide, then write locally, then talk to
+# GitHub. An earlier draft filed the issue first, so a `gh` outage took the annotation and the
+# summary down with it under `set -e` and left a bare "step failed" where the explanation should
+# have been — losing the local report to protect the remote copy of it, which is backwards.
+#
 # Inputs arrive as environment variables from the workflow; see keripy-drift.yml.
 
 set -euo pipefail
@@ -24,25 +29,6 @@ if [ -n "${TRACKING_PR:-}" ]; then
     PR_REF="${UPSTREAM}#${TRACKING_PR}"
 else
     PR_REF="not identified"
-fi
-
-# A step before the measurements failed — the resolve broke, the checkout broke, the pin would
-# not parse. Say THAT and stop: filing "upstream drifted" off a suite that never ran would be a
-# confident lie, and confident lies are what @7enojuyn exists to stop.
-if [ -z "${PINNED:-}" ] || [ -z "${SUITE_RC:-}" ] ||
-    { [ "${FORK_ONLY:-}" = "true" ] && [ "${TRACKING_KNOWN:-}" != "true" ]; }; then
-    {
-        echo "## ⚠️ The canary could not run"
-        echo
-        echo "This is a broken canary, **not** a report about keripy. One of the steps before the"
-        echo "test run failed — read the log above for which. Nothing has been measured, so no"
-        echo "conclusion about upstream drift should be drawn from this run, in either direction."
-        echo
-        echo "No issue was filed, deliberately: there is nothing yet to say."
-    } >> "$SUMMARY"
-    echo "::error title=The keripy drift canary could not run::A step before the test run failed," \
-        "so nothing was measured. This says nothing about upstream keripy."
-    exit 1
 fi
 
 DECISIONS=$(
@@ -57,37 +43,99 @@ DECISIONS=$(
 EOF
 )
 
-open_issue_number() {
-    gh issue list --repo "$REPO" --state open --limit 100 --json number,title |
-        jq -r --arg t "$1" '.[] | select(.title == $t) | .number' | head -1
+# =============================================================================================
+# Phase 1 — decide. Pure: reads the environment, touches no network.
+# =============================================================================================
+
+# pytest's exit status is five-valued and only ONE value means "tests failed": 0 passed,
+# 1 failed, 2 interrupted, 3 internal error, 4 usage error, 5 nothing collected. Collapsing
+# 2-5 into "failed" is how a mistyped marker or a broken runner gets reported as a confident
+# verdict about upstream keripy — drift that never happened, or a clean week that was never
+# measured. So classify, and treat anything above 1 as "we do not know".
+verdict_of() {
+    case "${1:-}" in
+    '') echo absent ;;
+    0) echo clean ;;
+    1) echo failed ;;
+    *) echo unmeasured ;;
+    esac
 }
 
-# File it if it is new; refresh it silently if it is already open. Never comment on each run.
-raise() {
-    local title="$1" body_file="$2" existing
-    existing=$(open_issue_number "$title")
-    if [ -n "$existing" ]; then
-        gh issue edit "$existing" --repo "$REPO" --body-file "$body_file"
-        echo "Refreshed existing issue #${existing}."
-    else
-        gh issue create --repo "$REPO" --title "$title" --body-file "$body_file"
+suite_verdict=$(verdict_of "${SUITE_RC:-}")
+landed_verdict=$(verdict_of "${LANDED_RC:-}")
+
+# Retryability is COMPUTED, following the same reasoning copilot-review-gate.yml sets out: a
+# usage error or an empty selection is a broken invocation that will break identically next
+# week, while an interruption or a half-finished setup may well not. Telling an operator not to
+# retry something a retry would fix is worse than saying nothing.
+inconclusive_code="e.self.unknown.r"
+for rc in "${SUITE_RC:-}" "${LANDED_RC:-}"; do
+    case "$rc" in
+    4 | 5) inconclusive_code="e.self.config.canary.f" ;;
+    esac
+done
+
+inconclusive=0
+if [ -z "${PINNED:-}" ] || [ "$suite_verdict" = absent ] || [ "$suite_verdict" = unmeasured ]; then
+    inconclusive=1
+fi
+# Only a fork-only pin owes these two answers. When the pin is upstream the PR search and the
+# inverse canary are both skipped, and their absence is the correct state rather than a gap.
+if [ "${FORK_ONLY:-}" = "true" ]; then
+    if [ "${TRACKING_KNOWN:-}" != "true" ]; then
+        inconclusive=1
     fi
-}
+    case "$landed_verdict" in
+    clean | failed) ;;
+    *) inconclusive=1 ;;
+    esac
+fi
 
-clear_issue() {
-    local title="$1" why="$2" existing
-    existing=$(open_issue_number "$title")
-    if [ -n "$existing" ]; then
-        gh issue close "$existing" --repo "$REPO" --comment "$why"
-        echo "Closed issue #${existing}: ${why}"
+# Landed outranks untracked, and the case that makes it matter is the ordinary one. When
+# upstream takes our work by squash or cherry-pick, our pinned SHA is still not an ancestor of
+# their main AND the PR that carried it is now closed — so the untracked test fires, and the
+# week our change is accepted we would send an alarm saying nobody is carrying it. Same facts,
+# opposite meanings; the landed measurement is the one that knows which.
+landed=0
+untracked=0
+drift=0
+if [ "$inconclusive" = 0 ]; then
+    [ "$landed_verdict" = clean ] && landed=1
+    if [ "${FORK_ONLY:-}" = "true" ] && [ -z "${TRACKING_PR:-}" ] && [ "$landed" = 0 ]; then
+        untracked=1
     fi
-}
+    [ "$suite_verdict" = failed ] && drift=1
+fi
 
-failed=0
+# =============================================================================================
+# Phase 2 — write the report where nothing can take it away. No network yet.
+# =============================================================================================
 
-# --- Question 1: a fork-only pin with nothing carrying it home -------------------------------
+if [ "$inconclusive" = 1 ]; then
+    {
+        echo "## ⚠️ The canary could not run"
+        echo
+        echo "This is a broken canary, **not** a report about keripy. Something before or during"
+        echo "the measurement did not complete — read the log above for which step. Nothing was"
+        echo "measured, so no conclusion about upstream drift should be drawn from this run, in"
+        echo "either direction."
+        echo
+        echo "No issue was filed, deliberately: there is nothing yet to say."
+        echo
+        echo "\`\`\`"
+        echo "pinned       : ${PINNED:-<unread>}"
+        echo "suite exit   : ${SUITE_RC:-<never ran>}  (${suite_verdict})"
+        echo "inverse exit : ${LANDED_RC:-<never ran>}  (${landed_verdict})"
+        echo "pr search    : ${TRACKING_KNOWN:-<never completed>}"
+        echo "\`\`\`"
+    } >> "$SUMMARY"
+    echo "::error::[${inconclusive_code}] The keripy drift canary could not complete its" \
+        "measurements, so it is reporting nothing rather than guessing. This says nothing about" \
+        "upstream keripy, in either direction."
+    exit 1
+fi
 
-if [ "${FORK_ONLY:-}" = "true" ] && [ -z "${TRACKING_PR:-}" ]; then
+if [ "$untracked" = 1 ]; then
     cat > untracked.md <<EOF
 ## What this email means
 
@@ -123,23 +171,16 @@ ${DECISIONS}
 
 <sub>Filed automatically by the keripy drift canary · [run log](${RUN_URL})</sub>
 EOF
-    raise "$UNTRACKED_TITLE" untracked.md
-    echo "::error title=Fork-only keripy pin with no upstream PR::witness depends on keripy code" \
-        "that exists only on the bakobo fork, and nothing is carrying it upstream. Nothing is" \
-        "broken; this is about divergence. See the issue this run filed."
+    echo "::error::[e.rule.fork-pin-untracked.f] witness depends on keripy code that exists only" \
+        "on the bakobo fork, and no open upstream PR is carrying it home. Nothing is broken; this" \
+        "is about divergence. The issue this run filed explains it in full."
     {
         echo "## ❌ Fork-only pin, untracked"
         cat untracked.md
     } >> "$SUMMARY"
-    failed=1
-else
-    clear_issue "$UNTRACKED_TITLE" \
-        "Cleared: the pin is either upstream now, or an open upstream PR is carrying it home."
 fi
 
-# --- Question 3: the fork-only feature has landed upstream ------------------------------------
-
-if [ "${LANDED_RC:-1}" = "0" ]; then
+if [ "$landed" = 1 ]; then
     cat > landed.md <<EOF
 ## What this email means
 
@@ -170,28 +211,23 @@ ${DECISIONS}
 
 <sub>Filed automatically by the keripy drift canary · [run log](${RUN_URL})</sub>
 EOF
-    raise "$LANDED_TITLE" landed.md
-    echo "::error title=Our fork-only keripy commits have landed upstream::Nothing is broken." \
-        "The fork-only pin is no longer necessary and should come home. See the issue this run filed."
+    echo "::error::[e.state.pin-superseded.f] Our fork-only keripy commits have landed upstream." \
+        "Nothing is broken; the fork-only pin is simply no longer necessary and should come home." \
+        "The issue this run filed explains it in full."
     {
         echo "## ❌ Fork-only features landed upstream — re-pin"
         cat landed.md
     } >> "$SUMMARY"
-    failed=1
-else
-    clear_issue "$LANDED_TITLE" "Cleared: the fork-only tests no longer pass against upstream."
 fi
 
-# --- Question 2: real upstream drift ----------------------------------------------------------
-
-if [ "${SUITE_RC:-1}" != "0" ]; then
+if [ "$drift" = 1 ]; then
     cat > drift.md <<EOF
 ## What this email means
 
 **Upstream keripy has changed under us.** witness reads several semi-internal keripy accessors
 (\`db.fels\`, \`db.clonePreIter\`, the stores beside them) rather than forking keripy, and this
-job runs the contract tests that pin their behaviour against \`${UPSTREAM}\` \`main\` every
-Monday. This week they did not all pass. Something upstream moved.
+job runs the contract tests that pin their behaviour against \`${UPSTREAM}\` every Monday. This
+week they did not all pass. Something upstream moved.
 
 |  |  |
 | --- | --- |
@@ -227,22 +263,16 @@ ${DECISIONS}
 
 <sub>Filed automatically by the keripy drift canary · [run log](${RUN_URL})</sub>
 EOF
-    raise "$DRIFT_TITLE" drift.md
-    echo "::error title=Upstream keripy moved under witness's contract tests::Nothing is broken" \
-        "right now — the pin is unchanged and production is unaffected. This is early warning that" \
-        "the next pin bump costs more. See the issue this run filed."
+    echo "::error::[e.env.keripy.drifted.f] Upstream keripy moved under the accessors witness" \
+        "rides. Nothing is broken right now — the pin is unchanged and production is unaffected." \
+        "This is early warning that the next pin bump costs more. See the issue this run filed."
     {
         echo "## ❌ Upstream drift"
         cat drift.md
     } >> "$SUMMARY"
-    failed=1
-else
-    clear_issue "$DRIFT_TITLE" "Cleared: the contract tests pass against upstream keripy again."
 fi
 
-# --- The quiet case ---------------------------------------------------------------------------
-
-if [ "$failed" = "0" ]; then
+if [ "$untracked$landed$drift" = "000" ]; then
     {
         echo "## ✅ No action needed"
         echo
@@ -262,4 +292,75 @@ if [ "$failed" = "0" ]; then
     echo "No action needed."
 fi
 
-exit "$failed"
+# =============================================================================================
+# Phase 3 — sync the issues. Everything above is already written, so a GitHub failure here costs
+# the mailed copy of the report and not the report.
+# =============================================================================================
+
+sync_failed=0
+
+note_sync_failure() {
+    sync_failed=1
+    echo "::warning::[e.env.github.unreadable.r] The canary's verdict is in the job summary" \
+        "above, but it could not $1 the GitHub issue that carries that verdict into a mailbox." \
+        "The verdict itself stands. Run the job again to sync the issue."
+}
+
+# No `head -1` in this pipeline: it closes the pipe on jq, and under `pipefail` that SIGPIPE
+# would read as "the lookup failed" on a repo with enough open issues to fill a pipe buffer.
+# jq picks the first match itself.
+open_issue_number() {
+    gh issue list --repo "$REPO" --state open --limit 100 --json number,title |
+        jq -r --arg t "$1" 'map(select(.title == $t)) | .[0].number // empty'
+}
+
+# File it if it is new; refresh it silently if it is already open. Never comment on each run.
+raise() {
+    local title="$1" body_file="$2" existing
+    if ! existing=$(open_issue_number "$title"); then
+        note_sync_failure "look up"
+        return 0
+    fi
+    if [ -n "$existing" ]; then
+        gh issue edit "$existing" --repo "$REPO" --body-file "$body_file" ||
+            note_sync_failure "refresh"
+    else
+        gh issue create --repo "$REPO" --title "$title" --body-file "$body_file" ||
+            note_sync_failure "file"
+    fi
+}
+
+clear_issue() {
+    local title="$1" why="$2" existing
+    if ! existing=$(open_issue_number "$title"); then
+        note_sync_failure "look up"
+        return 0
+    fi
+    if [ -n "$existing" ]; then
+        gh issue close "$existing" --repo "$REPO" --comment "$why" || note_sync_failure "close"
+    fi
+}
+
+if [ "$untracked" = 1 ]; then
+    raise "$UNTRACKED_TITLE" untracked.md
+else
+    clear_issue "$UNTRACKED_TITLE" \
+        "Cleared: the pin is either upstream now, or an open upstream PR is carrying it home."
+fi
+
+if [ "$landed" = 1 ]; then
+    raise "$LANDED_TITLE" landed.md
+else
+    clear_issue "$LANDED_TITLE" "Cleared: the fork-only tests no longer pass against upstream."
+fi
+
+if [ "$drift" = 1 ]; then
+    raise "$DRIFT_TITLE" drift.md
+else
+    clear_issue "$DRIFT_TITLE" "Cleared: the contract tests pass against upstream keripy again."
+fi
+
+if [ "$untracked$landed$drift" != "000" ] || [ "$sync_failed" = 1 ]; then
+    exit 1
+fi
+exit 0

@@ -56,10 +56,13 @@ jobs:
           set -euo pipefail
           pinned=$(git show HEAD:pyproject.toml | sed -n 's|.*keripy@\([0-9a-f]\{7,40\}\).*|\1|p')
           if [ -z "$pinned" ]; then
-            echo "::error title=The canary cannot find the keripy pin::pyproject.toml no longer" \
-              "matches the pattern this job parses (keripy@<hex>). Nothing was measured — this is" \
-              "a broken canary, not a report about keripy. Fix the pattern in" \
-              ".github/workflows/keripy-drift.yml."
+            # Coded per dev/standards/error-codes.md, like copilot-review-gate.yml's annotations.
+            # `.f`, computed rather than assumed: the pattern and the file disagree, and they will
+            # go on disagreeing however many times this runs.
+            echo "::error::[e.self.config.keripy-pin.f] pyproject.toml no longer matches the" \
+              "pattern this job parses (keripy@<hex>). Nothing was measured — this is a broken" \
+              "canary, not a report about keripy. Fix the pattern in" \
+              ".github/workflows/keripy-drift.yml, or the pin in pyproject.toml."
             exit 1
           fi
           echo "sha=$pinned" >> "$GITHUB_OUTPUT"
@@ -110,15 +113,25 @@ jobs:
           if ! candidates=$(gh pr list --repo "$UPSTREAM" --state open --limit 100 \
                               --json number,headRepositoryOwner \
                               --jq '.[] | select(.headRepositoryOwner.login=="bakobo") | .number'); then
-            echo "::error title=Could not ask GitHub which upstream PRs are open::The canary" \
-              "cannot tell whether an upstream PR is carrying our fork-only commits home, so it" \
-              "is reporting nothing rather than guessing. Re-run the job."
+            echo "::error::[e.env.github.unreadable.r] Could not ask GitHub which upstream PRs" \
+              "are open, so the canary cannot tell whether one is carrying our fork-only commits" \
+              "home. It is reporting nothing rather than guessing. Run the job again."
             exit 1
           fi
           found=""
           for n in $candidates; do
-            head_sha=$(gh api "repos/${UPSTREAM}/pulls/${n}" --jq .head.sha)
-            git fetch -q --filter=blob:none upstream "refs/pull/${n}/head" || continue
+            # Every failure in this loop is inconclusive, never "no PR". A fetch that 502s and a
+            # repo with no such PR are the same empty variable, and the difference between them
+            # is the difference between silence and an issue saying nobody is carrying our work
+            # upstream. `|| continue` here would have manufactured exactly that false alarm.
+            if ! head_sha=$(gh api "repos/${UPSTREAM}/pulls/${n}" --jq .head.sha) ||
+               ! git fetch -q --filter=blob:none upstream "refs/pull/${n}/head"; then
+              echo "::error::[e.env.github.unreadable.r] Could not read the head of" \
+                "${UPSTREAM}#${n}, so the canary cannot rule it in or out as the PR carrying our" \
+                "fork-only commits home. It is reporting nothing rather than guessing. Run the" \
+                "job again."
+              exit 1
+            fi
             if git merge-base --is-ancestor "$pinned" "$head_sha" 2>/dev/null; then
               found="$n"
               break
@@ -137,13 +150,21 @@ jobs:
             echo "No open upstream PR contains the pinned commit."
           fi
 
-      - name: Repoint keripy at upstream main
+      # The COMMIT the previous step resolved, not the branch name. Resolving `@main` again here
+      # would fetch whatever upstream's tip is a minute later, so a push landing mid-run would
+      # leave the tests measuring one tree and the report naming another — and the report is the
+      # whole product (@7enojuyn). Pinning the override makes the run reproducible from its own
+      # report. An override rather than an edit to the keri line, so the diff this job produces
+      # is about upstream and never about the file it edited to look there.
+      - name: Repoint keripy at the upstream commit this run measured
+        env:
+          UPSTREAM_HEAD: ${{ steps.locate.outputs.upstream_head }}
         run: |
           set -euo pipefail
-          cat >> pyproject.toml <<'EOF'
+          cat >> pyproject.toml <<EOF
 
           [tool.uv]
-          override-dependencies = ["keri @ git+https://github.com/WebOfTrust/keripy@main"]
+          override-dependencies = ["keri @ git+https://github.com/${UPSTREAM}@${UPSTREAM_HEAD}"]
           EOF
 
       - name: Install uv
@@ -170,6 +191,9 @@ jobs:
           # design here is that a test failure is DATA, so the shell must not treat it as fatal.
           set +e
           uv run --no-sync pytest --no-cov -q -m "not fork_only_keripy" > suite.log 2>&1
+          # The EXACT status, not a boolean. pytest returns 1 for failing tests but 2-5 for
+          # interrupted, internal error, usage error and no-tests-collected — and only the first
+          # of those is drift. The report step is where that distinction is applied.
           echo "rc=$?" >> "$GITHUB_OUTPUT"
           tail -40 suite.log
           exit 0
@@ -187,12 +211,15 @@ jobs:
           set +e
           uv run --no-sync pytest --no-cov -q -m "fork_only_keripy" > landed.log 2>&1
           rc=$?
+          # Again the exact status. "Failed" is the expected answer here, but "no tests were
+          # collected" is NOT — a marker typo would select nothing, exit 5, and read as the
+          # healthy week while measuring nothing at all. The report step separates them.
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          if [ "$rc" -eq 0 ]; then
-            echo "The fork-only tests PASS against upstream — the feature has landed."
-          else
-            echo "The fork-only tests fail against upstream, which is the expected result."
-          fi
+          case "$rc" in
+            0) echo "The fork-only tests PASS against upstream — the feature has landed." ;;
+            1) echo "The fork-only tests fail against upstream, which is the expected result." ;;
+            *) echo "pytest exited $rc: the marked tests were not run. Nothing was measured." ;;
+          esac
           tail -20 landed.log
           exit 0
 
