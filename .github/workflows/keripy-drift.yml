@@ -163,10 +163,16 @@ jobs:
       - name: Question 2 — has upstream moved under the accessors we ride?
         id: suite
         run: |
-          set -uo pipefail
+          # `set +e` is load-bearing and not hygiene. GitHub runs this under `bash -e {0}`, so
+          # errexit is ALREADY on and a plain `set -uo pipefail` does not clear it — the step
+          # would die on the pytest exit code before recording it, and the report step would
+          # read the missing output as "the canary could not run" instead of as drift. The whole
+          # design here is that a test failure is DATA, so the shell must not treat it as fatal.
+          set +e
           uv run --no-sync pytest --no-cov -q -m "not fork_only_keripy" > suite.log 2>&1
           echo "rc=$?" >> "$GITHUB_OUTPUT"
           tail -40 suite.log
+          exit 0
 
       # The inverse canary. These are EXPECTED to fail against upstream; passing means the feature
       # landed there and the pin should come home. Skipped entirely when the pin is already
@@ -175,7 +181,10 @@ jobs:
         id: landed
         if: steps.locate.outputs.fork_only == 'true'
         run: |
-          set -uo pipefail
+          # See the note on `set +e` above. Here it matters even more: a NON-ZERO exit is the
+          # expected, healthy answer, so letting errexit act on it would make the ordinary week
+          # a red build — the exact thing this rewrite exists to stop.
+          set +e
           uv run --no-sync pytest --no-cov -q -m "fork_only_keripy" > landed.log 2>&1
           rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
@@ -185,6 +194,7 @@ jobs:
             echo "The fork-only tests fail against upstream, which is the expected result."
           fi
           tail -20 landed.log
+          exit 0
 
       # One step writes every paragraph, so the wording cannot diverge between the annotation, the
       # summary and the issue body (@7enojuyn).
