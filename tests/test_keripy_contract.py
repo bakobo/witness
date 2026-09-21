@@ -280,6 +280,7 @@ def test_a_database_ahead_of_the_library_raises_configurationerror(tmp_path):
     assert not isinstance(caught.value, kering.DatabaseError)
 
 
+@pytest.mark.fork_only_keripy
 def test_the_pinned_keripy_carries_the_decl_stores():
     """The stores witness.reader reads declarations out of (@vqqh6zdk).
 
@@ -287,6 +288,10 @@ def test_the_pinned_keripy_carries_the_decl_stores():
     pin bump to 173678c0 and the routes behind them are proposed upstream rather than merged. If
     a later bump lands a renamed version of this feature, this fails here instead of silently
     turning every witness back into operator-config.
+
+    Marked fork_only_keripy (@enyp5khx): against upstream keripy this is EXPECTED to fail, and
+    the drift canary reads that expected failure as "still unmerged". The day it passes there,
+    WebOfTrust has taken the feature and the pin should come home — see tick ~4ky2.
     """
     db = basing.Baser(name="declcontract" + os.urandom(4).hex(), temp=True, reopen=True)
     try:

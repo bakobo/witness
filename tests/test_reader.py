@@ -686,8 +686,13 @@ class TestSignedDeclarations:
         assert answer == {"tags": ["testnet"], "source": "operator-config"}
 
 
+@pytest.mark.fork_only_keripy
 def test_a_real_signed_declaration_is_what_the_endpoint_serves(tmp_path):
     """End to end against a genuine witness database, now that the pin carries the decl routes.
+
+    Marked fork_only_keripy (@enyp5khx): hab.makeDeclTags exists only on the bakobo fork until
+    WebOfTrust/keripy takes it, so the drift canary deselects this rather than reading its
+    absence as upstream drift.
 
     Everything above this stubs the store, which proves the branching and proves nothing about
     keripy. This builds a real witness, has it declare itself test infrastructure through keripy's

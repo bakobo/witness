@@ -1,15 +1,27 @@
-name: keripy drift canary
+name: keripy drift canary — not a broken build; read the issue it files
 
 # The half of w7c4mz's bargain that did not exist yet.
 #
 # w7c4mz accepts riding semi-internal keripy accessors unforked, on the strength of a commit pin
 # plus contract tests. Together those catch drift — but only at the moment somebody bumps the pin,
 # which could be months after upstream moved and long after the cheap time to react. This job runs
-# the suite against keripy `main` on a schedule so drift surfaces while it is still small.
+# the suite against upstream keripy on a schedule so drift surfaces while it is still small.
 #
-# A FAILURE HERE IS NOT A BROKEN BUILD. It means upstream moved under us. Nothing on main is
-# affected: the pin is unchanged and ci.yml still gates every push. Read the failure, then decide
-# whether to follow keripy or record why not.
+# A FAILURE HERE IS NOT A BROKEN BUILD. Nothing on main is affected: the pin is unchanged and
+# ci.yml still gates every push.
+#
+# The job answers three separate questions and says which one it is unhappy about (@7enojuyn);
+# before 2026-09-21 it answered all three with one exit code, and the resulting failure took a
+# research session to interpret. Every outcome writes a plain-language paragraph to the job
+# summary, to an annotation, and — for anything actionable — to a GitHub issue, because an issue
+# body is the only channel here whose full text reaches a mailbox.
+#
+#   1. Is the pin fork-only, and if so does an open upstream PR carry it home? @enyp5khx says a
+#      fork-only pin is legitimate exactly while such a PR exists. No PR, red build.
+#   2. Has upstream moved under the accessors we ride? That is the original question. Tests marked
+#      fork_only_keripy are deselected first, since they cannot pass upstream by construction.
+#   3. Have the fork-only features landed upstream? Measured by running ONLY the marked tests
+#      against upstream and expecting them to FAIL. If they pass, it is time to re-pin (tick 4ky2).
 
 on:
   schedule:
@@ -18,6 +30,15 @@ on:
 
 permissions:
   contents: read
+  issues: write # @7enojuyn: the explanation has to land somewhere that emails its own body.
+
+env:
+  UPSTREAM: WebOfTrust/keripy
+  FORK: bakobo/keripy
+  # Titles are the dedup key, so they are fixed strings and not composed from run data.
+  UNTRACKED_TITLE: "keripy pin: fork-only commits with no upstream PR carrying them home"
+  DRIFT_TITLE: "keripy drift: upstream has moved under the accessors witness rides"
+  LANDED_TITLE: "keripy pin: our fork-only commits have landed upstream — time to re-pin"
 
 jobs:
   drift:
@@ -27,17 +48,102 @@ jobs:
         with:
           persist-credentials: false
 
-      # An override rather than an edit to the keri line. When heti was a dependency this was
-      # load-bearing — heti pinned keripy too, so repointing only witness's pin made the two
-      # disagree and the job failed on resolution rather than on drift (@f5j3wc, now dissolved).
-      # Kept as an override anyway: it leaves pyproject.toml's pin untouched, so the diff this
-      # job produces is about keripy's main and never about the file it edited to look there.
-      - name: Repoint keripy at main
+      # Read the pin from the committed file, never from the working tree: the next step edits
+      # pyproject.toml, and a measurement of our own edit is worth nothing.
+      - name: Read the keripy pin
+        id: pin
         run: |
+          set -euo pipefail
+          pinned=$(git show HEAD:pyproject.toml | sed -n 's|.*keripy@\([0-9a-f]\{7,40\}\).*|\1|p')
+          if [ -z "$pinned" ]; then
+            echo "::error title=The canary cannot find the keripy pin::pyproject.toml no longer" \
+              "matches the pattern this job parses (keripy@<hex>). Nothing was measured — this is" \
+              "a broken canary, not a report about keripy. Fix the pattern in" \
+              ".github/workflows/keripy-drift.yml."
+            exit 1
+          fi
+          echo "sha=$pinned" >> "$GITHUB_OUTPUT"
+          echo "Pinned keripy commit: $pinned"
+
+      # Is the pinned commit upstream, or only ours? Ancestry against the real upstream, not
+      # against the bakobo mirror of it — the mirror lags, and drift measured against a stale
+      # mirror arrives however late the mirror is (@enyp5khx).
+      - name: Locate the pin relative to upstream
+        id: locate
+        run: |
+          set -euo pipefail
+          pinned='${{ steps.pin.outputs.sha }}'
+          git init -q probe && cd probe
+          git remote add upstream "https://github.com/${UPSTREAM}"
+          git remote add fork "https://github.com/${FORK}"
+          git fetch -q --filter=blob:none upstream main:refs/remotes/upstream/main
+          git fetch -q --filter=blob:none fork "$pinned"
+          upstream_head=$(git rev-parse upstream/main)
+          echo "upstream_head=$upstream_head" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "$pinned" upstream/main; then
+            echo "fork_only=false" >> "$GITHUB_OUTPUT"
+            echo "The pin is an ancestor of ${UPSTREAM} main. Nothing fork-only in play."
+          else
+            echo "fork_only=true" >> "$GITHUB_OUTPUT"
+            git log --no-merges --format='- %h %s' "$(git merge-base "$pinned" upstream/main)..$pinned" \
+              > ../fork-only-commits.txt
+            echo "Commits we carry that ${UPSTREAM} does not:"
+            cat ../fork-only-commits.txt
+          fi
+
+      # @enyp5khx's actual rule: a fork-only pin owes an OPEN upstream PR whose head contains the
+      # pinned commit. Found by ancestry rather than by a PR number written down somewhere, so it
+      # stays right when the PR is reopened, renumbered or superseded.
+      - name: Find the upstream PR that carries the pin home
+        id: track
+        if: steps.locate.outputs.fork_only == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pinned='${{ steps.pin.outputs.sha }}'
+          cd probe
+          # Fetch the candidate list in its own statement so an API failure is distinguishable
+          # from a genuinely empty list. Reading a transient 502 as "nobody is carrying this
+          # upstream" would file an alarming issue about nothing.
+          if ! candidates=$(gh pr list --repo "$UPSTREAM" --state open --limit 100 \
+                              --json number,headRepositoryOwner \
+                              --jq '.[] | select(.headRepositoryOwner.login=="bakobo") | .number'); then
+            echo "::error title=Could not ask GitHub which upstream PRs are open::The canary" \
+              "cannot tell whether an upstream PR is carrying our fork-only commits home, so it" \
+              "is reporting nothing rather than guessing. Re-run the job."
+            exit 1
+          fi
+          found=""
+          for n in $candidates; do
+            head_sha=$(gh api "repos/${UPSTREAM}/pulls/${n}" --jq .head.sha)
+            git fetch -q --filter=blob:none upstream "refs/pull/${n}/head" || continue
+            if git merge-base --is-ancestor "$pinned" "$head_sha" 2>/dev/null; then
+              found="$n"
+              break
+            fi
+          done
+          # Only reached when the search actually completed, so the report step can tell "no PR
+          # exists" from "we never found out" and decline to alarm about the second.
+          echo "known=true" >> "$GITHUB_OUTPUT"
+          # The number and never the TITLE: a PR title is text somebody else writes, and a newline
+          # in it would forge extra lines in $GITHUB_OUTPUT. GitHub renders the title from a link.
+          if [ -n "$found" ]; then
+            echo "pr=$found" >> "$GITHUB_OUTPUT"
+            echo "Tracked by ${UPSTREAM}#${found}."
+          else
+            echo "pr=" >> "$GITHUB_OUTPUT"
+            echo "No open upstream PR contains the pinned commit."
+          fi
+
+      - name: Repoint keripy at upstream main
+        run: |
+          set -euo pipefail
           cat >> pyproject.toml <<'EOF'
 
           [tool.uv]
-          override-dependencies = ["keri @ git+https://github.com/bakobo/keripy@main"]
+          override-dependencies = ["keri @ git+https://github.com/WebOfTrust/keripy@main"]
           EOF
 
       - name: Install uv
@@ -46,29 +152,52 @@ jobs:
           python-version: "3.14"
           enable-cache: false
 
-      - name: Resolve and install against keripy main
+      - name: Resolve and install against upstream keripy
         run: |
+          set -euo pipefail
           uv lock
           uv sync
 
-      - name: Report how far the pin has fallen behind
-        run: |
-          pinned=$(git show HEAD:pyproject.toml | sed -n 's|.*keripy@\([0-9a-f]\{40\}\).*|\1|p')
-          resolved=$(python3 -c "
-          import tomllib
-          lock = tomllib.load(open('uv.lock','rb'))
-          keri = [p for p in lock['package'] if p['name'] == 'keri']
-          print(keri[0]['source']['git'].split('#')[-1])
-          ")
-          echo "pinned   : $pinned"
-          echo "main     : $resolved"
-          if [ "$pinned" = "$resolved" ]; then
-            echo "No drift: keripy main is still at the pinned commit."
-          else
-            echo "::notice::keripy main has moved from $pinned to $resolved."
-          fi
-
       # No coverage gate here. Coverage measures src/witness, which this job does not change, so
       # a coverage failure could only be noise dressed up as a drift signal.
-      - name: Run the suite against keripy main
-        run: uv run --no-sync pytest --no-cov -q
+      - name: Question 2 — has upstream moved under the accessors we ride?
+        id: suite
+        run: |
+          set -uo pipefail
+          uv run --no-sync pytest --no-cov -q -m "not fork_only_keripy" > suite.log 2>&1
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          tail -40 suite.log
+
+      # The inverse canary. These are EXPECTED to fail against upstream; passing means the feature
+      # landed there and the pin should come home. Skipped entirely when the pin is already
+      # upstream, where the question is meaningless.
+      - name: Question 3 — have our fork-only commits landed upstream?
+        id: landed
+        if: steps.locate.outputs.fork_only == 'true'
+        run: |
+          set -uo pipefail
+          uv run --no-sync pytest --no-cov -q -m "fork_only_keripy" > landed.log 2>&1
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -eq 0 ]; then
+            echo "The fork-only tests PASS against upstream — the feature has landed."
+          else
+            echo "The fork-only tests fail against upstream, which is the expected result."
+          fi
+          tail -20 landed.log
+
+      # One step writes every paragraph, so the wording cannot diverge between the annotation, the
+      # summary and the issue body (@7enojuyn).
+      - name: Say what happened, in words, wherever a human might read them
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.pin.outputs.sha }}
+          UPSTREAM_HEAD: ${{ steps.locate.outputs.upstream_head }}
+          FORK_ONLY: ${{ steps.locate.outputs.fork_only }}
+          TRACKING_PR: ${{ steps.track.outputs.pr }}
+          TRACKING_KNOWN: ${{ steps.track.outputs.known }}
+          SUITE_RC: ${{ steps.suite.outputs.rc }}
+          LANDED_RC: ${{ steps.landed.outputs.rc }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/keripy-drift-report.sh
