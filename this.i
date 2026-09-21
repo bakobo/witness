@@ -816,6 +816,39 @@ Operator layer over a stock keripy witness = goal:
             layers shared across versions, is untended accumulation rather than per-pull cost.
             Accepted tradeoff: a GHCR token must reach the deploy path.
 
+        The upgrade oracle takes over a volume the DEPLOYED image wrote = decision:
+          id: ktljhcyt
+          why: >
+            `tests/test_image_upgrade.py` accepts a second image in `WITNESS_BASELINE_IMAGE` and,
+            when one is set, drives the handover both ways: the baseline creates the volume and
+            gets a controller's inception witnessed, this image takes it over and has to serve the
+            same AID, the same key state and accept a FURTHER event — then the reverse, because
+            within an unchanged keripy pin a rollback is just redeploying the previous digest and a
+            rollback nobody has run is a hope (@7b34ohbo's argument, applied one level up).
+            WHAT THIS FIXES IS A CLAIM THAT WAS WEAKER THAN IT READ. The oracle already replaced a
+            container over a volume and checked the witness survived, but BOTH containers were the
+            same image, so what it proved was container replacement rather than version
+            compatibility. Every real upgrade is two versions by definition, and the one property
+            an operator is buying — that the new image can pick up where the old one left off — was
+            the one not under test. bakobo/infra's `bin/release-witness` had to rest its same-pin
+            claim on the two pins being textually identical, which is an argument rather than an
+            oracle.
+            THE BASELINE IS THE DIGEST PRODUCTION IS RUNNING, not merely the previous release.
+            "What we are upgrading FROM" is a fact about the estate, so the value is supplied by
+            whoever knows it — infra, at release time, or a repository variable here — rather than
+            derived from this repo's own tags, where it would be a guess that looks authoritative.
+            ABSENT RATHER THAN DEFAULTED, and the new tests SKIP with a reason naming the variable
+            when it is unset. Rejected falling back to this image as its own baseline, which is
+            what the oracle already did: the fallback would make a run with no baseline configured
+            indistinguishable in its output from a real two-version handover, which is a weaker
+            claim wearing a stronger one's clothes. A skip says what was not proven.
+            AND THE TWO KERIPY VERSIONS ARE COMPARED FIRST. When the pins differ the handover is
+            not a same-pin replacement at all but a migration crossing, which needs `kli migrate
+            run` and is a one-way door (@a24p3kbw) — so the tests skip and say so, naming both
+            versions, rather than failing in a way that reads as a broken upgrade. Rehearsing the
+            migration itself remains unbuilt and remains the larger gap; this closes the smaller
+            one and makes the larger one visible instead of implicit.
+
     Throwaway witness pools are a verb of this repo's own CLI = decision:
       id: n2bgpdds
       why: >

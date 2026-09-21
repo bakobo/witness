@@ -96,10 +96,27 @@ jobs:
       # artifact this workflow is about to publish. The pool oracle (@n2bgpdds) belongs here for
       # the same reason as the others — it is the only thing that proves the config a pool seeds
       # into a volume is a config the image's keripy actually reads.
+      # DEPLOYED_WITNESS_IMAGE is the digest the estate is currently running, set as a repository
+      # variable and updated when bakobo/infra bumps its pin (@ktljhcyt). With it, the upgrade
+      # oracle drives a real two-version handover: that digest writes the volume and this build
+      # takes it over, and back again. Without it those two tests SKIP rather than falling back to
+      # this image as its own baseline, which would prove container replacement while reading as
+      # version compatibility.
+      #
+      # The step says which case it is in, because a skip is easy to miss in a log and "we did not
+      # test the upgrade" is exactly the thing that should not pass quietly.
       - name: Run the image oracle
         env:
           WITNESS_IMAGE: ${{ steps.names.outputs.primary }}
+          WITNESS_BASELINE_IMAGE: ${{ vars.DEPLOYED_WITNESS_IMAGE }}
         run: |
+          set -euo pipefail
+          if [ -n "${WITNESS_BASELINE_IMAGE}" ]; then
+            echo "::notice::upgrade oracle baseline: ${WITNESS_BASELINE_IMAGE}"
+            docker pull --quiet "${WITNESS_BASELINE_IMAGE}"
+          else
+            echo "::warning::DEPLOYED_WITNESS_IMAGE is unset, so the two-version handover did not run — this build is not proven against the digest production is running."
+          fi
           uv run pytest tests/test_image_smoke.py tests/test_image_upgrade.py \
             tests/test_pool_oracle.py -v --no-cov
 
