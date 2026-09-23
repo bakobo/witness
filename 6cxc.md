@@ -1,0 +1,4 @@
+# bin/release-witness swallows gen-inventory's error and blames the AWS credential. Step 3 runs 'bin/gen-inventory > /dev/null 2>&1 || die e.env.tofu.unreadable.r ... aws sso login', so every failure of that command is reported as an expired token. Measured 2026-09-23 with a valid credential on a fresh worktree: the real error was 'Backend initialization required' because the roots had never been tofu init-ed there. drill/run-tier-two already has ensure_init() for exactly this, guarded on .terraform/terraform.tfstate rather than the directory, with a comment naming this failure. Fix: call the real error out of the pipe, and reuse ensure_init for the roots gen-inventory reads (prod/witness, backup/witness-backups, prod/cron, drill/host, sandbox/witness).
+kind: todo
+created: 2026-09-23T18:15Z
+
