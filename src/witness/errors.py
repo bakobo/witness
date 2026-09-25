@@ -297,3 +297,62 @@ class BackupIncomplete(WitnessError):
     code = "e.self.resource.backup.f"
     title = "I could not take a complete backup, so I took none."
     status = 500
+
+
+# --- The Registrar (@r3aonvlz) ----------------------------------------------------------------
+
+
+class RegistrarStale(WitnessError):
+    """A snapshot the Registrar already superseded: its chain is a prefix of the head held."""
+
+    code = "e.state.conflict.registrar.stale.f"
+    title = "That registry snapshot is older than the head I already hold."
+    status = 409
+
+
+class RegistrarFork(WitnessError):
+    """A snapshot whose chain neither extends nor repeats the head held."""
+
+    code = "e.state.conflict.registrar.fork.f"
+    title = "That registry snapshot does not extend the head I already hold."
+    status = 409
+
+
+class RegistrarUnauthenticated(WitnessError):
+    """The request is not signed, or its signature does not cover and match what it carries."""
+
+    code = "e.auth.signature.registrar.f"
+    title = "I could not verify a signature over that request, so I will not act on it."
+    status = 401
+
+
+class RegistrarDenied(WitnessError):
+    """The signer is genuine but is not a publisher this Registrar was configured with."""
+
+    code = "e.grant.denied.registrar.f"
+    title = "That signer may not publish to this Registrar."
+    status = 403
+
+
+class RegistrarInput(WitnessError):
+    """A request body the Registrar will not read as a publication or a subscription."""
+
+    code = "e.input.format.registrar.f"
+    title = "I could not read that request as a publication or a subscription."
+    status = 400
+
+
+class RegistrarTooLarge(WitnessError):
+    """A request body over the Registrar's bound, refused before it is read."""
+
+    code = "e.input.range.registrar.f"
+    title = "That request is larger than I will read."
+    status = 413
+
+
+class RegistrarNoSubscription(WitnessError):
+    """There is no subscription for that signer."""
+
+    code = "e.state.missing.subscription.f"
+    title = "That signer has no subscription here."
+    status = 404

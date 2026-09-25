@@ -82,6 +82,10 @@ witness backup --name witness --to /backup/2026-09-04
 
 That takes a transactionally consistent snapshot of every store — including the keystore, where the signing keys live — using LMDB's own `env.copy` from a read-only environment. See [`docs/deploying.md`](docs/deploying.md) for the restore procedure, which is a directory copy.
 
+## An issuer's Registrar
+
+`witness registrar` is a separate process that publishes an issuer's TEL heads to verifiers' Observers in signed batches, so a verifier can check revocation without ever asking the issuer. It never touches the witness. See [`docs/registrar.md`](docs/registrar.md).
+
 ## The control-plane surface
 
 Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated in this release — see the note below.

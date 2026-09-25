@@ -16,6 +16,10 @@ dependencies = [
     "keri @ git+https://github.com/bakobo/keripy@173678c0bad44203609942fd9b52134453f0d936",
     "falcon",
     "waitress",
+    # The RFC 9421 signer and verifier @s6v3qm rides, now a runtime dependency because the
+    # Registrar (@r3aonvlz) authenticates its publishers and subscribers and signs its batches with
+    # it. Pinned at the py/v0.5.0 tag rather than main: that commit is the released Python artifact.
+    "fiki @ git+https://github.com/bakobo/fiki@f1c8999bd78d9fee7661672c92a9931fae9ab6f1#subdirectory=py",
     # ops.md §7 mandates the OpenTelemetry SDK in code Bakobo writes, with OTLP on the wire
     # (@wea6qjmk). Both live only in the control-plane process, which @c7v3kp already establishes
     # cannot affect the witness, and export stays off unless a collector endpoint is configured.
@@ -30,13 +34,6 @@ witness = "witness.cli:main"
 dev = [
     "pytest>=8",
     "pytest-cov>=5",
-    # The RFC 9421 verifier @s6v3qm rides. It is a DEV dependency and not a runtime one because
-    # the auth path it serves has not landed: nothing under src/ imports fiki, and declaring a
-    # runtime dependency the package never imports would be a claim the code does not support.
-    # tests/test_fiki_contract.py holds the shape witness will call, so the assumptions are
-    # already under test when the auth work starts; move this line into `dependencies` then.
-    # Pinned at the py/v0.5.0 tag rather than main: that commit is the released Python artifact.
-    "fiki @ git+https://github.com/bakobo/fiki@f1c8999bd78d9fee7661672c92a9931fae9ab6f1#subdirectory=py",
 ]
 
 [build-system]

@@ -7,7 +7,8 @@ falcon app over it, then serves; serving is delegated to :mod:`witness.server` (
 (@n5r2vq): stock keripy witness doers plus in-loop telemetry. ``backup`` takes a consistent copy
 of every store while the witness keeps running (@7b34ohbo). ``pool`` stands up throwaway pools
 of this image for experiments (@n2bgpdds), and is the one subcommand that runs on a host rather
-than inside the container.
+than inside the container. ``registrar`` runs an issuer's Registrar, its own process that never touches the
+witness (@46t5otqe).
 """
 
 from __future__ import annotations
@@ -30,6 +31,9 @@ def main(argv=None) -> int:
         return runner.WitnessRunner(cfg).run()
     if subcommand == "pool":
         return pool.Pool(cfg).run()
+    if subcommand == "registrar":
+        from .registrar import runner as registrar_runner
+        return registrar_runner.run(cfg)
     if subcommand == "supervise":
         sup = supervisor.Supervisor(cfg.specs)
         sup.install_signal_handlers()
