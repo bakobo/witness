@@ -226,9 +226,11 @@ def _within(deadline: float, work, what: str, abandon=lambda: None, track=lambda
 
 
 def encode(batch, *, registrar: str, window_end: float) -> bytes:
-    """A batch as JSON bytes: the Registrar's AID, number, window end and every head it carries."""
+    """A batch as JSON bytes: the Registrar's AID, the subscription's nonce, the number, the
+    window end and every head it carries."""
     return json.dumps({
         "registrar": registrar,
+        "subscription": batch.subscription,
         "number": batch.number,
         "full": batch.full,
         "window_end": datetime.fromtimestamp(window_end, timezone.utc).isoformat(),

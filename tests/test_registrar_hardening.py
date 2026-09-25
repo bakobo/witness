@@ -109,7 +109,8 @@ def test_subscribing_a_private_callback_is_refused_by_default(store):
         store, publishers=frozenset(), max_age=60))
     key = fiki.Key.generate()
     headers, body = _signed_request(key, "POST", SUBSCRIPTION,
-                                    {"callback": "http://127.0.0.1:9/b"})
+                                    {"callback": "http://127.0.0.1:9/b",
+                                     "nonce": "nonce-00000000000000"})
     answer = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
     assert (answer.status_code, answer.json["code"]) == (403, "e.grant.scope.callback.f")
     assert store.subscribers() == []
@@ -139,8 +140,8 @@ class _Recorder:
 
 
 def test_a_subscription_that_disappears_mid_tick_does_not_stop_the_others(store):
-    store.subscribe("EGone", "http://a.example/batch")
-    store.subscribe("EStays", "http://b.example/batch")
+    store.subscribe("EGone", "http://a.example/batch", "nonce-00000000000000")
+    store.subscribe("EStays", "http://b.example/batch", "nonce-00000000000000")
     listed = store.subscribers()
     store.unsubscribe("EGone")
     store.subscribers = lambda: listed  # the list was taken before the unsubscribe
@@ -174,27 +175,27 @@ def test_the_batch_thread_survives_a_failing_tick(store, monkeypatch):
 # --- (4) replayed and repeated subscriptions ---------------------------------------------------
 
 def test_resubscribing_with_the_same_callback_keeps_the_sequence(store):
-    store.subscribe("EObs", "http://a.example/batch")
+    store.subscribe("EObs", "http://a.example/batch", "nonce-00000000000000")
     store.compose("EObs")
     store.compose("EObs")
-    store.subscribe("EObs", "http://a.example/batch")
+    store.subscribe("EObs", "http://a.example/batch", "nonce-00000000000000")
     assert store.compose("EObs").number == 3
 
 
 def test_a_changed_callback_continues_the_sequence(store):
-    store.subscribe("EObs", "http://a.example/batch")
+    store.subscribe("EObs", "http://a.example/batch", "nonce-00000000000000")
     store.compose("EObs")
-    store.subscribe("EObs", "http://b.example/batch")
+    store.subscribe("EObs", "http://b.example/batch", "nonce-00000000000000")
     batch = store.compose("EObs")
     assert (batch.number, batch.full) == (2, False)
     assert store.subscribers() == [("EObs", "http://b.example/batch")]
 
 
 def test_a_resubscription_after_unsubscribing_starts_again_full(store):
-    store.subscribe("EObs", "http://a.example/batch")
+    store.subscribe("EObs", "http://a.example/batch", "nonce-00000000000000")
     store.compose("EObs")
     store.unsubscribe("EObs")
-    store.subscribe("EObs", "http://a.example/batch")
+    store.subscribe("EObs", "http://a.example/batch", "nonce-00000000000000")
     batch = store.compose("EObs")
     assert (batch.number, batch.full) == (1, True)
 
@@ -205,7 +206,8 @@ def test_a_replayed_signed_subscription_request_is_refused(store):
         callbacks=CallbackPolicy(allow=("a.example",), resolve=lambda host: ["203.0.113.5"])))
     key = fiki.Key.generate()
     headers, body = _signed_request(key, "POST", SUBSCRIPTION,
-                                    {"callback": "http://a.example/batch"})
+                                    {"callback": "http://a.example/batch",
+                                     "nonce": "nonce-00000000000000"})
     assert app.simulate_post(SUBSCRIPTION, headers=headers, body=body).status_code == 200
     replay = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
     assert (replay.status_code, replay.json["code"]) == (409,
@@ -239,12 +241,14 @@ def test_a_relabelled_replay_is_refused(store):
         callbacks=CallbackPolicy(allow=("a.example",), resolve=lambda host: ["203.0.113.5"])))
     key = fiki.Key.generate()
     headers, body = _signed_request(key, "POST", SUBSCRIPTION,
-                                    {"callback": "http://a.example/batch"})
+                                    {"callback": "http://a.example/batch",
+                                     "nonce": "nonce-00000000000000"})
     assert app.simulate_post(SUBSCRIPTION, headers=headers, body=body).status_code == 200
     delete, _ = _signed_request(key, "DELETE", SUBSCRIPTION)
     assert app.simulate_delete(SUBSCRIPTION, headers=delete).status_code == 204
     fresh, body = _signed_request(key, "POST", SUBSCRIPTION,
-                                  {"callback": "http://a.example/other"})
+                                  {"callback": "http://a.example/other",
+                                   "nonce": "nonce-00000000000000"})
     assert app.simulate_post(SUBSCRIPTION, headers=fresh, body=body).status_code == 200
     relabelled = {name: value.replace("sig=", "other=", 1)
                   if name.lower() in ("signature", "signature-input") else value
@@ -260,11 +264,12 @@ def test_a_relabelled_replay_is_refused(store):
 # --- (5) caps and concurrent, bounded delivery -------------------------------------------------
 
 def test_subscriptions_are_capped_in_total(store):
-    store.subscribe("EOne", "http://a.example/1", limit=2)
-    store.subscribe("ETwo", "http://a.example/2", limit=2)
-    store.subscribe("EOne", "http://a.example/1b", limit=2)  # an existing AID is not new
+    store.subscribe("EOne", "http://a.example/1", "nonce-00000000000000", limit=2)
+    store.subscribe("ETwo", "http://a.example/2", "nonce-00000000000000", limit=2)
+    # an existing AID is not new
+    store.subscribe("EOne", "http://a.example/1b", "nonce-00000000000000", limit=2)
     with pytest.raises(RegistrarFull) as full:
-        store.subscribe("EThree", "http://a.example/3", limit=2)
+        store.subscribe("EThree", "http://a.example/3", "nonce-00000000000000", limit=2)
     assert full.value.code == "e.grant.quota.subscriptions.r"
 
 
@@ -275,8 +280,9 @@ def test_a_slow_callback_does_not_delay_the_others(store, sink):
                                                                          "hits": []}))
     threading.Thread(target=fast.serve_forever, daemon=True).start()
     try:
-        store.subscribe("ESlow", f"http://127.0.0.1:{slow_port}/slow")
-        store.subscribe("EFast", f"http://127.0.0.1:{fast.server_address[1]}/fast")
+        store.subscribe("ESlow", f"http://127.0.0.1:{slow_port}/slow", "nonce-00000000000000")
+        store.subscribe("EFast", f"http://127.0.0.1:{fast.server_address[1]}/fast",
+                        "nonce-00000000000000")
         transport = HttpTransport(timeout=0.3, policy=CallbackPolicy(allow=("127.0.0.0/8",)))
         started = time.monotonic()
         delivered = Batcher(store=store, transport=transport, window=5).tick()
@@ -362,7 +368,7 @@ def test_slow_name_resolution_counts_against_the_deadline():
 
 
 def test_an_abandoned_delivery_still_spends_its_number(store):
-    store.subscribe("ESlow", "http://slow.example/batch")
+    store.subscribe("ESlow", "http://slow.example/batch", "nonce-00000000000000")
 
     class Stalled:
         timeout = 0.2
@@ -415,7 +421,8 @@ def test_a_replay_at_the_edge_of_the_window_is_refused_even_as_the_clock_ticks(s
         store, publishers=frozenset(), max_age=60, clock=lambda: next(ticks),
         callbacks=CallbackPolicy(allow=("a.example",), resolve=lambda host: ["203.0.113.5"])))
     key = fiki.Key.generate()
-    body = json.dumps({"callback": "http://a.example/batch"}).encode()
+    body = json.dumps({"callback": "http://a.example/batch",
+                       "nonce": "nonce-00000000000000"}).encode()
     headers = fiki.sign_request(key=key, method="POST", url=BASE + SUBSCRIPTION, body=body,
                                 created=created)
     assert app.simulate_post(SUBSCRIPTION, headers=headers, body=body).status_code == 200
@@ -440,7 +447,7 @@ class _Stuck:
 
 def test_a_stuck_subscriber_gets_no_new_delivery_while_one_is_pending(store):
     stuck = _Stuck()
-    store.subscribe("EStuck", "http://stuck.example/batch")
+    store.subscribe("EStuck", "http://stuck.example/batch", "nonce-00000000000000")
     transport = HttpTransport(timeout=0.05, policy=CallbackPolicy(resolve=stuck))
     batcher = Batcher(store=store, transport=transport, window=5)
     try:
@@ -504,7 +511,7 @@ def _app(store, **extra):
 
 
 def _subscribe(app, key, callback="http://a.example/batch", created=None):
-    body = json.dumps({"callback": callback}).encode()
+    body = json.dumps({"callback": callback, "nonce": "nonce-00000000000000"}).encode()
     headers = fiki.sign_request(key=key, method="POST", url=BASE + SUBSCRIPTION, body=body,
                                 created=created)
     return app.simulate_post(SUBSCRIPTION, headers=headers, body=body), headers, body

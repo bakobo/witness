@@ -35,7 +35,7 @@ def test_a_head_is_kept_only_while_each_snapshot_extends_it(store):
 def test_a_subscription_starts_full_then_carries_only_changes(store):
     _publish(store, "r1", b"a")
     _publish(store, "r2", b"b")
-    store.subscribe("EObserver", "http://127.0.0.1:1/batch")
+    store.subscribe("EObserver", "http://127.0.0.1:1/batch", "nonce-00000000000000")
     first = store.compose("EObserver")
     assert (first.number, first.full) == (1, True)
     assert sorted(head["registry"] for head in first.heads) == ["r1", "r2"]
@@ -52,18 +52,19 @@ def test_a_subscription_starts_full_then_carries_only_changes(store):
 
 def test_unsubscribing_then_subscribing_restarts_numbering_with_a_full_batch(store):
     _publish(store, "r1", b"a")
-    store.subscribe("EObserver", "http://127.0.0.1:1/one")
+    store.subscribe("EObserver", "http://127.0.0.1:1/one", "nonce-00000000000000")
     store.compose("EObserver")
     store.compose("EObserver")
     store.unsubscribe("EObserver")
-    store.subscribe("EObserver", "http://127.0.0.1:1/two")
+    store.subscribe("EObserver", "http://127.0.0.1:1/two", "nonce-11111111111111")
     again = store.compose("EObserver")
     assert (again.number, again.full, len(again.heads)) == (1, True, 1)
+    assert again.subscription == "nonce-11111111111111"
     assert store.subscribers() == [("EObserver", "http://127.0.0.1:1/two")]
 
 
 def test_unsubscribing_ends_batches_and_reports_whether_there_was_one(store):
-    store.subscribe("EObserver", "http://127.0.0.1:1/batch")
+    store.subscribe("EObserver", "http://127.0.0.1:1/batch", "nonce-00000000000000")
     assert store.unsubscribe("EObserver") is True
     assert store.unsubscribe("EObserver") is False
     assert store.subscribers() == []
@@ -74,7 +75,7 @@ def test_heads_subscriptions_numbers_and_key_survive_a_restart(tmp_path):
     first = RegistrarStore(path)
     aid = first.key().aid
     _publish(first, "r1", b"rip+iss+rev")
-    first.subscribe("EObserver", "http://127.0.0.1:1/batch")
+    first.subscribe("EObserver", "http://127.0.0.1:1/batch", "nonce-00000000000000")
     first.compose("EObserver")
     first.close()
 
@@ -107,3 +108,11 @@ def test_the_store_holding_the_signing_seed_is_owner_only(tmp_path):
         assert stat.S_IMODE(os.stat(state / "registrar.sqlite3").st_mode) == 0o600
     finally:
         opened.close()
+
+
+def test_repeating_a_subscription_replaces_its_nonce_and_continues_its_numbers(store):
+    store.subscribe("EObserver", "http://127.0.0.1:1/batch", "nonce-00000000000000")
+    assert store.compose("EObserver").subscription == "nonce-00000000000000"
+    store.subscribe("EObserver", "http://127.0.0.1:1/batch", "nonce-22222222222222")
+    batch = store.compose("EObserver")
+    assert (batch.number, batch.subscription) == (2, "nonce-22222222222222")

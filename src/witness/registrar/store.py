@@ -35,13 +35,16 @@ class Batch:
     number: int
     full: bool
     heads: tuple[dict, ...]
+    subscription: str
+    """The nonce the subscriber chose, which it checks every batch against (@jpag4sof)."""
 
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS heads (registry TEXT PRIMARY KEY, issuer TEXT NOT NULL, "
     "digest TEXT NOT NULL, chain BLOB NOT NULL, kel BLOB NOT NULL, changed INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS subscribers (aid TEXT PRIMARY KEY, callback TEXT NOT NULL, "
-    "number INTEGER NOT NULL, seen INTEGER NOT NULL, full INTEGER NOT NULL)",
+    "number INTEGER NOT NULL, seen INTEGER NOT NULL, full INTEGER NOT NULL, "
+    "nonce TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value BLOB NOT NULL)",
     "CREATE TABLE IF NOT EXISTS sightings (aid TEXT NOT NULL, created INTEGER NOT NULL, "
     "signature BLOB NOT NULL, PRIMARY KEY (aid, created, signature))",
@@ -169,9 +172,10 @@ class RegistrarStore:
         self._db.execute("INSERT INTO sightings VALUES (?, ?, ?)",
                          (aid, sighting.created, sighting.signature))
 
-    def subscribe(self, aid: str, callback: str, *, limit: int | None = None,
+    def subscribe(self, aid: str, callback: str, nonce: str, *, limit: int | None = None,
                   sighting: Sighting | None = None) -> None:
-        """Subscribe ``aid``, or update its callback without disturbing its sequence.
+        """Subscribe ``aid`` under ``nonce``, or update its callback and nonce without disturbing
+        its sequence. Every batch composed for the subscription carries the nonce.
 
         A new subscription starts at number 1 with a full batch. Repeating a subscription, or
         moving it to a new callback, continues the sequence, so a replayed or retried request
@@ -181,13 +185,15 @@ class RegistrarStore:
         with self._tx():
             self._record(aid, sighting)
             if self._db.execute("SELECT 1 FROM subscribers WHERE aid=?", (aid,)).fetchone():
-                self._db.execute("UPDATE subscribers SET callback=? WHERE aid=?", (callback, aid))
+                self._db.execute("UPDATE subscribers SET callback=?, nonce=? WHERE aid=?",
+                                 (callback, nonce, aid))
                 return
             count, = self._db.execute("SELECT COUNT(*) FROM subscribers").fetchone()
             if limit is not None and count >= limit:
                 raise RegistrarFull(f"This Registrar already has {count} subscriptions, its "
                                     "limit.", args=[count])
-            self._db.execute("INSERT INTO subscribers VALUES (?, ?, 0, 0, 1)", (aid, callback))
+            self._db.execute("INSERT INTO subscribers VALUES (?, ?, 0, 0, 1, ?)",
+                             (aid, callback, nonce))
 
     def unsubscribe(self, aid: str, *, sighting: Sighting | None = None) -> bool:
         """End ``aid``'s subscription. With a ``sighting``, a missing subscription is refused
@@ -232,11 +238,11 @@ class RegistrarStore:
         a batch sees a gap rather than a silently skipped window (@3m2eys6w).
         """
         with self._tx():
-            row = self._db.execute("SELECT number, seen, full FROM subscribers WHERE aid=?",
-                                   (aid,)).fetchone()
+            row = self._db.execute("SELECT number, seen, full, nonce FROM subscribers "
+                                   "WHERE aid=?", (aid,)).fetchone()
             if row is None:
                 raise RegistrarNoSubscription(f"{aid} has no subscription here.", args=[aid])
-            number, seen, full = row
+            number, seen, full, nonce = row
             change = self._change()
             rows = self._db.execute(
                 "SELECT registry, issuer, digest, chain, kel FROM heads"
@@ -244,7 +250,7 @@ class RegistrarStore:
                 () if full else (seen,)).fetchall()
             self._db.execute("UPDATE subscribers SET number=?, seen=?, full=0 WHERE aid=?",
                              (number + 1, change, aid))
-        return Batch(number + 1, bool(full), tuple(_head(row) for row in rows))
+        return Batch(number + 1, bool(full), tuple(_head(row) for row in rows), nonce)
 
 
 def _head(row) -> dict:

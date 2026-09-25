@@ -37,8 +37,8 @@ def _batch(sent):
 
 def test_each_window_sends_one_signed_batch_to_each_subscriber(store):
     store.publish(registry="r1", issuer="EIssuer", digest="d1", chain=b"rip", kel=b"kel")
-    store.subscribe("EObserverA", "http://127.0.0.1:1/a")
-    store.subscribe("EObserverB", "http://127.0.0.1:1/b")
+    store.subscribe("EObserverA", "http://127.0.0.1:1/a", "nonce-of-observer-a0")
+    store.subscribe("EObserverB", "http://127.0.0.1:1/b", "nonce-of-observer-b0")
     transport = Recorder()
     batcher = Batcher(store=store, transport=transport, window=5, clock=lambda: 1000.0)
     assert batcher.tick() == 2
@@ -50,6 +50,9 @@ def test_each_window_sends_one_signed_batch_to_each_subscriber(store):
     assert "content-digest" in verdict.covered
     batch = json.loads(body)
     assert batch["registrar"] == store.key().aid
+    assert sorted(json.loads(sent)["subscription"] for _, sent, _ in transport.sent) == \
+        ["nonce-of-observer-a0", "nonce-of-observer-b0"], \
+        "each batch names, under the signature, the subscription it was sent for"
     assert (batch["number"], batch["full"], batch["window_end"]) == \
         (1, True, "1970-01-01T00:16:40+00:00")
     head, = batch["heads"]
@@ -58,7 +61,7 @@ def test_each_window_sends_one_signed_batch_to_each_subscriber(store):
 
 
 def test_a_quiet_window_still_sends_an_empty_batch(store):
-    store.subscribe("EObserver", "http://127.0.0.1:1/a")
+    store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000")
     transport = Recorder()
     batcher = Batcher(store=store, transport=transport, window=5, clock=lambda: 0.0)
     batcher.tick()
@@ -68,7 +71,7 @@ def test_a_quiet_window_still_sends_an_empty_batch(store):
 
 
 def test_a_failed_delivery_consumes_its_number_so_the_observer_sees_a_gap(store):
-    store.subscribe("EObserver", "http://127.0.0.1:1/a")
+    store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000")
     batcher = Batcher(store=store, transport=Recorder(fail=True), window=5, clock=lambda: 0.0)
     assert batcher.tick() == 0
     transport = Recorder()
@@ -77,7 +80,7 @@ def test_a_failed_delivery_consumes_its_number_so_the_observer_sees_a_gap(store)
 
 
 def test_the_loop_ticks_every_window_until_stopped(store):
-    store.subscribe("EObserver", "http://127.0.0.1:1/a")
+    store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000")
     transport = Recorder()
     batcher = Batcher(store=store, transport=transport, window=0.01, clock=lambda: 0.0)
     stop = threading.Event()

@@ -14,6 +14,7 @@ from witness.registrar.store import RegistrarStore
 
 BASE = "http://falconframework.org"
 PUBLICATION = "/v1/registrar/publication"
+NONCE = "subscription-nonce-000000"
 SUBSCRIPTION = "/v1/registrar/subscription"
 
 
@@ -123,7 +124,7 @@ def test_any_signer_can_subscribe_once_and_unsubscribe(client):
     app, store = client
     observer = fiki.Key.generate()
     answer = _signed(app, observer, "POST", SUBSCRIPTION,
-                     {"callback": "http://127.0.0.1:9000/batch"})
+                     {"callback": "http://127.0.0.1:9000/batch", "nonce": NONCE})
     assert (answer.status_code, answer.json) == (200, {"subscriber": observer.aid,
                                                        "registrar": store.key().aid})
     assert store.subscribers() == [(observer.aid, "http://127.0.0.1:9000/batch")]
@@ -136,7 +137,25 @@ def test_any_signer_can_subscribe_once_and_unsubscribe(client):
                                       "http://" + "h" * 300 + "/", "http://[::1"])
 def test_a_subscription_needs_an_http_callback(client, callback):
     app, store = client
-    answer = _signed(app, fiki.Key.generate(), "POST", SUBSCRIPTION, {"callback": callback})
+    answer = _signed(app, fiki.Key.generate(), "POST", SUBSCRIPTION,
+                     {"callback": callback, "nonce": NONCE})
+    assert (answer.status_code, answer.json["code"]) == (400, "e.input.format.registrar.f")
+    assert store.subscribers() == []
+
+
+@pytest.mark.parametrize("document", [
+    {"callback": "http://127.0.0.1:9000/batch"},
+    {"callback": "http://127.0.0.1:9000/batch", "nonce": "short"},
+    {"callback": "http://127.0.0.1:9000/batch", "nonce": "n" * 65},
+    {"callback": "http://127.0.0.1:9000/batch", "nonce": "not base64url!!!!"},
+    {"callback": "http://127.0.0.1:9000/batch", "nonce": 12345678901234567},
+    {"callback": "http://127.0.0.1:9000/batch", "nonce": NONCE, "extra": 1},
+])
+def test_a_subscription_names_its_nonce(client, document):
+    """Every batch carries the subscription's nonce, so a subscription without one is refused
+    (this.i @jpag4sof)."""
+    app, store = client
+    answer = _signed(app, fiki.Key.generate(), "POST", SUBSCRIPTION, document)
     assert (answer.status_code, answer.json["code"]) == (400, "e.input.format.registrar.f")
     assert store.subscribers() == []
 

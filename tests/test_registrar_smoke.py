@@ -72,7 +72,8 @@ def test_console_script_publishes_and_pushes_a_signed_batch(tmp_path):
             "registry": "EReg", "issuer": "EIss", "digest": "d1", "chain": chain,
             "kel": base64.b64encode(b"kel").decode()}) == {"digest": "d1"}
         callback = f"http://127.0.0.1:{sink.server_address[1]}/batch"
-        answer = _post(f"{base}/v1/registrar/subscription", observer, {"callback": callback})
+        answer = _post(f"{base}/v1/registrar/subscription", observer,
+                       {"callback": callback, "nonce": "nonce-00000000000000"})
         assert answer["registrar"] == announced["aid"]
         assert arrived.wait(10), "no batch arrived within the window"
         url, headers, body = received[0]
@@ -80,6 +81,7 @@ def test_console_script_publishes_and_pushes_a_signed_batch(tmp_path):
                             expected_aid=announced["aid"])
         batch = json.loads(body)
         assert (batch["number"], batch["full"]) == (1, True)
+        assert batch["subscription"] == "nonce-00000000000000"
         assert batch["heads"][0]["chain"] == chain
     finally:
         proc.terminate()

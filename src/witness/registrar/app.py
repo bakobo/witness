@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 import threading
 import time
 from urllib.parse import urlsplit
@@ -120,13 +121,19 @@ def _is_http_url(text: str) -> bool:
         return False
 
 
-def _callback(document: dict) -> str:
-    callback = document.get("callback")
-    if set(document) != {"callback"} or not isinstance(callback, str) or \
-            len(callback) > MAX_URL or not _is_http_url(callback):
+_NONCE = re.compile(r"[A-Za-z0-9_-]{16,64}")
+
+
+def _subscription(document: dict) -> tuple[str, str]:
+    """A subscription's callback and nonce; every batch for it will carry the nonce
+    (@jpag4sof)."""
+    callback, nonce = document.get("callback"), document.get("nonce")
+    if set(document) != {"callback", "nonce"} or not isinstance(callback, str) or \
+            len(callback) > MAX_URL or not _is_http_url(callback) or \
+            not isinstance(nonce, str) or not _NONCE.fullmatch(nonce):
         raise RegistrarInput(f"A subscription names one http(s) callback of at most {MAX_URL} "
-                             "characters.")
-    return callback
+                             "characters and a nonce of 16 to 64 base64url characters.")
+    return callback, nonce
 
 
 class _Resource:
@@ -209,11 +216,11 @@ class Subscription(_Resource):
         def act():
             body = _body(req)
             signer, now = _signer(req, body, self.max_age, clock=self.clock)
-            callback = _callback(_object(body))
+            callback, nonce = _subscription(_object(body))
             self._admit(callback)  # refused here too, not only at delivery
             # The replay record and the subscription commit together, so a refused request
             # leaves nothing behind and its retry is not mistaken for a replay.
-            self.store.subscribe(signer, callback, limit=self.max_subscriptions,
+            self.store.subscribe(signer, callback, nonce, limit=self.max_subscriptions,
                                  sighting=self._sighting(req, now))
             return 200, {"subscriber": signer, "registrar": self.store.key().aid}
         self._answer(req, resp, act)
