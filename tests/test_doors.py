@@ -91,6 +91,11 @@ ACCOUNTED = {
         "pool, so the caller decides what it means. Not a door because nothing downstream trusts "
         "the value: it is displayed or compared, never used as authority."
     ),
+    "store.py::RegistrarStore.__init__": (
+        "exempt: the lock file is opened only to hold an exclusive flock on the Registrar's state "
+        "directory, so a second Registrar on the same store refuses to start. Nothing is read "
+        "from it."
+    ),
     "backup.py::back_up": (
         "exempt: output, not input. This opens the manifest for writing; nothing is read."
     ),

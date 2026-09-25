@@ -967,3 +967,175 @@ Operator layer over a stock keripy witness = goal:
         so it will push a feature branch (wanted, it feeds the PR) and will push `main` if a commit
         is ever left sitting there (not wanted, and it would bypass). Keeping work off `main`
         locally is what makes the nightly job safe here, rather than any setting in the job.
+
+    This repo also hosts an issuer's Registrar  co-hosted with its witnesses = decision:
+      id: r3aonvlz
+      why: >
+        ACDC revocation needs a verifier to learn TEL state without asking the issuer at
+        verification time: "a registry consulted at verification time is a phone-home in
+        disguise" (keri-bible 05 §9). The spec's answer is a Registrar under the Issuer and an
+        Observer under the verifier, and Sam Smith presents that split as the witness/watcher
+        governance structure replayed one layer up: controllers run witnesses, verifiers run
+        watchers; issuers run Registrars, verifiers run Observers. So the Registrar lives beside
+        the issuer's witnesses, in this repo, and the Observer lives with the verifier (heti).
+        Neither keripy nor keri-foundation has an implementation or a wire protocol (keripy
+        registraring.py is a docstring stub, keri-foundation/registrar a placeholder), so the
+        protocol below is ours and says so; it is a SEDI Summit demo first (brief 6, Daniel's
+        Q-CW26 and R-YSGN), not a claim to be the standard. Rejected putting the Registrar in imbu,
+        which would merge issuing with publishing and make the issuer's API the thing a verifier
+        subscribes to; rejected publishing to verifier-run infrastructure, which puts the issuer
+        in the verifier's governance.
+      children:
+
+        The Registrar is its own process and never touches the witness = decision:
+          id: 46t5otqe
+          why: >
+            @c7v3kp forbids anything that could stall or corrupt the served witness, so the
+            Registrar runs as its own process role, `witness registrar`, with its own store, and
+            reads nothing of the witness's LMDB. It is co-hosted with the witnesses in the sense of
+            governance and deployment, not of address space. This makes the CLI four subcommands,
+            amending @ixdaut53's three by @g3w6px's one-entry-point argument. Accepted tradeoff:
+            one more process to supervise when an issuer runs both.
+
+        The Registrar trusts its publisher and judges nothing cryptographically = decision:
+          id: 5m2m4ozz
+          why: >
+            The Registrar accepts TEL snapshots (a registry's whole chain from rip to head, plus the
+            issuer KEL that anchors it) only from publishers it is configured with, each
+            authenticating by RFC 9421 via fiki (@s6v3qm); an unauthenticated POST is
+            refused. It keeps a snapshot only if its chain extends the head already held, byte for
+            byte, so a late or forked snapshot is refused with a named code and never replaces a
+            newer head. It does NOT verify anchors against the issuer's KEL: the Observer must
+            never rely on the Registrar's word (brief 6), so the verification that matters happens
+            there, under the verifier's governance and with the keripy imbu and heti share. A second
+            verification here, against this repo's own keripy pin (@w7c4mz), which is not heti's,
+            could only add a way for two readings of one chain to disagree. Accepted tradeoff: a
+            Registrar will
+            relay a well-formed chain its issuer should not have published; the Observer refuses it.
+
+        Observers subscribe once  and the Registrar pushes batches on a clock = decision:
+          id: ed3dkgl5
+          why: >
+            An Observer subscribes once, naming a callback URL and signing with its own key, and
+            may unsubscribe the same way. The Registrar then pushes; there is no pull, poll or
+            per-registry query endpoint at all, so no verification anywhere can cause Registrar
+            traffic (brief 6's falsifier counts those requests and wants zero). Pushes are batched
+            on a clock of window W: each batch carries every registry whose head changed in the
+            window, so an Observer cannot tell which change preceded which validation, and a
+            change is not published the instant it happens. Batching is a privacy requirement, not
+            a performance one: "if all the registries, 100% of them update at the same clock time"
+            there is nothing to correlate (Sam Smith, The Digital Identity Tradespace).
+          children:
+
+            Every window sends one signed batch  empty when nothing changed = decision:
+              id: 3m2eys6w
+              why: >
+                Daniel approved this 2026-09-24 (Q-ZGF7) as a TEMPORARY DEMO KLUDGE, to be replaced
+                by a webhook, SSE or better (tick ~7nq3). A verifier refuses a head older than its
+                freshness bound F, and if quiet windows sent nothing, an Observer could not tell
+                "nothing changed" from "the Registrar is cut off": either valid credentials go stale,
+                or blocking the Registrar freezes a revoked credential as valid. So every window W
+                sends exactly one batch, signed by the Registrar's own key, carrying a monotonic
+                batch number and the window's end time, empty when nothing changed. The Observer
+                measures freshness from its last batch and treats a gap in batch numbers as a
+                refusal condition. Constant-rate batches also hide WHETHER anything changed in a
+                window. The transport sits behind one small seam, so replacing it is local.
+
+            A subscription begins with a batch holding every head = decision:
+              id: spxbqxaa
+              why: >
+                A batch carries only the registries that changed in its window, so an Observer that
+                subscribes after issuance, or resubscribes after missing a batch, would never learn a
+                head that does not change again. The first batch of every subscription therefore
+                holds every head the Registrar has, and later batches carry changes only. This is
+                also how an Observer recovers from a gap in batch numbers: it unsubscribes and
+                subscribes again, which starts a new sequence with a full batch (heti this.i
+                @4fgkgc3t). Repeating a live subscription does not restart it; see @o64bkgtl.
+                Accepted tradeoff: one full-size batch per new subscription, whose size reveals how
+                many registries the issuer has, which is public anyway.
+
+            The built-in batch window is herd-privacy sized  and the demo overrides it = decision:
+              id: xx6tjfxy
+              why: >
+                The window trades privacy against revocation latency: longer windows put more
+                registries in each batch and make timing less informative, and shorter windows make
+                a revocation take effect sooner. The Registrar's own default is sized for herd
+                privacy, minutes rather than seconds (tick ~2db3 chooses the production value), and
+                it is always configuration, never code. The SEDI Summit harness overrides it with a
+                5-10 s stage value, because an audience cannot wait minutes. Rejected a stage-sized
+                default, which would ship the weakest privacy setting to anyone who forgot to set it.
+
+        A callback is an untrusted destination  and delivery is bounded = decision:
+          id: qgacju62
+          why: >
+            Any signer may subscribe, so a callback URL is attacker-chosen, and delivering to it
+            makes the Registrar an HTTP client on the attacker's behalf (Codex and Copilot on
+            PR #19). So a callback must resolve only to public addresses unless the operator
+            allows a host name or CIDR (the demo's Observer is on loopback, allowed explicitly in
+            the harness config); the address checked is the address connected to; redirects are
+            never followed. Subscriptions are capped in total, by configuration; each AID has at
+            most one, because a subscription's identity is its AID. Batches are delivered
+            concurrently, each under one wall-clock deadline of at most half the window, covering
+            name resolution, connect, send and read together (a per-read socket timeout would let
+            a trickling callback live on), and that deadline is its own setting, not the inbound
+            freshness bound. A delivery past its deadline is abandoned, so one slow or dead
+            callback cannot delay anyone else's heartbeat, and a failed delivery still spends its
+            number. An abandoned thread cannot be killed (a resolver may never return), so no new
+            delivery starts to a callback whose earlier one is still alive, which spends that
+            window's number like any failure, and delivery threads alive at once, abandoned ones
+            included, are capped globally; the check and the claim on a slot are one atomic step,
+            so two concurrent sends cannot both pass it. A socket that a connect completes only
+            after the deadline is closed at once rather than used. Admission is bounded the same
+            way: resolving a callback at subscription time has its own deadline, and resolutions
+            alive at once are capped, so a stalled resolver cannot hold a request thread. One failing
+            subscriber, or one failing window, never ends the batch thread.
+
+        The Registrar's state survives a restart = decision:
+          id: oxtmbdfq
+          why: >
+            Subscribers, the newest head per registry, and the batch counter persist in the
+            Registrar's own store, so a restart neither forgets who to push to, accepts a stale
+            snapshot it had already superseded, nor reuses a batch number an Observer has seen
+            (which the Observer would read as a replay). Rejected in-memory state, which the demo's
+            stand-in observer had and which F-K7N4 records as a defect.
+          children:
+            One Registrar per store  every read-modify-write in one transaction = decision:
+              id: o64bkgtl
+              why: >
+                A thread lock cannot protect a store from a second process, and a read taken
+                outside the write's transaction can be stale by the time it is used: two
+                Registrars on one store could each accept a different extension of the same head
+                or both issue batch number 1 (Codex on PR #19). So the Registrar holds an exclusive
+                lock on its database file, resolved through any symlink so that two paths to one
+                file are one store, for its lifetime and refuses to start without it, and every
+                read-modify-write runs under BEGIN IMMEDIATE. Subscribing is idempotent: a
+                repeated subscription, or one moving to a new callback, continues its sequence
+                rather than restarting it, and a signed subscribe or unsubscribe already seen
+                inside its freshness window is refused, keyed on signer, created time and the
+                signature's decoded bytes, never the header text, whose label is unsigned. A
+                sighting is kept for the verifier's whole acceptance window, max age plus the
+                clock skew fiki tolerates, one shared constant, and the clock is read once per
+                request: the verifier judges freshness and the store prunes at the same instant, so
+                a sighting is never pruned while the verifier would still accept its request. A
+                sighting is recorded in the same transaction as the subscribe or unsubscribe it
+                protects, so a refused request leaves nothing behind and can be retried, and the
+                sightings held are capped per signer and in total, so replay protection cannot
+                be made to grow the store without bound.
+                There is no migration for sightings recorded as header text by an earlier build:
+                this PR introduces the Registrar, and no Registrar store has existed outside tests.
+                Publications are exempt from that replay check because a replayed publication
+                changes nothing (an exact repeat is re-acknowledged, anything older is stale) and a
+                publisher retrying one snapshot produces byte-identical signatures. The state
+                directory and database are owner-only, since they hold the signing seed.
+            Every batch names the subscription it was sent for = decision:
+              id: jpag4sof
+              why: >
+                A subscription carries a random nonce its Observer chooses, and every batch the
+                Registrar signs for that subscription includes it as "subscription". Without it
+                nothing in a signed batch said which subscription it belonged to, so a captured
+                full batch 1 from an earlier subscription, still inside its signature's age, could
+                be replayed to an Observer that had just resubscribed after a restart and close
+                its gap with old heads (Codex on heti#21). The Observer refuses any batch whose
+                nonce is not its current one. A subscribe must carry the nonce (16 to 64
+                base64url characters) or it is refused; repeating a subscription replaces the
+                nonce with the new one and, as before, continues the numbering.

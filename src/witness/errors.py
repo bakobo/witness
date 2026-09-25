@@ -297,3 +297,110 @@ class BackupIncomplete(WitnessError):
     code = "e.self.resource.backup.f"
     title = "I could not take a complete backup, so I took none."
     status = 500
+
+
+# --- The Registrar (@r3aonvlz) ----------------------------------------------------------------
+
+
+class RegistrarStale(WitnessError):
+    """A snapshot the Registrar already superseded: its chain is a prefix of the head held."""
+
+    code = "e.state.conflict.registrar.stale.f"
+    title = "That registry snapshot is older than the head I already hold."
+    status = 409
+
+
+class RegistrarFork(WitnessError):
+    """A snapshot whose chain neither extends nor repeats the head held."""
+
+    code = "e.state.conflict.registrar.fork.f"
+    title = "That registry snapshot does not extend the head I already hold."
+    status = 409
+
+
+class RegistrarUnauthenticated(WitnessError):
+    """The request is not signed, or its signature does not cover and match what it carries."""
+
+    code = "e.id.invalid.registrar.f"
+    title = "I could not verify a signature over that request, so I will not act on it."
+    status = 401
+
+
+class RegistrarDenied(WitnessError):
+    """The signer is genuine but is not a publisher this Registrar was configured with."""
+
+    code = "e.grant.missing.publisher.f"
+    title = "That signer may not publish to this Registrar."
+    status = 403
+
+
+class RegistrarInput(WitnessError):
+    """A request body the Registrar will not read as a publication or a subscription."""
+
+    code = "e.input.format.registrar.f"
+    title = "I could not read that request as a publication or a subscription."
+    status = 400
+
+
+class RegistrarTooLarge(WitnessError):
+    """A request body over the Registrar's bound, refused before it is read."""
+
+    code = "e.input.range.registrar.f"
+    title = "That request is larger than I will read."
+    status = 413
+
+
+class RegistrarNoSubscription(WitnessError):
+    """There is no subscription for that signer."""
+
+    code = "e.state.missing.subscription.f"
+    title = "That signer has no subscription here."
+    status = 404
+
+
+class RegistrarInstance(WitnessError):
+    """Another Registrar process already owns this state directory."""
+
+    code = "e.state.conflict.registrar.instance.f"
+    title = "Another Registrar is already using that state directory."
+    status = 409
+
+
+class RegistrarReplay(WitnessError):
+    """A signed request this Registrar has already acted on, presented again while still fresh."""
+
+    code = "e.state.conflict.registrar.replay.f"
+    title = "I have already acted on that exact signed request."
+    status = 409
+
+
+class RegistrarFull(WitnessError):
+    """The Registrar has as many subscriptions as it is configured to hold."""
+
+    code = "e.grant.quota.subscriptions.r"
+    title = "I cannot take another subscription right now."
+    status = 429
+
+
+class RegistrarCallbackRefused(WitnessError):
+    """A callback that resolves to a destination this Registrar is not allowed to contact."""
+
+    code = "e.grant.scope.callback.f"
+    title = "I will not deliver batches to that callback."
+    status = 403
+
+
+class RegistrarQuota(WitnessError):
+    """Too many signed requests are already remembered for replay protection."""
+
+    code = "e.grant.quota.requests.r"
+    title = "I am already remembering as many recent requests as I will hold."
+    status = 429
+
+
+class RegistrarResolverTimeout(WitnessError):
+    """A callback host did not resolve within the admission deadline."""
+
+    code = "e.env.resolver.timeout.r"
+    title = "I could not resolve that callback host in time."
+    status = 503

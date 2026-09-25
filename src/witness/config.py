@@ -8,6 +8,7 @@ Parsing fails closed: any malformed or missing argument raises a typed
 from __future__ import annotations
 
 import argparse
+import re
 import os
 from dataclasses import dataclass, field
 
@@ -103,6 +104,38 @@ class PoolConfig:
     fmt: str = "json"
     all_pools: bool = False
     timeout: float = _DEFAULT_POOL_TIMEOUT
+
+
+REGISTRAR_DEFAULT_WINDOW = 900.0
+"""The Registrar's built-in batch window, in seconds (@xx6tjfxy).
+
+Sized for herd privacy rather than for a demo: fifteen minutes puts every registry that changed in
+a quarter hour into one batch, so batch timing says little about any one change. ~2db3 — the
+production value is not chosen yet. A stage demo overrides this with seconds, on the command
+line."""
+
+REGISTRAR_DEFAULT_MAX_AGE = 60
+"""How old, in seconds, a signed request may be. fiki has no default on purpose (@s6v3qm)."""
+
+_NONTRANSFERABLE_AID = re.compile(r"B[A-Za-z0-9_-]{43}")
+
+
+@dataclass(frozen=True)
+class RegistrarConfig:
+    """Resolved configuration for ``witness registrar`` (@46t5otqe)."""
+
+    store: str
+    host: str
+    port: int
+    publishers: tuple[str, ...]
+    window: float = REGISTRAR_DEFAULT_WINDOW
+    max_age: int = REGISTRAR_DEFAULT_MAX_AGE
+    #: Callback destinations beyond public addresses, as host names or CIDRs (@ed3dkgl5).
+    allow_callbacks: tuple[str, ...] = ()
+    max_subscriptions: int = 64
+    #: Seconds one delivery may take; at most half the window, so one slow callback cannot
+    #: reach into the next window. Separate from max_age, which is about inbound freshness.
+    delivery_timeout: float = 10.0
 
 
 @dataclass(frozen=True)
@@ -211,6 +244,24 @@ def _build_parser() -> _RaisingParser:
         "--force", action="store_true", help="Replace an existing backup at that destination."
     )
 
+    reg = sub.add_parser("registrar", help="Run an issuer's Registrar (@r3aonvlz).")
+    reg.add_argument("--store", required=True, help="The directory the Registrar keeps state in.")
+    reg.add_argument("--host", default="127.0.0.1", help="The host/interface to bind.")
+    reg.add_argument("--port", required=True, type=int, help="The TCP port to bind.")
+    reg.add_argument("--publisher", action="append", default=[], dest="publishers",
+                     help="The AID of a publisher allowed to publish here. Repeatable; required.")
+    reg.add_argument("--window", type=float, default=REGISTRAR_DEFAULT_WINDOW,
+                     help="Seconds between batches (default: a herd-privacy-sized window).")
+    reg.add_argument("--max-age", type=int, default=REGISTRAR_DEFAULT_MAX_AGE,
+                     help="How old, in seconds, a signed request may be.")
+    reg.add_argument("--allow-callback", action="append", default=[], dest="allow_callbacks",
+                     help="A host name or CIDR that subscriber callbacks may reach besides public "
+                          "addresses (e.g. 127.0.0.0/8 for an Observer on this host). Repeatable.")
+    reg.add_argument("--max-subscriptions", type=int, default=64,
+                     help="How many subscriptions this Registrar holds at most.")
+    reg.add_argument("--delivery-timeout", type=float, default=None,
+                     help="Seconds one batch delivery may take (default: 10, or a quarter of "
+                          "the window if that is shorter).")
     run = sub.add_parser("run", help="Run the keripy witness with in-loop telemetry.")
     run.add_argument("--name", default="witness", help="The witness keystore/database name.")
     run.add_argument("--alias", default=None, help="The hab alias. Defaults to --name.")
@@ -364,6 +415,34 @@ def _runner_config(ns) -> RunnerConfig:
     )
 
 
+def _registrar_config(ns) -> RegistrarConfig:
+    if not ns.publishers:
+        raise InvalidArguments("A Registrar needs at least one --publisher.")
+    for aid in ns.publishers:
+        if not _NONTRANSFERABLE_AID.fullmatch(aid):
+            raise InvalidArguments(f"--publisher {aid!r} is not a non-transferable AID.")
+    if not ns.window > 0:
+        raise InvalidArguments("--window must be a positive number of seconds.")
+    if not ns.max_age > 0:
+        raise InvalidArguments("--max-age must be a positive number of seconds.")
+    if not ns.max_subscriptions > 0:
+        raise InvalidArguments("--max-subscriptions must be at least 1.")
+    timeout = (min(10.0, ns.window / 4) if ns.delivery_timeout is None
+               else ns.delivery_timeout)
+    if not 0 < timeout <= ns.window / 2:
+        raise InvalidArguments("--delivery-timeout must be positive and at most half the "
+                               "window.")
+    from .registrar.batcher import CallbackPolicy
+    try:
+        CallbackPolicy(allow=ns.allow_callbacks)
+    except ValueError as bad:
+        raise InvalidArguments(f"An --allow-callback entry is not a host or CIDR: {bad}.")
+    return RegistrarConfig(store=ns.store, host=ns.host, port=_port(ns.port, "--port"),
+                           publishers=tuple(ns.publishers), window=ns.window,
+                           max_age=ns.max_age, allow_callbacks=tuple(ns.allow_callbacks),
+                           max_subscriptions=ns.max_subscriptions, delivery_timeout=timeout)
+
+
 def _backup_config(ns) -> BackupConfig:
     return BackupConfig(
         name=ns.name,
@@ -428,4 +507,6 @@ def parse_args(argv):
         return ns.subcommand, _runner_config(ns)
     if ns.subcommand == "backup":
         return ns.subcommand, _backup_config(ns)
+    if ns.subcommand == "registrar":
+        return ns.subcommand, _registrar_config(ns)
     return ns.subcommand, _control_plane_config(ns)
