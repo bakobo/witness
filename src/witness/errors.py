@@ -388,3 +388,19 @@ class RegistrarCallbackRefused(WitnessError):
     code = "e.grant.scope.callback.f"
     title = "I will not deliver batches to that callback."
     status = 403
+
+
+class RegistrarQuota(WitnessError):
+    """Too many signed requests are already remembered for replay protection."""
+
+    code = "e.grant.quota.requests.r"
+    title = "I am already remembering as many recent requests as I will hold."
+    status = 429
+
+
+class RegistrarResolverTimeout(WitnessError):
+    """A callback host did not resolve within the admission deadline."""
+
+    code = "e.env.resolver.timeout.r"
+    title = "I could not resolve that callback host in time."
+    status = 503

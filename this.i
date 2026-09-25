@@ -1083,8 +1083,11 @@ Operator layer over a stock keripy witness = goal:
             number. An abandoned thread cannot be killed (a resolver may never return), so no new
             delivery starts to a callback whose earlier one is still alive, which spends that
             window's number like any failure, and delivery threads alive at once, abandoned ones
-            included, are capped globally. A socket that a connect completes only after the
-            deadline is closed at once rather than used. One failing
+            included, are capped globally; the check and the claim on a slot are one atomic step,
+            so two concurrent sends cannot both pass it. A socket that a connect completes only
+            after the deadline is closed at once rather than used. Admission is bounded the same
+            way: resolving a callback at subscription time has its own deadline, and resolutions
+            alive at once are capped, so a stalled resolver cannot hold a request thread. One failing
             subscriber, or one failing window, never ends the batch thread.
 
         The Registrar's state survives a restart = decision:
@@ -1113,7 +1116,11 @@ Operator layer over a stock keripy witness = goal:
                 sighting is kept for the verifier's whole acceptance window, max age plus the
                 clock skew fiki tolerates, one shared constant, and the clock is read once per
                 request: the verifier judges freshness and the store prunes at the same instant, so
-                a sighting is never pruned while the verifier would still accept its request.
+                a sighting is never pruned while the verifier would still accept its request. A
+                sighting is recorded in the same transaction as the subscribe or unsubscribe it
+                protects, so a refused request leaves nothing behind and can be retried, and the
+                sightings held are capped per signer and in total, so replay protection cannot
+                be made to grow the store without bound.
                 There is no migration for sightings recorded as header text by an earlier build:
                 this PR introduces the Registrar, and no Registrar store has existed outside tests.
                 Publications are exempt from that replay check because a replayed publication

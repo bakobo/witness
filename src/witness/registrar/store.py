@@ -13,7 +13,19 @@ from pathlib import Path
 import fiki
 
 from ..errors import (RegistrarFork, RegistrarFull, RegistrarInstance, RegistrarNoSubscription,
-                      RegistrarStale)
+                      RegistrarQuota, RegistrarReplay, RegistrarStale)
+
+
+@dataclass(frozen=True)
+class Sighting:
+    """One signed request to remember, and the bounds on how many may be remembered."""
+
+    created: int
+    signature: bytes
+    now: int
+    keep: int
+    per_signer: int
+    total: int
 
 
 @dataclass(frozen=True)
@@ -135,7 +147,30 @@ class RegistrarStore:
                                    "WHERE registry=?", (registry,)).fetchone()
         return None if row is None else _head(row)
 
-    def subscribe(self, aid: str, callback: str, *, limit: int | None = None) -> None:
+    def _record(self, aid: str, sighting: Sighting | None) -> None:
+        """Inside a transaction: refuse a replay or an over-quota request, else remember it.
+
+        Called in the same transaction as the action it protects, so a request that is refused
+        for any reason leaves no sighting behind and can be retried.
+        """
+        if sighting is None:
+            return
+        self._db.execute("DELETE FROM sightings WHERE created < ?",
+                         (sighting.now - sighting.keep,))
+        if self._db.execute("SELECT 1 FROM sightings WHERE aid=? AND created=? AND signature=?",
+                            (aid, sighting.created, sighting.signature)).fetchone():
+            raise RegistrarReplay("That signed request was already acted on.", args=[aid])
+        mine, = self._db.execute("SELECT COUNT(*) FROM sightings WHERE aid=?",
+                                 (aid,)).fetchone()
+        everyone, = self._db.execute("SELECT COUNT(*) FROM sightings").fetchone()
+        if mine >= sighting.per_signer or everyone >= sighting.total:
+            raise RegistrarQuota("Too many recent signed requests are remembered already.",
+                                 args=[mine, everyone])
+        self._db.execute("INSERT INTO sightings VALUES (?, ?, ?)",
+                         (aid, sighting.created, sighting.signature))
+
+    def subscribe(self, aid: str, callback: str, *, limit: int | None = None,
+                  sighting: Sighting | None = None) -> None:
         """Subscribe ``aid``, or update its callback without disturbing its sequence.
 
         A new subscription starts at number 1 with a full batch. Repeating a subscription, or
@@ -144,6 +179,7 @@ class RegistrarStore:
         so each AID has at most one; ``limit`` caps how many AIDs may subscribe at all.
         """
         with self._tx():
+            self._record(aid, sighting)
             if self._db.execute("SELECT 1 FROM subscribers WHERE aid=?", (aid,)).fetchone():
                 self._db.execute("UPDATE subscribers SET callback=? WHERE aid=?", (callback, aid))
                 return
@@ -153,9 +189,15 @@ class RegistrarStore:
                                     "limit.", args=[count])
             self._db.execute("INSERT INTO subscribers VALUES (?, ?, 0, 0, 1)", (aid, callback))
 
-    def unsubscribe(self, aid: str) -> bool:
+    def unsubscribe(self, aid: str, *, sighting: Sighting | None = None) -> bool:
+        """End ``aid``'s subscription. With a ``sighting``, a missing subscription is refused
+        inside the transaction, so the request leaves nothing behind."""
         with self._tx():
-            return self._db.execute("DELETE FROM subscribers WHERE aid=?", (aid,)).rowcount > 0
+            self._record(aid, sighting)
+            ended = self._db.execute("DELETE FROM subscribers WHERE aid=?", (aid,)).rowcount > 0
+            if sighting is not None and not ended:
+                raise RegistrarNoSubscription(f"{aid} has no subscription here.", args=[aid])
+            return ended
 
     def subscribers(self) -> list[tuple[str, str]]:
         with self._lock:
@@ -164,20 +206,20 @@ class RegistrarStore:
 
     def first_sighting(self, aid: str, created: int, signature: bytes, *, now: int,
                        keep: int) -> bool:
-        """Record a signed request; False if the same one was already seen and is still fresh.
+        """Remember a signed request on its own; False if it is a replay still in its window.
 
-        Keyed on the signer, its ``created`` time and the signature's decoded bytes (never the
-        header text, whose label is unsigned). A sighting is kept for ``keep`` seconds after its
-        ``created`` time, which must be the verifier's whole acceptance window (max age plus
-        skew). Expired sightings are pruned on every call.
+        A sighting is kept for ``keep`` seconds after ``created``, the verifier's whole
+        acceptance window, and expired ones are pruned first. The routes use ``_record`` inside
+        the action's own transaction instead; this is the same judgment, unbounded, for callers
+        with no action to tie it to.
         """
-        with self._tx():
-            self._db.execute("DELETE FROM sightings WHERE created < ?", (now - keep,))
-            if self._db.execute("SELECT 1 FROM sightings WHERE aid=? AND created=? AND "
-                                "signature=?", (aid, created, signature)).fetchone():
-                return False
-            self._db.execute("INSERT INTO sightings VALUES (?, ?, ?)", (aid, created, signature))
-            return True
+        try:
+            with self._tx():
+                self._record(aid, Sighting(created, signature, now, keep,
+                                           per_signer=2**31, total=2**31))
+        except RegistrarReplay:
+            return False
+        return True
 
     def sighting_count(self) -> int:
         with self._lock:

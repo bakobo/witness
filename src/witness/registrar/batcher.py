@@ -126,6 +126,7 @@ class HttpTransport:
         self.policy = policy or CallbackPolicy()
         self.max_in_flight = max_in_flight
         self._threads: dict[str, list[threading.Thread]] = {}
+        self._sending: set[str] = set()
         self._threads_lock = threading.Lock()
 
     def _alive(self) -> dict[str, list[threading.Thread]]:
@@ -138,17 +139,33 @@ class HttpTransport:
         """Delivery threads still alive, abandoned ones included."""
         return sum(len(threads) for threads in self._alive().values())
 
+    def _reserve(self, url: str) -> None:
+        """Claim ``url`` and a global slot in one step, so two concurrent sends cannot both
+        pass the check before either is tracked."""
+        with self._threads_lock:
+            self._threads = {key: alive for key, threads in self._threads.items()
+                             if (alive := [thread for thread in threads if thread.is_alive()])}
+            if url in self._threads or url in self._sending:
+                raise ConnectionError(f"{url} still has an earlier delivery in flight, so this "
+                                      "window's batch is not sent.")
+            busy = sum(len(threads) for threads in self._threads.values()) + len(self._sending)
+            if busy >= self.max_in_flight:
+                raise ConnectionError(f"{self.max_in_flight} deliveries are already in flight.")
+            self._sending.add(url)
+
     def _track(self, url: str, thread: threading.Thread) -> None:
         with self._threads_lock:
             self._threads.setdefault(url, []).append(thread)
 
     def send(self, url: str, body: bytes, headers: dict) -> None:
-        alive = self._alive()
-        if url in alive:
-            raise ConnectionError(f"{url} still has an earlier delivery in flight, so this "
-                                  "window's batch is not sent.")
-        if sum(len(threads) for threads in alive.values()) >= self.max_in_flight:
-            raise ConnectionError(f"{self.max_in_flight} deliveries are already in flight.")
+        self._reserve(url)
+        try:
+            self._send(url, body, headers)
+        finally:
+            with self._threads_lock:  # any thread it left behind is tracked by now
+                self._sending.discard(url)
+
+    def _send(self, url: str, body: bytes, headers: dict) -> None:
         deadline = time.monotonic() + self.timeout
         address = _within(deadline, lambda: self.policy.check(url), f"resolving {url}",
                           track=lambda thread: self._track(url, thread))
@@ -158,7 +175,8 @@ class HttpTransport:
                           timeout=max(deadline - time.monotonic(), 0.001), deadline=deadline)
 
         def exchange():
-            connection.request("POST", parts.path or "/", body=body,
+            target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+            connection.request("POST", target, body=body,
                                headers={**headers, "Content-Type": "application/json"})
             return connection.getresponse().status
 

@@ -492,3 +492,128 @@ def test_a_socket_acquired_after_the_deadline_is_closed(monkeypatch):
         connection.connect()
     assert closed == [True]
     assert connection.sock is None
+
+
+# --- Copilot round 2 -----------------------------------------------------------------------------
+
+def _app(store, **extra):
+    return falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60,
+        callbacks=CallbackPolicy(allow=("a.example",), resolve=lambda host: ["203.0.113.5"]),
+        **extra))
+
+
+def _subscribe(app, key, callback="http://a.example/batch", created=None):
+    body = json.dumps({"callback": callback}).encode()
+    headers = fiki.sign_request(key=key, method="POST", url=BASE + SUBSCRIPTION, body=body,
+                                created=created)
+    return app.simulate_post(SUBSCRIPTION, headers=headers, body=body), headers, body
+
+
+def test_a_refused_subscription_leaves_no_sighting_so_its_retry_is_not_a_replay(store):
+    app = _app(store, max_subscriptions=1)
+    _subscribe(app, fiki.Key.generate())
+    refused, headers, body = _subscribe(app, fiki.Key.generate())
+    assert refused.json["code"] == "e.grant.quota.subscriptions.r"
+    assert refused.headers["Retry-After"], "a retryable refusal says when to retry"
+    store.unsubscribe(store.subscribers()[0][0])
+    retried = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+    assert retried.status_code == 200, "the same signed request succeeds once there is room"
+
+
+def test_recent_signed_requests_are_bounded_per_signer_and_in_total(store):
+    app = _app(store, max_sightings_per_signer=2, max_sightings=3)
+    key = fiki.Key.generate()
+    now = int(time.time())
+    assert _subscribe(app, key, created=now)[0].status_code == 200
+    assert _subscribe(app, key, created=now - 1)[0].status_code == 200
+    third = _subscribe(app, key, created=now - 2)[0]
+    assert (third.status_code, third.json["code"]) == (429, "e.grant.quota.requests.r")
+    other = fiki.Key.generate()
+    assert _subscribe(app, other, created=now)[0].status_code == 200
+    fifth = _subscribe(app, fiki.Key.generate(), created=now)[0]
+    assert fifth.json["code"] == "e.grant.quota.requests.r"
+    assert store.sighting_count() == 3
+
+
+def test_an_empty_chain_or_kel_is_not_a_publication(store):
+    publisher = fiki.Key.generate()
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset({publisher.aid}), max_age=60))
+    for field in ("chain", "kel"):
+        document = {"registry": "EReg", "issuer": "EIss", "digest": "d",
+                    "chain": "Y2hhaW4=", "kel": "a2Vs", field: ""}
+        body = json.dumps(document).encode()
+        headers = fiki.sign_request(key=publisher, method="POST",
+                                    url=BASE + "/v1/registrar/publication", body=body)
+        answer = app.simulate_post("/v1/registrar/publication", headers=headers, body=body)
+        assert (answer.status_code, answer.json["code"]) == (400, "e.input.format.registrar.f")
+    assert store.head("EReg") is None
+
+
+def test_a_callback_with_an_impossible_port_is_refused_at_subscription(store):
+    answer, _, _ = _subscribe(_app(store), fiki.Key.generate(), "http://a.example:99999/batch")
+    assert (answer.status_code, answer.json["code"]) == (400, "e.input.format.registrar.f")
+    assert store.subscribers() == []
+
+
+def test_admission_resolution_is_bounded(store):
+    stuck = _Stuck()
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=0.1,
+        callbacks=CallbackPolicy(resolve=stuck)))
+    try:
+        started = time.monotonic()
+        answer, _, _ = _subscribe(app, fiki.Key.generate(), "http://stuck.example/batch")
+        assert time.monotonic() - started < 1.0
+        assert (answer.status_code, answer.json["code"]) == (503,
+                                                             "e.env.resolver.timeout.r")
+        assert store.subscribers() == []
+    finally:
+        stuck.release.set()
+
+
+def test_admission_resolvers_in_flight_are_capped(store, monkeypatch):
+    from witness.registrar import app as module
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+    stuck = _Stuck()
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=0.05,
+        callbacks=CallbackPolicy(resolve=stuck)))
+    try:
+        _subscribe(app, fiki.Key.generate(), "http://stuck.example/one")
+        second, _, _ = _subscribe(app, fiki.Key.generate(), "http://stuck.example/two")
+        assert second.json["code"] == "e.env.resolver.timeout.r"
+        assert stuck.calls == 1, "no second resolver while the first is still stuck"
+    finally:
+        stuck.release.set()
+
+
+def test_concurrent_sends_to_one_callback_start_one_delivery():
+    stuck = _Stuck()
+    transport = HttpTransport(timeout=0.2, policy=CallbackPolicy(resolve=stuck))
+    outcomes = []
+
+    def send():
+        try:
+            transport.send("http://stuck.example/batch", b"{}", {})
+        except (TimeoutError, ConnectionError) as failure:
+            outcomes.append(type(failure).__name__)
+
+    threads = [threading.Thread(target=send) for _ in range(8)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        assert stuck.calls == 1
+        assert outcomes.count("TimeoutError") == 1
+        assert outcomes.count("ConnectionError") == 7
+    finally:
+        stuck.release.set()
+
+
+def test_the_query_string_is_delivered_as_subscribed(sink):
+    transport = HttpTransport(timeout=5, policy=CallbackPolicy(allow=("127.0.0.0/8",)))
+    transport.send(f"http://127.0.0.1:{sink}/batch?observer=bar", b"{}", {})
+    assert _Sink.hits == ["/batch?observer=bar"]
