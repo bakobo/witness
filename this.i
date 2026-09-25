@@ -1041,6 +1041,18 @@ Operator layer over a stock keripy witness = goal:
                 refusal condition. Constant-rate batches also hide WHETHER anything changed in a
                 window. The transport sits behind one small seam, so replacing it is local.
 
+            A subscription begins with a batch holding every head = decision:
+              id: spxbqxaa
+              why: >
+                A batch carries only the registries that changed in its window, so an Observer that
+                subscribes after issuance, or resubscribes after missing a batch, would never learn a
+                head that does not change again. The first batch of every subscription therefore
+                holds every head the Registrar has, and later batches carry changes only. This is
+                also how an Observer recovers from a gap in batch numbers: it resubscribes and waits
+                for the full batch (heti this.i @4fgkgc3t). Accepted tradeoff: one full-size batch
+                per (re)subscription, whose size reveals how many registries the issuer has, which
+                is public anyway.
+
             The built-in batch window is herd-privacy sized  and the demo overrides it = decision:
               id: xx6tjfxy
               why: >
