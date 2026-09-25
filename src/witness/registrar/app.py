@@ -110,16 +110,18 @@ def _snapshot(document: dict) -> dict:
     return {**{name: document[name] for name in ("registry", "issuer", "digest")}, **decoded}
 
 
+def _is_http_url(text: str) -> bool:
+    try:
+        parts = urlsplit(text)
+        return parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:  # a malformed authority such as http://[::1
+        return False
+
+
 def _callback(document: dict) -> str:
     callback = document.get("callback")
-    try:
-        parts = (urlsplit(callback) if isinstance(callback, str) and len(callback) <= MAX_URL
-                 else None)
-        host = parts.hostname if parts is not None else None
-    except ValueError:  # a malformed authority such as http://[::1
-        parts = host = None
-    if parts is None or parts.scheme not in ("http", "https") or not host or \
-            set(document) != {"callback"}:
+    if set(document) != {"callback"} or not isinstance(callback, str) or \
+            len(callback) > MAX_URL or not _is_http_url(callback):
         raise RegistrarInput(f"A subscription names one http(s) callback of at most {MAX_URL} "
                              "characters.")
     return callback

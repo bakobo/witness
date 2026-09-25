@@ -154,10 +154,10 @@ def test_the_batch_thread_survives_a_failing_tick(store, monkeypatch):
     ticks = []
 
     def tick():
-        ticks.append(1)
+        ticks.append("failed" if not ticks else "ran")
         if len(ticks) == 1:
             raise RuntimeError("one bad window")
-        return 0
+        return len(ticks)
 
     monkeypatch.setattr(batcher, "tick", tick)
     stop = threading.Event()
@@ -167,7 +167,8 @@ def test_the_batch_thread_survives_a_failing_tick(store, monkeypatch):
         time.sleep(0.01)
     stop.set()
     thread.join(timeout=5)
-    assert len(ticks) >= 3, "the thread outlived the failure"
+    assert ticks[0] == "failed" and ticks[1:3] == ["ran", "ran"], \
+        "the windows after a failing one still ran"
 
 
 # --- (4) replayed and repeated subscriptions ---------------------------------------------------
@@ -302,8 +303,10 @@ def test_an_https_callback_is_wrapped_with_the_callback_host_for_sni(monkeypatch
     wrapped = {}
 
     class Context:
+        minimum_version = None
+
         def wrap_socket(self, sock, server_hostname):
-            wrapped.update(sock=sock, host=server_hostname)
+            wrapped.update(sock=sock, host=server_hostname, floor=self.minimum_version)
             return "tls-socket"
 
     monkeypatch.setattr(module.socket, "create_connection",
@@ -312,7 +315,7 @@ def test_an_https_callback_is_wrapped_with_the_callback_host_for_sni(monkeypatch
     connection = module._PinnedHTTPS("observer.example", None, address="203.0.113.9", timeout=1)
     connection.connect()
     assert wrapped == {"sock": ("plain-socket", ("203.0.113.9", 443)),
-                       "host": "observer.example"}
+                       "host": "observer.example", "floor": module.ssl.TLSVersion.TLSv1_2}
     assert connection.sock == "tls-socket"
 
 
@@ -329,8 +332,8 @@ class _Trickle(BaseHTTPRequestHandler):
                 self.wfile.write(bytes([byte]))
                 self.wfile.flush()
                 time.sleep(0.05)
-        except OSError:
-            pass
+        except OSError:  # the Registrar abandoned the delivery and shut the socket
+            return
 
 
 def test_a_trickling_callback_is_abandoned_at_the_deadline():

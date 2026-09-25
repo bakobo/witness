@@ -104,8 +104,9 @@ class _PinnedHTTPS(_PinnedHTTP):
 
     def connect(self):
         super().connect()
-        self.sock = self._in_time(ssl.create_default_context().wrap_socket(
-            self.sock, server_hostname=self.host))
+        context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2  # never TLS 1.0 or 1.1
+        self.sock = self._in_time(context.wrap_socket(self.sock, server_hostname=self.host))
 
 
 class HttpTransport:
@@ -176,8 +177,8 @@ def _shut(connection) -> None:
     if connection.sock is not None:
         try:
             connection.sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
+        except OSError:  # already closed, or never connected: nothing is left to interrupt
+            return
 
 
 def _within(deadline: float, work, what: str, abandon=lambda: None, track=lambda thread: None):
@@ -188,7 +189,10 @@ def _within(deadline: float, work, what: str, abandon=lambda: None, track=lambda
     def run():
         try:
             outcome["value"] = work()
-        except BaseException as failure:  # re-raised on the calling thread
+        except BaseException as failure:  # noqa: BLE001 - deliberate, see below
+            # BaseException on purpose: this worker's one job is to hand whatever ended it back
+            # to the waiting caller, which re-raises it. Narrowed to Exception, a SystemExit here
+            # would end the worker silently and leave the caller reading a result never set.
             outcome["error"] = failure
 
     worker = threading.Thread(target=run, daemon=True, name="registrar-delivery")
