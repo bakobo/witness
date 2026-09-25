@@ -397,3 +397,95 @@ def test_abandoning_a_connection_with_no_socket_or_a_closed_one_is_harmless():
 
     module._shut(SimpleNamespace(sock=None))
     module._shut(SimpleNamespace(sock=Closed()))
+
+
+# --- round 3: one instant for the verifier and the pruner --------------------------------------
+
+def test_a_replay_at_the_edge_of_the_window_is_refused_even_as_the_clock_ticks(store):
+    """The verifier and the pruner must read the same instant. With two reads, a replay verified
+    at created + max_age + SKEW could find its sighting pruned by a clock that has just ticked."""
+    from witness.registrar.app import SKEW
+    created = 1_000_000
+    edge = created + 60 + SKEW
+    ticks = iter([created, edge, edge + 1, edge + 1])
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, clock=lambda: next(ticks),
+        callbacks=CallbackPolicy(allow=("a.example",), resolve=lambda host: ["203.0.113.5"])))
+    key = fiki.Key.generate()
+    body = json.dumps({"callback": "http://a.example/batch"}).encode()
+    headers = fiki.sign_request(key=key, method="POST", url=BASE + SUBSCRIPTION, body=body,
+                                created=created)
+    assert app.simulate_post(SUBSCRIPTION, headers=headers, body=body).status_code == 200
+    replay = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+    assert (replay.status_code, replay.json["code"]) == (409,
+                                                         "e.state.conflict.registrar.replay.f")
+
+
+# --- round 3: stuck resolvers, in-flight caps, and the connect race ----------------------------
+
+class _Stuck:
+    """A resolver that never returns until released, counting how often it was asked."""
+
+    def __init__(self):
+        self.calls, self.release = 0, threading.Event()
+
+    def __call__(self, host):
+        self.calls += 1
+        self.release.wait(30)
+        return ["203.0.113.8"]
+
+
+def test_a_stuck_subscriber_gets_no_new_delivery_while_one_is_pending(store):
+    stuck = _Stuck()
+    store.subscribe("EStuck", "http://stuck.example/batch")
+    transport = HttpTransport(timeout=0.05, policy=CallbackPolicy(resolve=stuck))
+    batcher = Batcher(store=store, transport=transport, window=5)
+    try:
+        for _ in range(5):
+            assert batcher.tick() == 0
+        assert stuck.calls == 1, "no new resolver thread while the first is still stuck"
+        assert transport.in_flight() == 1
+        assert store.compose("EStuck").number == 6, "every window's number was spent"
+    finally:
+        stuck.release.set()
+
+
+def test_in_flight_deliveries_are_capped_globally():
+    stuck = _Stuck()
+    transport = HttpTransport(timeout=0.05, policy=CallbackPolicy(resolve=stuck),
+                              max_in_flight=2)
+    try:
+        for index in range(2):
+            with pytest.raises(TimeoutError):
+                transport.send(f"http://stuck{index}.example/batch", b"{}", {})
+        with pytest.raises(ConnectionError, match="in flight"):
+            transport.send("http://stuck9.example/batch", b"{}", {})
+        assert stuck.calls == 2
+    finally:
+        stuck.release.set()
+    for _ in range(100):
+        if transport.in_flight() == 0:
+            break
+        time.sleep(0.01)
+    assert transport.in_flight() == 0, "released work is no longer counted"
+
+
+def test_a_socket_acquired_after_the_deadline_is_closed(monkeypatch):
+    from witness.registrar import batcher as module
+    closed = []
+
+    class Late:
+        def close(self):
+            closed.append(True)
+
+    def slow_connect(address, timeout):
+        time.sleep(0.05)
+        return Late()
+
+    monkeypatch.setattr(module.socket, "create_connection", slow_connect)
+    connection = module._PinnedHTTP("late.example", 80, address="203.0.113.9", timeout=1,
+                                    deadline=time.monotonic() + 0.01)
+    with pytest.raises(TimeoutError):
+        connection.connect()
+    assert closed == [True]
+    assert connection.sock is None

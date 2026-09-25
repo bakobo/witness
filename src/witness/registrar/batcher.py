@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 MAX_WORKERS = 32
 """Deliveries in flight at once; the cap on subscriptions bounds how many there can be."""
 
+MAX_IN_FLIGHT = 64
+"""Delivery threads alive at once, abandoned ones included. A thread abandoned at its deadline
+(a resolver that never returns, say) cannot be killed, so this is what bounds them."""
+
 
 def _resolve(host: str) -> list[str]:
     return [info[4][0] for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)]
@@ -78,12 +82,21 @@ def _is_address(text: str) -> bool:
 class _PinnedHTTP(http.client.HTTPConnection):
     """An HTTP connection to the vetted address, whatever the URL's host resolves to later."""
 
-    def __init__(self, host, port, *, address, timeout):
+    def __init__(self, host, port, *, address, timeout, deadline=None):
         super().__init__(host, port, timeout=timeout)
-        self.address = address
+        self.address, self.deadline = address, deadline
+
+    def _in_time(self, sock):
+        """Keep ``sock`` only if the delivery deadline has not passed while acquiring it: an
+        abandoned delivery must not go on to use a socket it got late."""
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            sock.close()
+            raise TimeoutError("The connection completed after the delivery deadline.")
+        return sock
 
     def connect(self):
-        self.sock = socket.create_connection((self.address, self.port), self.timeout)
+        self.sock = self._in_time(socket.create_connection((self.address, self.port),
+                                                           self.timeout))
 
 
 class _PinnedHTTPS(_PinnedHTTP):
@@ -91,8 +104,8 @@ class _PinnedHTTPS(_PinnedHTTP):
 
     def connect(self):
         super().connect()
-        self.sock = ssl.create_default_context().wrap_socket(self.sock,
-                                                             server_hostname=self.host)
+        self.sock = self._in_time(ssl.create_default_context().wrap_socket(
+            self.sock, server_hostname=self.host))
 
 
 class HttpTransport:
@@ -106,17 +119,42 @@ class HttpTransport:
     Redirects are never followed: a 3xx is a failed delivery, like any other non-2xx.
     """
 
-    def __init__(self, *, timeout: float, policy: CallbackPolicy | None = None) -> None:
+    def __init__(self, *, timeout: float, policy: CallbackPolicy | None = None,
+                 max_in_flight: int = MAX_IN_FLIGHT) -> None:
         self.timeout = timeout
         self.policy = policy or CallbackPolicy()
+        self.max_in_flight = max_in_flight
+        self._threads: dict[str, list[threading.Thread]] = {}
+        self._threads_lock = threading.Lock()
+
+    def _alive(self) -> dict[str, list[threading.Thread]]:
+        with self._threads_lock:
+            self._threads = {url: alive for url, threads in self._threads.items()
+                             if (alive := [thread for thread in threads if thread.is_alive()])}
+            return dict(self._threads)
+
+    def in_flight(self) -> int:
+        """Delivery threads still alive, abandoned ones included."""
+        return sum(len(threads) for threads in self._alive().values())
+
+    def _track(self, url: str, thread: threading.Thread) -> None:
+        with self._threads_lock:
+            self._threads.setdefault(url, []).append(thread)
 
     def send(self, url: str, body: bytes, headers: dict) -> None:
+        alive = self._alive()
+        if url in alive:
+            raise ConnectionError(f"{url} still has an earlier delivery in flight, so this "
+                                  "window's batch is not sent.")
+        if sum(len(threads) for threads in alive.values()) >= self.max_in_flight:
+            raise ConnectionError(f"{self.max_in_flight} deliveries are already in flight.")
         deadline = time.monotonic() + self.timeout
-        address = _within(deadline, lambda: self.policy.check(url), f"resolving {url}")
+        address = _within(deadline, lambda: self.policy.check(url), f"resolving {url}",
+                          track=lambda thread: self._track(url, thread))
         parts = urlsplit(url)
         kind = _PinnedHTTPS if parts.scheme == "https" else _PinnedHTTP
         connection = kind(parts.hostname, parts.port, address=address,
-                          timeout=max(deadline - time.monotonic(), 0.001))
+                          timeout=max(deadline - time.monotonic(), 0.001), deadline=deadline)
 
         def exchange():
             connection.request("POST", parts.path or "/", body=body,
@@ -125,7 +163,8 @@ class HttpTransport:
 
         try:
             status = _within(deadline, exchange, f"delivering to {url}",
-                             abandon=lambda: _shut(connection))
+                             abandon=lambda: _shut(connection),
+                             track=lambda thread: self._track(url, thread))
         finally:
             connection.close()
         if not 200 <= status < 300:
@@ -141,7 +180,7 @@ def _shut(connection) -> None:
             pass
 
 
-def _within(deadline: float, work, what: str, abandon=lambda: None):
+def _within(deadline: float, work, what: str, abandon=lambda: None, track=lambda thread: None):
     """Run ``work`` on a daemon thread and return its result, or raise TimeoutError at the
     deadline after calling ``abandon``. Its exception, if it raised one, is re-raised here."""
     outcome = {}
@@ -153,6 +192,7 @@ def _within(deadline: float, work, what: str, abandon=lambda: None):
             outcome["error"] = failure
 
     worker = threading.Thread(target=run, daemon=True, name="registrar-delivery")
+    track(worker)
     worker.start()
     worker.join(max(deadline - time.monotonic(), 0))
     if worker.is_alive():

@@ -47,18 +47,21 @@ def _signer(req, body: bytes, max_age: int, *, store=None, clock=time.time) -> s
     """The AID that signed this request, having checked the signature covers the body.
 
     Given ``store``, the request must also be the first sighting of its signature within the
-    freshness window, so a captured subscribe or unsubscribe cannot be played again.
+    freshness window, so a captured subscribe or unsubscribe cannot be played again. The clock is
+    read ONCE, and that instant is what the verifier judges freshness at and what the replay
+    store prunes at, so a sighting can never be pruned while the verifier would still accept it.
     """
+    now = int(clock())
     try:
         verdict = fiki.verify_request(method=req.method, url=req.url, headers=req.headers,
-                                      body=body or None, max_age=max_age, skew=SKEW)
+                                      body=body or None, max_age=max_age, skew=SKEW, now=now)
     except fiki.FikiError as refused:
         raise RegistrarUnauthenticated(f"The request's signature did not verify: {refused}.")
     if body and "content-digest" not in verdict.covered:
         raise RegistrarUnauthenticated("The signature does not cover the request body.")
     if store is not None:
         created, signature = _signed_parts(req)
-        if not store.first_sighting(verdict.aid, created, signature, now=int(clock()),
+        if not store.first_sighting(verdict.aid, created, signature, now=now,
                                     keep=max_age + SKEW):
             raise RegistrarReplay("That signed request was already acted on.",
                                   args=[verdict.aid])
@@ -124,8 +127,8 @@ def _callback(document: dict) -> str:
 
 class _Resource:
     def __init__(self, store, publishers: frozenset, max_age: int, *, callbacks=None,
-                 max_subscriptions: int = DEFAULT_MAX_SUBSCRIPTIONS) -> None:
-        self.store, self.publishers, self.max_age = store, publishers, max_age
+                 max_subscriptions: int = DEFAULT_MAX_SUBSCRIPTIONS, clock=time.time) -> None:
+        self.store, self.publishers, self.max_age, self.clock = store, publishers, max_age, clock
         self.callbacks = callbacks or CallbackPolicy()
         self.max_subscriptions = max_subscriptions
 
@@ -148,7 +151,7 @@ class Publication(_Resource):
     def on_post(self, req, resp) -> None:
         def act():
             body = _body(req)
-            signer = _signer(req, body, self.max_age)
+            signer = _signer(req, body, self.max_age, clock=self.clock)
             if signer not in self.publishers:
                 raise RegistrarDenied(f"{signer} is not a configured publisher.", args=[signer])
             snapshot = _snapshot(_object(body))
@@ -160,7 +163,7 @@ class Subscription(_Resource):
     def on_post(self, req, resp) -> None:
         def act():
             body = _body(req)
-            signer = _signer(req, body, self.max_age, store=self.store)
+            signer = _signer(req, body, self.max_age, store=self.store, clock=self.clock)
             callback = _callback(_object(body))
             self.callbacks.check(callback)  # refused here too, not only at delivery
             self.store.subscribe(signer, callback, limit=self.max_subscriptions)
@@ -169,7 +172,8 @@ class Subscription(_Resource):
 
     def on_delete(self, req, resp) -> None:
         def act():
-            signer = _signer(req, _body(req), self.max_age, store=self.store)
+            signer = _signer(req, _body(req), self.max_age, store=self.store,
+                             clock=self.clock)
             if not self.store.unsubscribe(signer):
                 raise RegistrarNoSubscription(f"{signer} has no subscription here.", args=[signer])
             return 204, None
@@ -177,13 +181,14 @@ class Subscription(_Resource):
 
 
 def make_registrar_app(store, *, publishers: frozenset, max_age: int, callbacks=None,
-                       max_subscriptions: int = DEFAULT_MAX_SUBSCRIPTIONS) -> falcon.App:
+                       max_subscriptions: int = DEFAULT_MAX_SUBSCRIPTIONS,
+                       clock=time.time) -> falcon.App:
     """Publications are exempt from the replay check on purpose: an exact repeat is already
     re-acknowledged and anything older is refused as stale, so a replay changes nothing, and a
     publisher retrying one snapshot (signatures are deterministic) must not be refused for it."""
     app = falcon.App(middleware=[RequestIdMiddleware()])
     app.resp_options.media_handlers[_PROBLEM_JSON] = falcon.media.JSONHandler()
-    options = dict(callbacks=callbacks, max_subscriptions=max_subscriptions)
+    options = dict(callbacks=callbacks, max_subscriptions=max_subscriptions, clock=clock)
     app.add_route("/v1/registrar/publication", Publication(store, publishers, max_age, **options))
     app.add_route("/v1/registrar/subscription",
                   Subscription(store, publishers, max_age, **options))

@@ -1080,7 +1080,11 @@ Operator layer over a stock keripy witness = goal:
             a trickling callback live on), and that deadline is its own setting, not the inbound
             freshness bound. A delivery past its deadline is abandoned, so one slow or dead
             callback cannot delay anyone else's heartbeat, and a failed delivery still spends its
-            number. One failing
+            number. An abandoned thread cannot be killed (a resolver may never return), so no new
+            delivery starts to a callback whose earlier one is still alive, which spends that
+            window's number like any failure, and delivery threads alive at once, abandoned ones
+            included, are capped globally. A socket that a connect completes only after the
+            deadline is closed at once rather than used. One failing
             subscriber, or one failing window, never ends the batch thread.
 
         The Registrar's state survives a restart = decision:
@@ -1107,7 +1111,11 @@ Operator layer over a stock keripy witness = goal:
                 inside its freshness window is refused, keyed on signer, created time and the
                 signature's decoded bytes, never the header text, whose label is unsigned. A
                 sighting is kept for the verifier's whole acceptance window, max age plus the
-                clock skew fiki tolerates, one shared constant.
+                clock skew fiki tolerates, one shared constant, and the clock is read once per
+                request: the verifier judges freshness and the store prunes at the same instant, so
+                a sighting is never pruned while the verifier would still accept its request.
+                There is no migration for sightings recorded as header text by an earlier build:
+                this PR introduces the Registrar, and no Registrar store has existed outside tests.
                 Publications are exempt from that replay check because a replayed publication
                 changes nothing (an exact repeat is re-acknowledged, anything older is stale) and a
                 publisher retrying one snapshot produces byte-identical signatures. The state
