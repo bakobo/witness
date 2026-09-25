@@ -23,23 +23,40 @@ def test_parses_the_registrar_with_its_herd_privacy_default_window(tmp_path):
     assert cfg.window == config.REGISTRAR_DEFAULT_WINDOW
     assert cfg.window >= 60, "herd privacy: minutes, not seconds"
     assert cfg.max_age == 60
+    assert cfg.allow_callbacks == ()
+    assert cfg.max_subscriptions == 64
+    assert cfg.delivery_timeout == 10.0, "min(10 s, a quarter of the window)"
 
 
 def test_the_window_and_several_publishers_are_configuration(tmp_path):
     _, cfg = config.parse_args(["registrar", "--store", str(tmp_path), "--port", "1",
                                 "--publisher", PUBLISHER, "--publisher", "B" + "q" * 43,
-                                "--window", "5", "--max-age", "30", "--host", "0.0.0.0"])
+                                "--window", "5", "--max-age", "30", "--host", "0.0.0.0",
+                                "--allow-callback", "127.0.0.0/8", "--allow-callback",
+                                "observer.example", "--max-subscriptions", "3",
+                                "--delivery-timeout", "2"])
     assert cfg.window == 5.0
+    assert cfg.allow_callbacks == ("127.0.0.0/8", "observer.example")
+    assert (cfg.max_subscriptions, cfg.delivery_timeout) == (3, 2.0)
     assert cfg.publishers == (PUBLISHER, "B" + "q" * 43)
     assert (cfg.max_age, cfg.host) == (30, "0.0.0.0")
 
 
 @pytest.mark.parametrize("extra", [["--window", "0"], ["--window", "-1"], ["--max-age", "0"],
-                                   ["--publisher", "not-an-aid"]])
+                                   ["--publisher", "not-an-aid"], ["--max-subscriptions", "0"],
+                                   ["--delivery-timeout", "0"],
+                                   ["--window", "5", "--delivery-timeout", "3"],
+                                   ["--allow-callback", "10.0.0.0/99"]])
 def test_bad_registrar_arguments_fail_closed(tmp_path, extra):
     argv = ["registrar", "--store", str(tmp_path), "--port", "1", "--publisher", PUBLISHER]
     with pytest.raises(InvalidArguments):
         config.parse_args(argv + extra)
+
+
+def test_a_short_window_gets_a_quarter_of_it_as_delivery_timeout(tmp_path):
+    _, cfg = config.parse_args(["registrar", "--store", str(tmp_path), "--port", "1",
+                                "--publisher", PUBLISHER, "--window", "4"])
+    assert cfg.delivery_timeout == 1.0
 
 
 def test_a_registrar_needs_at_least_one_publisher(tmp_path):

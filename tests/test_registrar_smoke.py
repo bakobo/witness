@@ -55,7 +55,8 @@ def test_console_script_publishes_and_pushes_a_signed_batch(tmp_path):
     port = _free_port()
     proc = subprocess.Popen(
         ["uv", "run", "witness", "registrar", "--store", str(tmp_path), "--port", str(port),
-         "--publisher", publisher.aid, "--window", "0.3"],
+         "--publisher", publisher.aid, "--window", "0.3",
+         "--allow-callback", "127.0.0.0/8"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         announced = json.loads(proc.stdout.readline())

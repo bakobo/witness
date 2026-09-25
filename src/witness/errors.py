@@ -321,7 +321,7 @@ class RegistrarFork(WitnessError):
 class RegistrarUnauthenticated(WitnessError):
     """The request is not signed, or its signature does not cover and match what it carries."""
 
-    code = "e.auth.signature.registrar.f"
+    code = "e.id.invalid.registrar.f"
     title = "I could not verify a signature over that request, so I will not act on it."
     status = 401
 
@@ -329,7 +329,7 @@ class RegistrarUnauthenticated(WitnessError):
 class RegistrarDenied(WitnessError):
     """The signer is genuine but is not a publisher this Registrar was configured with."""
 
-    code = "e.grant.denied.registrar.f"
+    code = "e.grant.missing.publisher.f"
     title = "That signer may not publish to this Registrar."
     status = 403
 
@@ -356,3 +356,35 @@ class RegistrarNoSubscription(WitnessError):
     code = "e.state.missing.subscription.f"
     title = "That signer has no subscription here."
     status = 404
+
+
+class RegistrarInstance(WitnessError):
+    """Another Registrar process already owns this state directory."""
+
+    code = "e.state.conflict.registrar.instance.f"
+    title = "Another Registrar is already using that state directory."
+    status = 409
+
+
+class RegistrarReplay(WitnessError):
+    """A signed request this Registrar has already acted on, presented again while still fresh."""
+
+    code = "e.state.conflict.registrar.replay.f"
+    title = "I have already acted on that exact signed request."
+    status = 409
+
+
+class RegistrarFull(WitnessError):
+    """The Registrar has as many subscriptions as it is configured to hold."""
+
+    code = "e.grant.quota.subscriptions.r"
+    title = "I cannot take another subscription right now."
+    status = 429
+
+
+class RegistrarCallbackRefused(WitnessError):
+    """A callback that resolves to a destination this Registrar is not allowed to contact."""
+
+    code = "e.grant.scope.callback.f"
+    title = "I will not deliver batches to that callback."
+    status = 403

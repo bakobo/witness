@@ -11,18 +11,24 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
+import time
 from urllib.parse import urlsplit
 
 import falcon
 import fiki
 
 from ..app import _PROBLEM_JSON, RequestIdMiddleware
-from ..errors import (RegistrarDenied, RegistrarInput, RegistrarTooLarge,
-                      RegistrarUnauthenticated, WitnessError)
+from ..errors import (RegistrarDenied, RegistrarInput, RegistrarNoSubscription,
+                      RegistrarReplay, RegistrarTooLarge, RegistrarUnauthenticated,
+                      WitnessError)
+from .batcher import CallbackPolicy
 
 MAX_BODY = 8 * 1024 * 1024
 MAX_NAME = 128
 MAX_URL = 256
+DEFAULT_MAX_SUBSCRIPTIONS = 64
+_CREATED = re.compile(r";\s*created=(\d+)")
 _SNAPSHOT = ("registry", "issuer", "digest", "chain", "kel")
 
 
@@ -34,8 +40,12 @@ def _body(req) -> bytes:
     return req.bounded_stream.read(length) if length else b""
 
 
-def _signer(req, body: bytes, max_age: int) -> str:
-    """The AID that signed this request, having checked the signature covers the body."""
+def _signer(req, body: bytes, max_age: int, *, store=None, clock=time.time) -> str:
+    """The AID that signed this request, having checked the signature covers the body.
+
+    Given ``store``, the request must also be the first sighting of its signature within the
+    freshness window, so a captured subscribe or unsubscribe cannot be played again.
+    """
     try:
         verdict = fiki.verify_request(method=req.method, url=req.url, headers=req.headers,
                                       body=body or None, max_age=max_age)
@@ -43,6 +53,13 @@ def _signer(req, body: bytes, max_age: int) -> str:
         raise RegistrarUnauthenticated(f"The request's signature did not verify: {refused}.")
     if body and "content-digest" not in verdict.covered:
         raise RegistrarUnauthenticated("The signature does not cover the request body.")
+    if store is not None:
+        created = _CREATED.search(req.get_header("Signature-Input") or "")
+        if not store.first_sighting(verdict.aid, int(created.group(1)) if created else 0,
+                                    req.get_header("Signature") or "", now=int(clock()),
+                                    max_age=max_age):
+            raise RegistrarReplay("That signed request was already acted on.",
+                                  args=[verdict.aid])
     return verdict.aid
 
 
@@ -75,8 +92,13 @@ def _snapshot(document: dict) -> dict:
 
 def _callback(document: dict) -> str:
     callback = document.get("callback")
-    parts = urlsplit(callback) if isinstance(callback, str) and len(callback) <= MAX_URL else None
-    if parts is None or parts.scheme not in ("http", "https") or not parts.netloc or \
+    try:
+        parts = (urlsplit(callback) if isinstance(callback, str) and len(callback) <= MAX_URL
+                 else None)
+        host = parts.hostname if parts is not None else None
+    except ValueError:  # a malformed authority such as http://[::1
+        parts = host = None
+    if parts is None or parts.scheme not in ("http", "https") or not host or \
             set(document) != {"callback"}:
         raise RegistrarInput(f"A subscription names one http(s) callback of at most {MAX_URL} "
                              "characters.")
@@ -84,8 +106,11 @@ def _callback(document: dict) -> str:
 
 
 class _Resource:
-    def __init__(self, store, publishers: frozenset, max_age: int) -> None:
+    def __init__(self, store, publishers: frozenset, max_age: int, *, callbacks=None,
+                 max_subscriptions: int = DEFAULT_MAX_SUBSCRIPTIONS) -> None:
         self.store, self.publishers, self.max_age = store, publishers, max_age
+        self.callbacks = callbacks or CallbackPolicy()
+        self.max_subscriptions = max_subscriptions
 
     def _answer(self, req, resp, act) -> None:
         try:
@@ -118,24 +143,31 @@ class Subscription(_Resource):
     def on_post(self, req, resp) -> None:
         def act():
             body = _body(req)
-            signer = _signer(req, body, self.max_age)
-            self.store.subscribe(signer, _callback(_object(body)))
+            signer = _signer(req, body, self.max_age, store=self.store)
+            callback = _callback(_object(body))
+            self.callbacks.check(callback)  # refused here too, not only at delivery
+            self.store.subscribe(signer, callback, limit=self.max_subscriptions)
             return 200, {"subscriber": signer, "registrar": self.store.key().aid}
         self._answer(req, resp, act)
 
     def on_delete(self, req, resp) -> None:
         def act():
-            signer = _signer(req, _body(req), self.max_age)
+            signer = _signer(req, _body(req), self.max_age, store=self.store)
             if not self.store.unsubscribe(signer):
-                from ..errors import RegistrarNoSubscription
                 raise RegistrarNoSubscription(f"{signer} has no subscription here.", args=[signer])
             return 204, None
         self._answer(req, resp, act)
 
 
-def make_registrar_app(store, *, publishers: frozenset, max_age: int) -> falcon.App:
+def make_registrar_app(store, *, publishers: frozenset, max_age: int, callbacks=None,
+                       max_subscriptions: int = DEFAULT_MAX_SUBSCRIPTIONS) -> falcon.App:
+    """Publications are exempt from the replay check on purpose: an exact repeat is already
+    re-acknowledged and anything older is refused as stale, so a replay changes nothing, and a
+    publisher retrying one snapshot (signatures are deterministic) must not be refused for it."""
     app = falcon.App(middleware=[RequestIdMiddleware()])
     app.resp_options.media_handlers[_PROBLEM_JSON] = falcon.media.JSONHandler()
-    app.add_route("/v1/registrar/publication", Publication(store, publishers, max_age))
-    app.add_route("/v1/registrar/subscription", Subscription(store, publishers, max_age))
+    options = dict(callbacks=callbacks, max_subscriptions=max_subscriptions)
+    app.add_route("/v1/registrar/publication", Publication(store, publishers, max_age, **options))
+    app.add_route("/v1/registrar/subscription",
+                  Subscription(store, publishers, max_age, **options))
     return app

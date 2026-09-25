@@ -2,12 +2,14 @@
 
 import base64
 import json
+import time
 
 import falcon.testing
 import fiki
 import pytest
 
 from witness.registrar.app import make_registrar_app
+from witness.registrar.batcher import CallbackPolicy
 from witness.registrar.store import RegistrarStore
 
 BASE = "http://falconframework.org"
@@ -23,16 +25,17 @@ def publisher():
 @pytest.fixture
 def client(tmp_path, publisher):
     store = RegistrarStore(tmp_path / "registrar.sqlite3")
-    app = make_registrar_app(store, publishers=frozenset({publisher.aid}), max_age=60)
+    app = make_registrar_app(store, publishers=frozenset({publisher.aid}), max_age=60,
+                             callbacks=CallbackPolicy(allow=("127.0.0.0/8",)))
     yield falcon.testing.TestClient(app), store
     store.close()
 
 
-def _signed(client, key, method, path, document=None, *, raw=None, sign=True):
+def _signed(client, key, method, path, document=None, *, raw=None, sign=True, created=None):
     body = raw if raw is not None else (None if document is None
                                         else json.dumps(document).encode())
-    headers = (fiki.sign_request(key=key, method=method, url=BASE + path, body=body)
-               if sign else {})
+    headers = (fiki.sign_request(key=key, method=method, url=BASE + path, body=body,
+                                 created=created) if sign else {})
     return client.simulate_request(method, path, headers=headers, body=body)
 
 
@@ -63,9 +66,9 @@ def test_an_unsigned_or_unknown_publisher_is_refused(client, publisher):
     app, store = client
     unsigned = _signed(app, publisher, "POST", PUBLICATION, _snapshot(), sign=False)
     assert (unsigned.status_code, unsigned.json["code"]) == \
-        (401, "e.auth.signature.registrar.f")
+        (401, "e.id.invalid.registrar.f")
     stranger = _signed(app, fiki.Key.generate(), "POST", PUBLICATION, _snapshot())
-    assert (stranger.status_code, stranger.json["code"]) == (403, "e.grant.denied.registrar.f")
+    assert (stranger.status_code, stranger.json["code"]) == (403, "e.grant.missing.publisher.f")
     assert store.head("EReg" + "r" * 40) is None
 
 
@@ -76,7 +79,7 @@ def test_a_body_that_does_not_match_its_signature_is_refused(client, publisher):
                                 body=body)
     tampered = app.simulate_request("POST", PUBLICATION, headers=headers,
                                     body=body.replace(b"ddd", b"eee", 1))
-    assert tampered.json["code"] == "e.auth.signature.registrar.f"
+    assert tampered.json["code"] == "e.id.invalid.registrar.f"
 
 
 def test_a_signature_that_does_not_cover_the_body_is_refused(client, publisher):
@@ -85,7 +88,7 @@ def test_a_signature_that_does_not_cover_the_body_is_refused(client, publisher):
     headers = fiki.sign_request(key=publisher, method="POST", url=BASE + PUBLICATION)
     uncovered = app.simulate_request("POST", PUBLICATION, headers=headers, body=body)
     assert (uncovered.status_code, uncovered.json["code"]) == \
-        (401, "e.auth.signature.registrar.f")
+        (401, "e.id.invalid.registrar.f")
 
 
 @pytest.mark.parametrize("bad", [
@@ -104,7 +107,7 @@ def test_a_body_that_is_not_a_json_object_is_refused(client, publisher, raw):
     app, _ = client
     answer = _signed(app, publisher, "POST", PUBLICATION, raw=raw)
     assert answer.json["code"] in {"e.input.format.registrar.f",
-                                   "e.auth.signature.registrar.f"}
+                                   "e.id.invalid.registrar.f"}
     assert answer.status_code in {400, 401}
 
 
@@ -125,12 +128,12 @@ def test_any_signer_can_subscribe_once_and_unsubscribe(client):
                                                        "registrar": store.key().aid})
     assert store.subscribers() == [(observer.aid, "http://127.0.0.1:9000/batch")]
     assert _signed(app, observer, "DELETE", SUBSCRIPTION).status_code == 204
-    again = _signed(app, observer, "DELETE", SUBSCRIPTION)
+    again = _signed(app, observer, "DELETE", SUBSCRIPTION, created=int(time.time()) + 1)
     assert (again.status_code, again.json["code"]) == (404, "e.state.missing.subscription.f")
 
 
 @pytest.mark.parametrize("callback", ["ftp://127.0.0.1/x", "not a url", 5,
-                                      "http://" + "h" * 300 + "/"])
+                                      "http://" + "h" * 300 + "/", "http://[::1"])
 def test_a_subscription_needs_an_http_callback(client, callback):
     app, store = client
     answer = _signed(app, fiki.Key.generate(), "POST", SUBSCRIPTION, {"callback": callback})

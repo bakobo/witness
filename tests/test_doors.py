@@ -91,11 +91,10 @@ ACCOUNTED = {
         "pool, so the caller decides what it means. Not a door because nothing downstream trusts "
         "the value: it is displayed or compared, never used as authority."
     ),
-    "batcher.py::HttpTransport.send": (
-        "exempt: output, not input. The Registrar POSTs a signed batch to a subscriber's callback "
-        "and reads nothing back: a non-2xx status becomes a ConnectionError and the response body "
-        "is never read. The callback URL was bounded at the subscription door "
-        "(registrar.app._callback)."
+    "store.py::RegistrarStore.__init__": (
+        "exempt: the lock file is opened only to hold an exclusive flock on the Registrar's state "
+        "directory, so a second Registrar on the same store refuses to start. Nothing is read "
+        "from it."
     ),
     "backup.py::back_up": (
         "exempt: output, not input. This opens the manifest for writing; nothing is read."

@@ -28,6 +28,17 @@ ALL = [
     errors.ControllerUnknown,
     errors.MigrationRequired,
     errors.DatabaseTooNew,
+    errors.RegistrarStale,
+    errors.RegistrarFork,
+    errors.RegistrarUnauthenticated,
+    errors.RegistrarDenied,
+    errors.RegistrarInput,
+    errors.RegistrarTooLarge,
+    errors.RegistrarNoSubscription,
+    errors.RegistrarInstance,
+    errors.RegistrarReplay,
+    errors.RegistrarFull,
+    errors.RegistrarCallbackRefused,
 ]
 
 # sorter . descriptor . at least one sub-descriptor . disposition
@@ -107,6 +118,17 @@ def test_an_envelope_omits_correlation_members_it_was_not_given():
         (errors.ControllerUnknown, 404),
         (errors.MigrationRequired, 500),
         (errors.DatabaseTooNew, 500),
+        (errors.RegistrarStale, 409),
+        (errors.RegistrarFork, 409),
+        (errors.RegistrarUnauthenticated, 401),
+        (errors.RegistrarDenied, 403),
+        (errors.RegistrarInput, 400),
+        (errors.RegistrarTooLarge, 413),
+        (errors.RegistrarNoSubscription, 404),
+        (errors.RegistrarInstance, 409),
+        (errors.RegistrarReplay, 409),
+        (errors.RegistrarFull, 429),
+        (errors.RegistrarCallbackRefused, 403),
     ],
 )
 def test_the_status_follows_the_codes_prefix(kind, status):

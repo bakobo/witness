@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import fcntl
+import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import fiki
 
-from ..errors import RegistrarFork, RegistrarNoSubscription, RegistrarStale
+from ..errors import (RegistrarFork, RegistrarFull, RegistrarInstance, RegistrarNoSubscription,
+                      RegistrarStale)
 
 
 @dataclass(frozen=True)
@@ -27,26 +31,64 @@ _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS subscribers (aid TEXT PRIMARY KEY, callback TEXT NOT NULL, "
     "number INTEGER NOT NULL, seen INTEGER NOT NULL, full INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value BLOB NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS sightings (aid TEXT NOT NULL, created INTEGER NOT NULL, "
+    "signature TEXT NOT NULL, PRIMARY KEY (aid, created, signature))",
 )
 
 
 class RegistrarStore:
-    """One SQLite file, one lock: waitress answers requests on several threads at once."""
+    """One SQLite file, owned by one Registrar process at a time.
+
+    The state directory carries an exclusive lock for the store's lifetime, so a second Registrar
+    pointed at it refuses to start rather than racing the first. Within the process, a thread lock
+    serializes use of the one connection, and every read-modify-write runs inside BEGIN
+    IMMEDIATE, so the read and the write it depends on see the same state.
+
+    The directory and file are owner-only: the store holds the Registrar's private signing seed,
+    and anyone who can read it can forge every batch.
+    """
 
     def __init__(self, path) -> None:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(path, check_same_thread=False)
+        path = Path(path)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(path.parent, 0o700)
+        self._lockfile = open(path.parent / "registrar.lock", "a")  # noqa: SIM115 - held open
+        try:
+            fcntl.flock(self._lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self._lockfile.close()
+            raise RegistrarInstance(f"Another Registrar already holds {path.parent}.",
+                                    args=[str(path.parent)]) from None
+        previous = os.umask(0o077)
+        try:
+            self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None,
+                                       timeout=10)
+        finally:
+            os.umask(previous)
+        os.chmod(path, 0o600)
         self._lock = threading.Lock()
-        with self._lock, self._db:
-            self._db.execute("PRAGMA synchronous=FULL")
+        self._db.execute("PRAGMA synchronous=FULL")
+        with self._tx():
             for statement in _SCHEMA:
                 self._db.execute(statement)
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('change', 0)")
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('seed', ?)",
                              (fiki.Key.generate().seed,))
 
+    @contextmanager
+    def _tx(self):
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+            self._db.execute("COMMIT")
+
     def close(self) -> None:
         self._db.close()
+        self._lockfile.close()
 
     def key(self) -> fiki.Key:
         """The Registrar's own signing key, created once and kept, since Observers pin its AID."""
@@ -64,7 +106,7 @@ class RegistrarStore:
         An exact repeat is acknowledged again, because a publisher retries until it gets an exact
         acknowledgement. A strict prefix is stale and anything else forks (@5m2m4ozz).
         """
-        with self._lock, self._db:
+        with self._tx():
             held = self._db.execute("SELECT digest, chain FROM heads WHERE registry=?",
                                     (registry,)).fetchone()
             if held is not None:
@@ -89,14 +131,26 @@ class RegistrarStore:
                                    "WHERE registry=?", (registry,)).fetchone()
         return None if row is None else _head(row)
 
-    def subscribe(self, aid: str, callback: str) -> None:
-        """Start (or restart) a subscription: numbering from 1, beginning with a full batch."""
-        with self._lock, self._db:
-            self._db.execute("INSERT OR REPLACE INTO subscribers VALUES (?, ?, 0, 0, 1)",
-                             (aid, callback))
+    def subscribe(self, aid: str, callback: str, *, limit: int | None = None) -> None:
+        """Subscribe ``aid``, or update its callback without disturbing its sequence.
+
+        A new subscription starts at number 1 with a full batch. Repeating a subscription, or
+        moving it to a new callback, continues the sequence, so a replayed or retried request
+        cannot make a subscriber's numbering go backwards. A subscription's identity is its AID,
+        so each AID has at most one; ``limit`` caps how many AIDs may subscribe at all.
+        """
+        with self._tx():
+            if self._db.execute("SELECT 1 FROM subscribers WHERE aid=?", (aid,)).fetchone():
+                self._db.execute("UPDATE subscribers SET callback=? WHERE aid=?", (callback, aid))
+                return
+            count, = self._db.execute("SELECT COUNT(*) FROM subscribers").fetchone()
+            if limit is not None and count >= limit:
+                raise RegistrarFull(f"This Registrar already has {count} subscriptions, its "
+                                    "limit.", args=[count])
+            self._db.execute("INSERT INTO subscribers VALUES (?, ?, 0, 0, 1)", (aid, callback))
 
     def unsubscribe(self, aid: str) -> bool:
-        with self._lock, self._db:
+        with self._tx():
             return self._db.execute("DELETE FROM subscribers WHERE aid=?", (aid,)).rowcount > 0
 
     def subscribers(self) -> list[tuple[str, str]]:
@@ -104,13 +158,28 @@ class RegistrarStore:
             return [tuple(row) for row in self._db.execute(
                 "SELECT aid, callback FROM subscribers ORDER BY aid")]
 
+    def first_sighting(self, aid: str, created: int, signature: str, *, now: int,
+                       max_age: int) -> bool:
+        """Record a signed request; False if the same one was already seen and is still fresh.
+
+        Keyed on the signer, its ``created`` time and the signature itself. Entries older than
+        the freshness window are forgotten, since fiki refuses such a request anyway.
+        """
+        with self._tx():
+            self._db.execute("DELETE FROM sightings WHERE created < ?", (now - max_age,))
+            if self._db.execute("SELECT 1 FROM sightings WHERE aid=? AND created=? AND "
+                                "signature=?", (aid, created, signature)).fetchone():
+                return False
+            self._db.execute("INSERT INTO sightings VALUES (?, ?, ?)", (aid, created, signature))
+            return True
+
     def compose(self, aid: str) -> Batch:
         """The next batch for ``aid``: every head if its subscription is new, else the changes.
 
         The number is consumed here, whether or not delivery succeeds, so an Observer that misses
         a batch sees a gap rather than a silently skipped window (@3m2eys6w).
         """
-        with self._lock, self._db:
+        with self._tx():
             row = self._db.execute("SELECT number, seen, full FROM subscribers WHERE aid=?",
                                    (aid,)).fetchone()
             if row is None:

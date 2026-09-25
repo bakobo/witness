@@ -130,6 +130,12 @@ class RegistrarConfig:
     publishers: tuple[str, ...]
     window: float = REGISTRAR_DEFAULT_WINDOW
     max_age: int = REGISTRAR_DEFAULT_MAX_AGE
+    #: Callback destinations beyond public addresses, as host names or CIDRs (@ed3dkgl5).
+    allow_callbacks: tuple[str, ...] = ()
+    max_subscriptions: int = 64
+    #: Seconds one delivery may take; at most half the window, so one slow callback cannot
+    #: reach into the next window. Separate from max_age, which is about inbound freshness.
+    delivery_timeout: float = 10.0
 
 
 @dataclass(frozen=True)
@@ -248,6 +254,14 @@ def _build_parser() -> _RaisingParser:
                      help="Seconds between batches (default: a herd-privacy-sized window).")
     reg.add_argument("--max-age", type=int, default=REGISTRAR_DEFAULT_MAX_AGE,
                      help="How old, in seconds, a signed request may be.")
+    reg.add_argument("--allow-callback", action="append", default=[], dest="allow_callbacks",
+                     help="A host name or CIDR that subscriber callbacks may reach besides public "
+                          "addresses (e.g. 127.0.0.0/8 for an Observer on this host). Repeatable.")
+    reg.add_argument("--max-subscriptions", type=int, default=64,
+                     help="How many subscriptions this Registrar holds at most.")
+    reg.add_argument("--delivery-timeout", type=float, default=None,
+                     help="Seconds one batch delivery may take (default: 10, or a quarter of "
+                          "the window if that is shorter).")
     run = sub.add_parser("run", help="Run the keripy witness with in-loop telemetry.")
     run.add_argument("--name", default="witness", help="The witness keystore/database name.")
     run.add_argument("--alias", default=None, help="The hab alias. Defaults to --name.")
@@ -411,9 +425,22 @@ def _registrar_config(ns) -> RegistrarConfig:
         raise InvalidArguments("--window must be a positive number of seconds.")
     if not ns.max_age > 0:
         raise InvalidArguments("--max-age must be a positive number of seconds.")
+    if not ns.max_subscriptions > 0:
+        raise InvalidArguments("--max-subscriptions must be at least 1.")
+    timeout = (min(10.0, ns.window / 4) if ns.delivery_timeout is None
+               else ns.delivery_timeout)
+    if not 0 < timeout <= ns.window / 2:
+        raise InvalidArguments("--delivery-timeout must be positive and at most half the "
+                               "window.")
+    from .registrar.batcher import CallbackPolicy
+    try:
+        CallbackPolicy(allow=ns.allow_callbacks)
+    except ValueError as bad:
+        raise InvalidArguments(f"An --allow-callback entry is not a host or CIDR: {bad}.")
     return RegistrarConfig(store=ns.store, host=ns.host, port=_port(ns.port, "--port"),
                            publishers=tuple(ns.publishers), window=ns.window,
-                           max_age=ns.max_age)
+                           max_age=ns.max_age, allow_callbacks=tuple(ns.allow_callbacks),
+                           max_subscriptions=ns.max_subscriptions, delivery_timeout=timeout)
 
 
 def _backup_config(ns) -> BackupConfig:

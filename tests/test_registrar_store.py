@@ -50,11 +50,12 @@ def test_a_subscription_starts_full_then_carries_only_changes(store):
     assert store.subscribers() == [("EObserver", "http://127.0.0.1:1/batch")]
 
 
-def test_resubscribing_restarts_numbering_with_a_full_batch(store):
+def test_unsubscribing_then_subscribing_restarts_numbering_with_a_full_batch(store):
     _publish(store, "r1", b"a")
     store.subscribe("EObserver", "http://127.0.0.1:1/one")
     store.compose("EObserver")
     store.compose("EObserver")
+    store.unsubscribe("EObserver")
     store.subscribe("EObserver", "http://127.0.0.1:1/two")
     again = store.compose("EObserver")
     assert (again.number, again.full, len(again.heads)) == (1, True, 1)
@@ -93,3 +94,16 @@ def test_composing_for_an_unknown_subscriber_is_a_named_refusal(store):
     with pytest.raises(RegistrarNoSubscription) as missing:
         store.compose("ENobody")
     assert missing.value.code == "e.state.missing.subscription.f"
+
+
+def test_the_store_holding_the_signing_seed_is_owner_only(tmp_path):
+    import os
+    import stat
+    state = tmp_path / "shared"
+    state.mkdir(mode=0o755)
+    opened = RegistrarStore(state / "registrar.sqlite3")
+    try:
+        assert stat.S_IMODE(os.stat(state).st_mode) == 0o700
+        assert stat.S_IMODE(os.stat(state / "registrar.sqlite3").st_mode) == 0o600
+    finally:
+        opened.close()

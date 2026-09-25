@@ -8,7 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import fiki
 import pytest
 
-from witness.registrar.batcher import Batcher, HttpTransport
+from witness.registrar.batcher import Batcher, CallbackPolicy, HttpTransport
+
+LOOPBACK = CallbackPolicy(allow=("127.0.0.0/8",))
 from witness.registrar.store import RegistrarStore
 
 
@@ -119,7 +121,8 @@ def sink():
 
 
 def test_the_http_transport_posts_the_body_and_headers(sink):
-    HttpTransport(timeout=5).send(sink, b'{"number": 1}', {"Signature": "sig=:AA:"})
+    HttpTransport(timeout=5, policy=LOOPBACK).send(sink, b'{"number": 1}',
+                                                   {"Signature": "sig=:AA:"})
     headers, body = _Sink.received[0]
     assert body == b'{"number": 1}'
     assert headers["Signature"] == "sig=:AA:"
@@ -129,4 +132,4 @@ def test_the_http_transport_posts_the_body_and_headers(sink):
 def test_the_http_transport_raises_when_the_observer_refuses(sink):
     _Sink.status = 409
     with pytest.raises(ConnectionError, match="409"):
-        HttpTransport(timeout=5).send(sink, b"{}", {})
+        HttpTransport(timeout=5, policy=LOOPBACK).send(sink, b"{}", {})
