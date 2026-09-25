@@ -215,10 +215,45 @@ def test_a_replayed_signed_subscription_request_is_refused(store):
     assert again.json["code"] == "e.state.conflict.registrar.replay.f"
 
 
-def test_seen_signatures_expire_with_their_freshness_window(store):
-    assert store.first_sighting("EObs", 1000, "sig=:A:", now=1000, max_age=60) is True
-    assert store.first_sighting("EObs", 1000, "sig=:A:", now=1030, max_age=60) is False
-    assert store.first_sighting("EObs", 1000, "sig=:A:", now=1061, max_age=60) is True
+def test_a_sighting_is_kept_for_the_verifiers_whole_acceptance_window(store):
+    """fiki accepts a request until created + max_age + skew, so the sighting must outlive that."""
+    from witness.registrar.app import SKEW
+    keep = 60 + SKEW
+    assert store.first_sighting("EObs", 1000, b"sig", now=1000, keep=keep) is True
+    assert store.first_sighting("EObs", 1000, b"sig", now=1000 + 60 + SKEW, keep=keep) is False
+    assert store.first_sighting("EObs", 1000, b"sig", now=1001 + 60 + SKEW, keep=keep) is True
+
+
+def test_expired_sightings_are_pruned_on_every_insert(store):
+    store.first_sighting("EOld", 1000, b"old", now=1000, keep=10)
+    store.first_sighting("ENew", 2000, b"new", now=2000, keep=10)
+    assert store.sighting_count() == 1
+
+
+def test_a_relabelled_replay_is_refused(store):
+    """The label in Signature: sig=:...: is not signed, so relabelling a captured request must not
+    give it a new identity. Key on the signature bytes, not the header text."""
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60,
+        callbacks=CallbackPolicy(allow=("a.example",), resolve=lambda host: ["203.0.113.5"])))
+    key = fiki.Key.generate()
+    headers, body = _signed_request(key, "POST", SUBSCRIPTION,
+                                    {"callback": "http://a.example/batch"})
+    assert app.simulate_post(SUBSCRIPTION, headers=headers, body=body).status_code == 200
+    delete, _ = _signed_request(key, "DELETE", SUBSCRIPTION)
+    assert app.simulate_delete(SUBSCRIPTION, headers=delete).status_code == 204
+    fresh, body = _signed_request(key, "POST", SUBSCRIPTION,
+                                  {"callback": "http://a.example/other"})
+    assert app.simulate_post(SUBSCRIPTION, headers=fresh, body=body).status_code == 200
+    relabelled = {name: value.replace("sig=", "other=", 1)
+                  if name.lower() in ("signature", "signature-input") else value
+                  for name, value in delete.items()}
+    fiki.verify_request(method="DELETE", url=BASE + SUBSCRIPTION, headers=relabelled,
+                        max_age=60)  # fiki itself accepts the relabelled request
+    again = app.simulate_delete(SUBSCRIPTION, headers=relabelled)
+    assert (again.status_code, again.json["code"]) == (409,
+                                                       "e.state.conflict.registrar.replay.f")
+    assert store.subscribers() != [], "the captured DELETE did not end the new subscription"
 
 
 # --- (5) caps and concurrent, bounded delivery -------------------------------------------------
@@ -279,3 +314,86 @@ def test_an_https_callback_is_wrapped_with_the_callback_host_for_sni(monkeypatch
     assert wrapped == {"sock": ("plain-socket", ("203.0.113.9", 443)),
                        "host": "observer.example"}
     assert connection.sock == "tls-socket"
+
+
+# --- (3 again) one wall-clock deadline on the whole delivery -----------------------------------
+
+class _Trickle(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        try:
+            for byte in b"HTTP/1.1 200 OK\r\n" * 100:
+                self.wfile.write(bytes([byte]))
+                self.wfile.flush()
+                time.sleep(0.05)
+        except OSError:
+            pass
+
+
+def test_a_trickling_callback_is_abandoned_at_the_deadline():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Trickle)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        transport = HttpTransport(timeout=0.5, policy=CallbackPolicy(allow=("127.0.0.0/8",)))
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            transport.send(f"http://127.0.0.1:{server.server_address[1]}/batch", b"{}", {})
+        assert time.monotonic() - started < 1.5
+    finally:
+        server.shutdown()
+
+
+def test_slow_name_resolution_counts_against_the_deadline():
+    def slow(host):
+        time.sleep(2)
+        return ["203.0.113.7"]
+
+    transport = HttpTransport(timeout=0.3, policy=CallbackPolicy(allow=(), resolve=slow))
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        transport.send("http://slow.example/batch", b"{}", {})
+    assert time.monotonic() - started < 1.0
+
+
+def test_an_abandoned_delivery_still_spends_its_number(store):
+    store.subscribe("ESlow", "http://slow.example/batch")
+
+    class Stalled:
+        timeout = 0.2
+
+        def send(self, url, body, headers):
+            raise TimeoutError("abandoned at the deadline")
+
+    assert Batcher(store=store, transport=Stalled(), window=5).tick() == 0
+    assert store.compose("ESlow").number == 2
+
+
+# --- (4 again) the lock follows the database, not the directory name ---------------------------
+
+def test_a_symlinked_database_is_the_same_store(tmp_path):
+    real = tmp_path / "real"
+    other = tmp_path / "other"
+    real.mkdir()
+    other.mkdir()
+    first = RegistrarStore(real / "registrar.sqlite3")
+    try:
+        (other / "registrar.sqlite3").symlink_to(real / "registrar.sqlite3")
+        with pytest.raises(RegistrarInstance):
+            RegistrarStore(other / "registrar.sqlite3")
+    finally:
+        first.close()
+
+
+def test_abandoning_a_connection_with_no_socket_or_a_closed_one_is_harmless():
+    from types import SimpleNamespace
+    from witness.registrar import batcher as module
+
+    class Closed:
+        def shutdown(self, how):
+            raise OSError("already closed")
+
+    module._shut(SimpleNamespace(sock=None))
+    module._shut(SimpleNamespace(sock=Closed()))

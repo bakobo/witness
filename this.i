@@ -1075,9 +1075,12 @@ Operator layer over a stock keripy witness = goal:
             the harness config); the address checked is the address connected to; redirects are
             never followed. Subscriptions are capped in total, by configuration; each AID has at
             most one, because a subscription's identity is its AID. Batches are delivered
-            concurrently, each within a timeout of at most half the window that is its own
-            setting, not the inbound freshness bound, so one slow or dead callback cannot delay
-            anyone else's heartbeat, and a failed delivery still spends its number. One failing
+            concurrently, each under one wall-clock deadline of at most half the window, covering
+            name resolution, connect, send and read together (a per-read socket timeout would let
+            a trickling callback live on), and that deadline is its own setting, not the inbound
+            freshness bound. A delivery past its deadline is abandoned, so one slow or dead
+            callback cannot delay anyone else's heartbeat, and a failed delivery still spends its
+            number. One failing
             subscriber, or one failing window, never ends the batch thread.
 
         The Registrar's state survives a restart = decision:
@@ -1096,11 +1099,15 @@ Operator layer over a stock keripy witness = goal:
                 outside the write's transaction can be stale by the time it is used: two
                 Registrars on one store could each accept a different extension of the same head
                 or both issue batch number 1 (Codex on PR #19). So the Registrar holds an exclusive
-                lock on its state directory for its lifetime and refuses to start without it, and
-                every read-modify-write runs under BEGIN IMMEDIATE. Subscribing is idempotent: a
+                lock on its database file, resolved through any symlink so that two paths to one
+                file are one store, for its lifetime and refuses to start without it, and every
+                read-modify-write runs under BEGIN IMMEDIATE. Subscribing is idempotent: a
                 repeated subscription, or one moving to a new callback, continues its sequence
                 rather than restarting it, and a signed subscribe or unsubscribe already seen
-                inside its freshness window is refused, keyed on signer, created time and signature.
+                inside its freshness window is refused, keyed on signer, created time and the
+                signature's decoded bytes, never the header text, whose label is unsigned. A
+                sighting is kept for the verifier's whole acceptance window, max age plus the
+                clock skew fiki tolerates, one shared constant.
                 Publications are exempt from that replay check because a replayed publication
                 changes nothing (an exact repeat is re-acknowledged, anything older is stale) and a
                 publisher retrying one snapshot produces byte-identical signatures. The state

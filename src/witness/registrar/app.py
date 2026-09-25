@@ -11,12 +11,13 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import re
 import time
 from urllib.parse import urlsplit
 
 import falcon
 import fiki
+import http_sfv
+from fiki.messages import DEFAULT_SKEW
 
 from ..app import _PROBLEM_JSON, RequestIdMiddleware
 from ..errors import (RegistrarDenied, RegistrarInput, RegistrarNoSubscription,
@@ -28,7 +29,9 @@ MAX_BODY = 8 * 1024 * 1024
 MAX_NAME = 128
 MAX_URL = 256
 DEFAULT_MAX_SUBSCRIPTIONS = 64
-_CREATED = re.compile(r";\s*created=(\d+)")
+SKEW = DEFAULT_SKEW
+"""The clock skew fiki tolerates, passed to it explicitly, so the replay window below and the
+verifier's acceptance window are one number rather than two copies that can drift."""
 _SNAPSHOT = ("registry", "issuer", "digest", "chain", "kel")
 
 
@@ -48,19 +51,33 @@ def _signer(req, body: bytes, max_age: int, *, store=None, clock=time.time) -> s
     """
     try:
         verdict = fiki.verify_request(method=req.method, url=req.url, headers=req.headers,
-                                      body=body or None, max_age=max_age)
+                                      body=body or None, max_age=max_age, skew=SKEW)
     except fiki.FikiError as refused:
         raise RegistrarUnauthenticated(f"The request's signature did not verify: {refused}.")
     if body and "content-digest" not in verdict.covered:
         raise RegistrarUnauthenticated("The signature does not cover the request body.")
     if store is not None:
-        created = _CREATED.search(req.get_header("Signature-Input") or "")
-        if not store.first_sighting(verdict.aid, int(created.group(1)) if created else 0,
-                                    req.get_header("Signature") or "", now=int(clock()),
-                                    max_age=max_age):
+        created, signature = _signed_parts(req)
+        if not store.first_sighting(verdict.aid, created, signature, now=int(clock()),
+                                    keep=max_age + SKEW):
             raise RegistrarReplay("That signed request was already acted on.",
                                   args=[verdict.aid])
     return verdict.aid
+
+
+def _signed_parts(req) -> tuple[int, bytes]:
+    """The verified signature's ``created`` time and its decoded bytes.
+
+    fiki has just verified this request, and it accepts exactly one signature, so each header is a
+    one-entry RFC 8941 dictionary. The label is not signed and is ignored here: two requests that
+    differ only in their label are the same request.
+    """
+    inputs, signatures = http_sfv.Dictionary(), http_sfv.Dictionary()
+    inputs.parse(req.get_header("Signature-Input").encode())
+    signatures.parse(req.get_header("Signature").encode())
+    (entry,) = inputs.values()
+    (value,) = signatures.values()
+    return int(entry.params.get("created", 0)), bytes(value.value)
 
 
 def _object(body: bytes) -> dict:

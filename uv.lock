@@ -1077,6 +1077,7 @@ source = { editable = "." }
 dependencies = [
     { name = "falcon" },
     { name = "fiki" },
+    { name = "http-sfv" },
     { name = "keri" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
@@ -1093,6 +1094,7 @@ dev = [
 requires-dist = [
     { name = "falcon" },
     { name = "fiki", git = "https://github.com/bakobo/fiki?subdirectory=py&rev=f1c8999bd78d9fee7661672c92a9931fae9ab6f1" },
+    { name = "http-sfv", specifier = ">=0.9" },
     { name = "keri", git = "https://github.com/bakobo/keripy?rev=173678c0bad44203609942fd9b52134453f0d936" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },

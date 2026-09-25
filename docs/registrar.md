@@ -14,9 +14,9 @@ On start it prints one JSON line, `{"aid": "B…", "url": "http://host:port"}`. 
 
 `--window` is the batch window. The default is fifteen minutes, sized for herd privacy (tick `2db3` will choose the production value). A demo on a stage overrides it with seconds.
 
-Only one Registrar may use a state directory at a time; a second one refuses to start. The directory and its database are owner-only, because they hold the Registrar's signing seed.
+Only one Registrar may use a store at a time, however its database file is reached (the lock is on the file itself, through any symlink); a second one refuses to start. The directory and its database are owner-only, because they hold the Registrar's signing seed.
 
-Callbacks are untrusted, since any signer may subscribe. By default a callback must resolve to a public address; `--allow-callback` (repeatable) permits a host name or CIDR besides, such as `127.0.0.0/8` for an Observer on the same host. The address checked is the address connected to, and redirects are never followed. `--max-subscriptions` (default 64) caps subscriptions in total; each signer has at most one. `--delivery-timeout` bounds each delivery (default: ten seconds, or a quarter of the window if that is shorter, and never more than half the window). Deliveries run concurrently, so one slow callback cannot delay the others.
+Callbacks are untrusted, since any signer may subscribe. By default a callback must resolve to a public address; `--allow-callback` (repeatable) permits a host name or CIDR besides, such as `127.0.0.0/8` for an Observer on the same host. The address checked is the address connected to, and redirects are never followed. `--max-subscriptions` (default 64) caps subscriptions in total; each signer has at most one. `--delivery-timeout` is one wall-clock deadline on each whole delivery, from resolving the host to reading the status (default: ten seconds, or a quarter of the window if that is shorter, and never more than half the window); a delivery still running at the deadline is abandoned. Deliveries run concurrently, so one slow callback cannot delay the others.
 
 ## The surface
 
@@ -28,7 +28,7 @@ Every request is RFC 9421-signed with [fiki](https://github.com/bakobo/fiki), wi
 | `POST /v1/registrar/subscription` | any signer; its AID is the subscription | `{"callback": "http(s)://…"}` | `{"subscriber": …, "registrar": …}` |
 | `DELETE /v1/registrar/subscription` | the subscriber | none | 204 |
 
-Subscribing again, with the same callback or a new one, continues the existing sequence rather than restarting it. A signed subscribe or unsubscribe that has already been acted on is refused while it is still fresh (409 `e.state.conflict.registrar.replay.f`). Publications are exempt, because a replayed publication changes nothing.
+Subscribing again, with the same callback or a new one, continues the existing sequence rather than restarting it. A signed subscribe or unsubscribe that has already been acted on is refused while it is still fresh (409 `e.state.conflict.registrar.replay.f`); requests are compared by signer, created time and signature bytes, so changing the unsigned label does not make a new request. Publications are exempt, because a replayed publication changes nothing.
 
 A publication is kept only if its `chain` extends the head already held, byte for byte. An exact repeat is acknowledged again. An older chain is refused with 409 `e.state.conflict.registrar.stale.f`, and a chain that neither extends nor repeats the head with 409 `e.state.conflict.registrar.fork.f`. The Registrar does not verify anchors against the issuer's KEL; the Observer does, and must not rely on the Registrar's word.
 

@@ -20,6 +20,9 @@ dependencies = [
     # Registrar (@r3aonvlz) authenticates its publishers and subscribers and signs its batches with
     # it. Pinned at the py/v0.5.0 tag rather than main: that commit is the released Python artifact.
     "fiki @ git+https://github.com/bakobo/fiki@f1c8999bd78d9fee7661672c92a9931fae9ab6f1#subdirectory=py",
+    # RFC 8941 structured fields. Arrives through fiki too, and is declared because the Registrar
+    # parses the Signature headers itself to key its replay check on the signature bytes.
+    "http-sfv>=0.9",
     # ops.md §7 mandates the OpenTelemetry SDK in code Bakobo writes, with OTLP on the wire
     # (@wea6qjmk). Both live only in the control-plane process, which @c7v3kp already establishes
     # cannot affect the witness, and export stays off unless a collector endpoint is configured.

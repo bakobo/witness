@@ -32,15 +32,16 @@ _SCHEMA = (
     "number INTEGER NOT NULL, seen INTEGER NOT NULL, full INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value BLOB NOT NULL)",
     "CREATE TABLE IF NOT EXISTS sightings (aid TEXT NOT NULL, created INTEGER NOT NULL, "
-    "signature TEXT NOT NULL, PRIMARY KEY (aid, created, signature))",
+    "signature BLOB NOT NULL, PRIMARY KEY (aid, created, signature))",
 )
 
 
 class RegistrarStore:
     """One SQLite file, owned by one Registrar process at a time.
 
-    The state directory carries an exclusive lock for the store's lifetime, so a second Registrar
-    pointed at it refuses to start rather than racing the first. Within the process, a thread lock
+    The database file itself, resolved through any symlink, carries an exclusive lock for the
+    store's lifetime, so a second Registrar reaching the same file by any path refuses to start
+    rather than racing the first. Within the process, a thread lock
     serializes use of the one connection, and every read-modify-write runs inside BEGIN
     IMMEDIATE, so the read and the write it depends on see the same state.
 
@@ -52,20 +53,23 @@ class RegistrarStore:
         path = Path(path)
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(path.parent, 0o700)
-        self._lockfile = open(path.parent / "registrar.lock", "a")  # noqa: SIM115 - held open
-        try:
-            fcntl.flock(self._lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            self._lockfile.close()
-            raise RegistrarInstance(f"Another Registrar already holds {path.parent}.",
-                                    args=[str(path.parent)]) from None
+        real = Path(os.path.realpath(path))
         previous = os.umask(0o077)
         try:
-            self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None,
+            # flock is per open file, and SQLite's own locks are POSIX fcntl locks on the same
+            # file, so the two do not interfere. Opening creates an empty file SQLite accepts.
+            self._lockfile = open(real, "ab")  # noqa: SIM115 - held open for the lifetime
+            try:
+                fcntl.flock(self._lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                self._lockfile.close()
+                raise RegistrarInstance(f"Another Registrar already holds {real}.",
+                                        args=[str(real)]) from None
+            self._db = sqlite3.connect(real, check_same_thread=False, isolation_level=None,
                                        timeout=10)
         finally:
             os.umask(previous)
-        os.chmod(path, 0o600)
+        os.chmod(real, 0o600)
         self._lock = threading.Lock()
         self._db.execute("PRAGMA synchronous=FULL")
         with self._tx():
@@ -158,20 +162,26 @@ class RegistrarStore:
             return [tuple(row) for row in self._db.execute(
                 "SELECT aid, callback FROM subscribers ORDER BY aid")]
 
-    def first_sighting(self, aid: str, created: int, signature: str, *, now: int,
-                       max_age: int) -> bool:
+    def first_sighting(self, aid: str, created: int, signature: bytes, *, now: int,
+                       keep: int) -> bool:
         """Record a signed request; False if the same one was already seen and is still fresh.
 
-        Keyed on the signer, its ``created`` time and the signature itself. Entries older than
-        the freshness window are forgotten, since fiki refuses such a request anyway.
+        Keyed on the signer, its ``created`` time and the signature's decoded bytes (never the
+        header text, whose label is unsigned). A sighting is kept for ``keep`` seconds after its
+        ``created`` time, which must be the verifier's whole acceptance window (max age plus
+        skew). Expired sightings are pruned on every call.
         """
         with self._tx():
-            self._db.execute("DELETE FROM sightings WHERE created < ?", (now - max_age,))
+            self._db.execute("DELETE FROM sightings WHERE created < ?", (now - keep,))
             if self._db.execute("SELECT 1 FROM sightings WHERE aid=? AND created=? AND "
                                 "signature=?", (aid, created, signature)).fetchone():
                 return False
             self._db.execute("INSERT INTO sightings VALUES (?, ?, ?)", (aid, created, signature))
             return True
+
+    def sighting_count(self) -> int:
+        with self._lock:
+            return self._db.execute("SELECT COUNT(*) FROM sightings").fetchone()[0]
 
     def compose(self, aid: str) -> Batch:
         """The next batch for ``aid``: every head if its subscription is new, else the changes.

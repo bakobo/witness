@@ -98,6 +98,11 @@ class _PinnedHTTPS(_PinnedHTTP):
 class HttpTransport:
     """POST a signed batch to a subscriber's callback. The seam a webhook or SSE replaces.
 
+    The whole delivery (resolving the host, connecting, sending, reading the status) has one
+    wall-clock deadline, ``timeout`` seconds from the start. A socket timeout alone bounds each
+    read, not the delivery, so a callback that trickles a byte at a time, or a resolver that
+    stalls, could otherwise hold a delivery past the window. At the deadline the delivery is
+    abandoned: its socket is shut down, and a stalled resolution is left to finish on its own.
     Redirects are never followed: a 3xx is a failed delivery, like any other non-2xx.
     """
 
@@ -106,18 +111,56 @@ class HttpTransport:
         self.policy = policy or CallbackPolicy()
 
     def send(self, url: str, body: bytes, headers: dict) -> None:
-        address = self.policy.check(url)
+        deadline = time.monotonic() + self.timeout
+        address = _within(deadline, lambda: self.policy.check(url), f"resolving {url}")
         parts = urlsplit(url)
         kind = _PinnedHTTPS if parts.scheme == "https" else _PinnedHTTP
-        connection = kind(parts.hostname, parts.port, address=address, timeout=self.timeout)
-        try:
+        connection = kind(parts.hostname, parts.port, address=address,
+                          timeout=max(deadline - time.monotonic(), 0.001))
+
+        def exchange():
             connection.request("POST", parts.path or "/", body=body,
                                headers={**headers, "Content-Type": "application/json"})
-            status = connection.getresponse().status
+            return connection.getresponse().status
+
+        try:
+            status = _within(deadline, exchange, f"delivering to {url}",
+                             abandon=lambda: _shut(connection))
         finally:
             connection.close()
         if not 200 <= status < 300:
             raise ConnectionError(f"{url} answered {status}")
+
+
+def _shut(connection) -> None:
+    """Interrupt a blocked read or write on the connection's socket, from another thread."""
+    if connection.sock is not None:
+        try:
+            connection.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def _within(deadline: float, work, what: str, abandon=lambda: None):
+    """Run ``work`` on a daemon thread and return its result, or raise TimeoutError at the
+    deadline after calling ``abandon``. Its exception, if it raised one, is re-raised here."""
+    outcome = {}
+
+    def run():
+        try:
+            outcome["value"] = work()
+        except BaseException as failure:  # re-raised on the calling thread
+            outcome["error"] = failure
+
+    worker = threading.Thread(target=run, daemon=True, name="registrar-delivery")
+    worker.start()
+    worker.join(max(deadline - time.monotonic(), 0))
+    if worker.is_alive():
+        abandon()
+        raise TimeoutError(f"Gave up {what} at the delivery deadline.")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 
 def encode(batch, *, registrar: str, window_end: float) -> bytes:
