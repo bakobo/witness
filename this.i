@@ -1127,3 +1127,15 @@ Operator layer over a stock keripy witness = goal:
                 changes nothing (an exact repeat is re-acknowledged, anything older is stale) and a
                 publisher retrying one snapshot produces byte-identical signatures. The state
                 directory and database are owner-only, since they hold the signing seed.
+            Every batch names the subscription it was sent for = decision:
+              id: jpag4sof
+              why: >
+                A subscription carries a random nonce its Observer chooses, and every batch the
+                Registrar signs for that subscription includes it as "subscription". Without it
+                nothing in a signed batch said which subscription it belonged to, so a captured
+                full batch 1 from an earlier subscription, still inside its signature's age, could
+                be replayed to an Observer that had just resubscribed after a restart and close
+                its gap with old heads (Codex on heti#21). The Observer refuses any batch whose
+                nonce is not its current one. A subscribe must carry the nonce (16 to 64
+                base64url characters) or it is refused; repeating a subscription replaces the
+                nonce with the new one and, as before, continues the numbering.
