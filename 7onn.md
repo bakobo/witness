@@ -3,3 +3,4 @@ kind: debt
 tags: registrar, availability
 created: 2026-09-25T03:57Z
 
+- 2026-09-26T09:01Z PR bakobo/witness#22 (2026-09-26) fixes all three gaps; tick off when it merges.
