@@ -3,6 +3,7 @@
 import base64
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import fiki
@@ -86,10 +87,12 @@ def test_the_loop_ticks_every_window_until_stopped(store):
     stop = threading.Event()
     thread = threading.Thread(target=batcher.run, args=(stop,))
     thread.start()
-    while len(transport.sent) < 3:
+    deadline = time.monotonic() + 10  # bounded, so a batcher that never ticks fails, not hangs
+    while len(transport.sent) < 3 and time.monotonic() < deadline:
         threading.Event().wait(0.01)
     stop.set()
     thread.join(timeout=5)
+    assert len(transport.sent) >= 3, "the batch loop did not tick three windows in ten seconds"
     assert not thread.is_alive()
 
 

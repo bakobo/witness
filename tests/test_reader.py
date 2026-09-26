@@ -295,6 +295,37 @@ def test_an_unwitnessed_aid_is_a_missing_resource_not_a_failure(witnessing_db):
     assert caught.value.retryable is False
 
 
+def test_one_controller_is_looked_up_rather_than_found_by_scanning(witnessing_db, monkeypatch):
+    """PERF-F1 (2026-09-26 panel). The key-state store is keyed by AID, so one controller is one
+    lookup; walking every record to find it made the endpoint O(N) in controllers witnessed."""
+    cfg = ControlPlaneConfig(
+        name=witnessing_db["name"], host="127.0.0.1", port=1, base="",
+        head_dir_path=witnessing_db["head"],
+    )
+
+    def no_scan(rdb):
+        raise AssertionError("controller(aid) walked every key state")
+
+    monkeypatch.setattr(reader_mod, "_key_states", no_scan)
+
+    assert WitnessReader(cfg).controller(witnessing_db["controller_pre"])["aid"] == (
+        witnessing_db["controller_pre"])
+
+
+@pytest.mark.parametrize("aid", ["B" * 600, "not an aid", "B" * 43 + "/"])
+def test_a_path_that_cannot_be_an_aid_is_a_missing_resource_before_lmdb_sees_it(
+        witnessing_db, aid):
+    """An AID from the URL is now a database key, and LMDB refuses keys over 511 bytes with an
+    exception of its own. Anything that is not qb64 is unknown here, not a server error."""
+    cfg = ControlPlaneConfig(
+        name=witnessing_db["name"], host="127.0.0.1", port=1, base="",
+        head_dir_path=witnessing_db["head"],
+    )
+
+    with pytest.raises(ControllerUnknown):
+        WitnessReader(cfg).controller(aid)
+
+
 def test_loop_without_a_configured_segment_blames_the_right_component(reader):
     """DX-F1. This used to raise DbUnavailable, so an operator running --no-telemetry was told
     "I could not open the witness database" about a database that was open and fine."""

@@ -696,6 +696,16 @@ Operator layer over a stock keripy witness = goal:
             judgment. Found by the v0.1.0-rc review panel (CON-F2) rather than by the author, which
             is what running one is for.
 
+        Intent for @qgacju62 and @o64bkgtl landed in the same commit as their code = deviation:
+          id: c6nkgl5k
+          why: >
+            The same gap @2gep42zc records, one subsystem later. Commit c2684ec, answering Codex and
+            Copilot on PR #19, introduced both nodes together with the Registrar code and tests
+            they justify, rather than in a code-free commit ahead of it as methodology §5 asks.
+            Recorded rather than repaired, for @2gep42zc's reason: a history rewrite cannot buy
+            back an ordering whose value was being observable at the time. Found by the
+            2026-09-26 health panel (CON-F1).
+
     A backup is a consistent hot copy of every store  taken read-only = decision:
       id: 7b34ohbo
       why: >
@@ -993,8 +1003,9 @@ Operator layer over a stock keripy witness = goal:
             @c7v3kp forbids anything that could stall or corrupt the served witness, so the
             Registrar runs as its own process role, `witness registrar`, with its own store, and
             reads nothing of the witness's LMDB. It is co-hosted with the witnesses in the sense of
-            governance and deployment, not of address space. This makes the CLI four subcommands,
-            amending @ixdaut53's three by @g3w6px's one-entry-point argument. Accepted tradeoff:
+            governance and deployment, not of address space. This adds a subcommand to the CLI,
+            amending @ixdaut53's count by @g3w6px's one-entry-point argument (with `backup` and
+            `pool`, the CLI has six as of 2026-09-26). Accepted tradeoff:
             one more process to supervise when an issuer runs both.
 
         The Registrar trusts its publisher and judges nothing cryptographically = decision:

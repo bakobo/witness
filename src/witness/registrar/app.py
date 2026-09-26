@@ -21,7 +21,7 @@ import fiki
 import http_sfv
 from fiki.messages import DEFAULT_SKEW
 
-from ..app import _PROBLEM_JSON, RequestIdMiddleware
+from ..app import PROBLEM_JSON, RequestIdMiddleware
 from ..errors import (RegistrarDenied, RegistrarInput, RegistrarResolverTimeout,
                       RegistrarTooLarge, RegistrarUnauthenticated, WitnessError)
 from .batcher import CallbackPolicy, _within
@@ -187,7 +187,7 @@ class _Resource:
             status, media = act()
         except WitnessError as refused:
             resp.status = falcon.util.code_to_http_status(refused.status)
-            resp.content_type = _PROBLEM_JSON
+            resp.content_type = PROBLEM_JSON
             resp.set_header("Content-Language", "en")
             resp.media = refused.problem(instance=req.path,
                                          request_id=getattr(req.context, "request_id", None))
@@ -240,7 +240,7 @@ def make_registrar_app(store, *, publishers: frozenset, max_age: int, callbacks=
     re-acknowledged and anything older is refused as stale, so a replay changes nothing, and a
     publisher retrying one snapshot (signatures are deterministic) must not be refused for it."""
     app = falcon.App(middleware=[RequestIdMiddleware()])
-    app.resp_options.media_handlers[_PROBLEM_JSON] = falcon.media.JSONHandler()
+    app.resp_options.media_handlers[PROBLEM_JSON] = falcon.media.JSONHandler()
     options = dict(callbacks=callbacks, max_subscriptions=max_subscriptions, clock=clock,
                    **bounds)
     app.add_route("/v1/registrar/publication", Publication(store, publishers, max_age, **options))

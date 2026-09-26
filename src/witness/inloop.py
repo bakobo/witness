@@ -70,6 +70,11 @@ class TimedDoist(doing.Doist):
     as it was — same identity, same ``tock``, ``done``, ``opts`` and ``temp``. Nothing of hio's
     scheduling is reproduced here, so a keripy or hio bump has three lines to break rather than
     forty (@vpu373to).
+
+    ``capacity`` is how many slots the sink's segment was created with, and defaults to the
+    doers known at construction. It must match the segment: doers beyond it (added later via
+    ``extend``) run untimed rather than write past the segment's end, so setting it lower than
+    the segment silently drops timings, and higher than the segment is a bad write.
     """
 
     def __init__(self, *args, sink=None, capacity=None, **kwargs):
