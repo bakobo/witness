@@ -86,6 +86,69 @@ def test_a_read_that_races_one_write_still_succeeds(segment):
     assert reader.read(attempts=3)["ticks"] == 3
 
 
+def test_a_write_held_in_flight_past_five_attempts_is_waited_out(segment, monkeypatch):
+    """~332h. The writer is a Python thread, so a GIL handoff between its two sequence stores can
+    hold the sequence odd for milliseconds. Five back-to-back attempts gave up inside that window
+    about once in 1,800 reads against a live container; the default read has to outlast it."""
+    monkeypatch.setattr(telemetry.time, "sleep", lambda seconds: None)
+    path, writer = segment
+    writer.publish_tick(ticks=4, wall=2.0, lag=0.0)
+    reader = telemetry.SegmentReader(str(path))
+    writer._begin_write()
+    retries = []
+
+    def end_the_write_late():
+        retries.append(None)
+        if len(retries) == 8:
+            writer._end_write()
+
+    reader._on_retry = end_the_write_late
+
+    assert reader.read()["ticks"] == 4
+
+
+def test_the_reader_pauses_between_attempts_and_the_pauses_grow(segment, monkeypatch):
+    """@cuog5my4. Back-to-back attempts spin against a writer that needs the CPU to finish; the
+    pauses let it, and doubling keeps the uncontended case at a single read."""
+    pauses = []
+    monkeypatch.setattr(telemetry.time, "sleep", pauses.append)
+    path, writer = segment
+    reader = telemetry.SegmentReader(str(path))
+    writer._begin_write()  # and never finished: a writer that died mid-write
+
+    with pytest.raises(TelemetryUnavailable):
+        reader.read()
+
+    assert pauses, "the reader retried without pausing"
+    assert all(later == 2 * earlier for earlier, later in zip(pauses, pauses[1:]))
+
+
+def test_a_stuck_writer_is_given_up_on_within_a_bounded_wait(segment, monkeypatch):
+    """@cuog5my4. A crashed writer can leave the sequence odd forever, and the health check that
+    reads this must still answer, so the total wait is bounded."""
+    pauses = []
+    monkeypatch.setattr(telemetry.time, "sleep", pauses.append)
+    path, writer = segment
+    reader = telemetry.SegmentReader(str(path))
+    writer._begin_write()
+
+    with pytest.raises(TelemetryUnavailable):
+        reader.read()
+
+    assert 0.05 < sum(pauses) < 0.5
+
+
+def test_an_uncontended_read_does_not_pause(segment, monkeypatch):
+    pauses = []
+    monkeypatch.setattr(telemetry.time, "sleep", pauses.append)
+    path, writer = segment
+    writer.publish_tick(ticks=1, wall=1.0, lag=0.0)
+
+    telemetry.SegmentReader(str(path)).read()
+
+    assert pauses == []
+
+
 def test_the_reader_maps_the_segment_read_only(segment):
     path, _writer = segment
     reader = telemetry.SegmentReader(str(path))

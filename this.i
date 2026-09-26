@@ -208,6 +208,25 @@ Operator layer over a stock keripy witness = goal:
                 too late to be useful. Accepted tradeoff: one extra generator frame per doer per
                 pass, and a wrapper whose correctness the witness now depends on.
 
+            The reader backs off between attempts  and gives up within a bounded budget = decision:
+              id: cuog5my4
+              why: >
+                The seqlock makes the writer never wait, so every cost of contention lands on the
+                reader, and the first reader made its attempts back to back. Five attempts in a
+                few microseconds only outlast a write in flight if the writer finishes it in that
+                window — and the writer is a Python thread, so a GIL handoff or a descheduled core
+                between its two sequence stores holds the sequence odd for milliseconds. Measured
+                2026-09-26 against a live container: about one read in 1,800 ran out of attempts
+                and raised, which is ~332h's release-gating flake and also a spurious 503 from
+                /v1/witness/loop at the same rate. Chose exponential pauses between attempts from
+                100 microseconds, doubling, so the common case stays a single uncontended read and
+                a reader that does give up has waited ~0.2 s in total, several GIL switch
+                intervals. Rejected a longer spin without pauses (burns a core against a writer
+                that needs the CPU to finish) and an unbounded wait (a crashed writer can leave the
+                sequence odd forever, and the health check must still answer). The writer is
+                untouched, so @e3uji3mv's frozen hot path is unaffected. Accepted tradeoff: a read
+                that meets a stuck writer now costs ~0.2 s instead of nothing before it fails.
+
     Input completeness is enforced by a door census  with a review date = decision:
       id: bb3yndtf
       why: >
