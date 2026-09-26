@@ -705,7 +705,8 @@ def test_a_copy_of_a_request_still_in_admission_is_refused_without_resolving(sto
 
         copy = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
 
-        assert copy.json["code"] == "e.state.conflict.registrar.replay.f"
+        # Retryable, not a replay: the original may still be refused and leave nothing behind.
+        assert copy.json["code"] == "e.state.conflict.registrar.pending.r"
         assert stuck.calls == 1
     finally:
         stuck.release.set()
@@ -794,3 +795,66 @@ def test_a_resolver_thread_that_cannot_start_gives_its_slot_back(store, monkeypa
     monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
 
     resource._admit("http://two.example/batch")  # the slot came back
+
+
+def test_a_copy_refused_while_its_original_was_pending_is_welcome_once_that_fails(store):
+    """Codex on #22: the copy's refusal must not outlive the original's failure."""
+    stuck = _Stuck()
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=0.3,
+        callbacks=CallbackPolicy(allow=("stuck.example",), resolve=stuck)))
+    body = json.dumps({"callback": "http://stuck.example/batch",
+                       "nonce": "nonce-00000000000000"}).encode()
+    headers = fiki.sign_request(key=fiki.Key.generate(), method="POST", url=BASE + SUBSCRIPTION,
+                                body=body)
+    answers = []
+    first = threading.Thread(target=lambda: answers.append(
+        app.simulate_post(SUBSCRIPTION, headers=headers, body=body)))
+    first.start()
+    try:
+        deadline = time.monotonic() + 5
+        while stuck.calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        copy = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+        first.join(timeout=5)
+    finally:
+        stuck.release.set()
+    assert copy.json["code"] == "e.state.conflict.registrar.pending.r"
+    assert answers[0].json["code"] == "e.env.resolver.timeout.r"
+
+    again = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+
+    assert again.status_code == 200
+
+
+def test_a_resolver_thread_that_cannot_be_created_gives_its_slot_back(store, monkeypatch):
+    """Codex on #22: the constructor can fail too, before anything is tracked."""
+    from witness.registrar import app as module, batcher
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+    resource = module.Subscription(store, frozenset(), 60,
+                                   callbacks=CallbackPolicy(resolve=lambda host: ["8.8.8.8"]))
+
+    def cannot_create(*args, **kwargs):
+        raise RuntimeError("can't create thread")
+
+    monkeypatch.setattr(batcher.threading, "Thread", cannot_create)
+    with pytest.raises(RuntimeError):
+        resource._admit("http://one.example/batch")
+    monkeypatch.undo()
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+
+    resource._admit("http://two.example/batch")  # the slot came back
+
+
+def test_a_killed_resolution_is_a_retryable_timeout_not_a_refusal(store, monkeypatch):
+    """Codex on #22: a resolver too slow to answer says nothing about the host, so the killed
+    child must surface as the 503 timeout, never as 403 'does not resolve'."""
+    from witness.registrar import batcher
+    monkeypatch.setattr(batcher, "_RESOLVER", "import time; time.sleep(60)")
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=10,
+        callbacks=CallbackPolicy(resolve_timeout=0.3)))
+
+    answer, _, _ = _subscribe(app, fiki.Key.generate(), "http://slow.example/batch")
+
+    assert (answer.status_code, answer.json["code"]) == (503, "e.env.resolver.timeout.r")

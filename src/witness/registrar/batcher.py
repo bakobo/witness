@@ -83,6 +83,8 @@ class CallbackPolicy:
         try:
             addresses = [ipaddress.ip_address(host)] if _is_address(host) else \
                 [ipaddress.ip_address(found) for found in self.resolve(host)]
+        except TimeoutError:
+            raise  # the resolver was too slow, which says nothing about the host: not a refusal
         except (OSError, ValueError):
             addresses = []
         if not addresses:

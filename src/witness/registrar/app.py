@@ -23,7 +23,7 @@ import http_sfv
 from fiki.messages import DEFAULT_SKEW
 
 from ..app import _PROBLEM_JSON, RequestIdMiddleware
-from ..errors import (RegistrarDenied, RegistrarInput, RegistrarReplay,
+from ..errors import (RegistrarDenied, RegistrarInput, RegistrarPending, RegistrarReplay,
                       RegistrarResolverTimeout, RegistrarTooLarge, RegistrarUnauthenticated,
                       WitnessError)
 from .batcher import CallbackPolicy, _within
@@ -163,9 +163,9 @@ class _Resource:
 
         Resolution is synchronous and a hostile resolver can stall it, so it runs on a daemon
         thread the request waits for at most ``admission_timeout``, and no more than
-        MAX_ADMISSIONS such threads may be alive at once. A slot is held from here until the
-        resolving thread itself gives it back, so it is never uncounted while a thread that
-        could still resolve exists (@t3ju3fxz).
+        MAX_ADMISSIONS resolutions may be running at once. A slot is held from here until the
+        resolving thread gives it back as its resolution ends, so a resolution is never
+        uncounted while it can still run (@t3ju3fxz).
         """
         with self._admissions_lock:  # reserve a slot; the wait happens outside the lock
             if self._resolving >= MAX_ADMISSIONS:
@@ -191,7 +191,7 @@ class _Resource:
                 f"The callback host did not resolve within {self.admission_timeout} s.",
                 args=[callback]) from None
         finally:
-            if workers[0].ident is None:  # it never started, so it will never release
+            if not workers or workers[0].ident is None:  # never started, so never releases
                 release()
 
     @contextmanager
@@ -201,9 +201,11 @@ class _Resource:
         still commits with the subscription, so a request refused later can be retried."""
         key = (signer, sighting.created, sighting.signature)
         with self._admissions_lock:
-            if key in self._admitting or self.store.replayed(signer, sighting):
-                raise RegistrarReplay("That signed request was already acted on, or is being "
-                                      "acted on now.", args=[signer])
+            if key in self._admitting:
+                raise RegistrarPending("That signed request is still being admitted; if it is "
+                                       "refused, this one may be sent again.", args=[signer])
+            if self.store.replayed(signer, sighting):
+                raise RegistrarReplay("That signed request was already acted on.", args=[signer])
             self._admitting.add(key)
         try:
             yield
