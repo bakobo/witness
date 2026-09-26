@@ -4,3 +4,4 @@ tags: registrar, availability
 created: 2026-09-25T03:57Z
 
 - 2026-09-26T09:01Z PR bakobo/witness#22 (2026-09-26) fixes all three gaps; tick off when it merges.
+- 2026-09-26T09:21Z The 2026-09-26 health panel raised the exhaustible admission pool as SEC-F2; PR #22 answers it.
