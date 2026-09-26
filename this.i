@@ -1101,7 +1101,10 @@ Operator layer over a stock keripy witness = goal:
                 released by the resolving thread itself. Admission ran before the replay check, so
                 re-sending one accepted signed request made the Registrar resolve an
                 attacker-chosen host again each time; a request already acted on, or identical to
-                one still in admission, is now refused before anything is resolved. The replay
+                one still in admission, is now refused before anything is resolved: a replay as
+                final, a copy as retryable, since its original may yet fail and leave nothing
+                behind (Codex on #22). A resolver killed at its timeout is the retryable 503, not
+                a refusal of the host. The replay
                 record still commits with the subscription, so a request refused for any other
                 reason can be retried. And a resolution that never returns held its slot until
                 restart, because getaddrinfo cannot be interrupted from Python; sixteen of them
