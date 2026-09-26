@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import base64
+import functools
 import http.client
 import ipaddress
 import json
 import logging
 import socket
 import ssl
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -29,8 +32,32 @@ MAX_IN_FLIGHT = 64
 (a resolver that never returns, say) cannot be killed, so this is what bounds them."""
 
 
-def _resolve(host: str) -> list[str]:
-    return [info[4][0] for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)]
+RESOLVE_TIMEOUT = 5.0
+"""Seconds a resolution may run before its child interpreter is killed (@t3ju3fxz)."""
+
+_RESOLVER = ("import json, socket, sys; print(json.dumps([info[4][0] for info in "
+             "socket.getaddrinfo(sys.argv[1], None, type=socket.SOCK_STREAM)]))")
+
+
+def _resolve(host: str, *, timeout: float) -> list[str]:
+    """The addresses ``host`` resolves to, found by getaddrinfo in a child interpreter.
+
+    getaddrinfo cannot be interrupted from Python, so a resolver that never answers would hold
+    the thread that asked for as long as the process lives. A child can be killed, which bounds
+    every resolution by ``timeout`` (@t3ju3fxz). The child is the system resolver, so /etc/hosts
+    and nsswitch mean what they mean to every other program on the host.
+    """
+    try:
+        child = subprocess.run([sys.executable, "-I", "-S", "-c", _RESOLVER, host],
+                               capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(f"Resolving {host!r} took longer than {timeout} s.") from None
+    if child.returncode != 0:
+        raise OSError(f"{host!r} did not resolve.")
+    found = json.loads(child.stdout)
+    if not isinstance(found, list) or not all(isinstance(address, str) for address in found):
+        raise ValueError(f"The resolver answered {child.stdout!r}, not a list of addresses.")
+    return found
 
 
 class CallbackPolicy:
@@ -43,12 +70,13 @@ class CallbackPolicy:
     host and returns the address to connect to, so the address checked is the address used.
     """
 
-    def __init__(self, allow=(), *, resolve=_resolve) -> None:
+    def __init__(self, allow=(), *, resolve=None,
+                 resolve_timeout: float = RESOLVE_TIMEOUT) -> None:
         self.hosts = frozenset(entry for entry in allow if "/" not in entry
                                and not _is_address(entry))
         self.networks = tuple(ipaddress.ip_network(entry, strict=False) for entry in allow
                               if "/" in entry or _is_address(entry))
-        self.resolve = resolve
+        self.resolve = resolve or functools.partial(_resolve, timeout=resolve_timeout)
 
     def check(self, url: str) -> str:
         host = urlsplit(url).hostname or ""

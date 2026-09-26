@@ -91,6 +91,12 @@ ACCOUNTED = {
         "pool, so the caller decides what it means. Not a door because nothing downstream trusts "
         "the value: it is displayed or compared, never used as authority."
     ),
+    "batcher.py::_resolve": (
+        "exempt: the stdout of a child interpreter this module spawns with a fixed script and "
+        "its own sys.executable, under a timeout, holding one host name bounded by MAX_URL. It "
+        "is a JSON list of address strings or it is refused, and every address is then parsed by "
+        "ipaddress and checked against the callback policy before anything connects to it."
+    ),
     "store.py::RegistrarStore.__init__": (
         "exempt: the lock file is opened only to hold an exclusive flock on the Registrar's state "
         "directory, so a second Registrar on the same store refuses to start. Nothing is read "
