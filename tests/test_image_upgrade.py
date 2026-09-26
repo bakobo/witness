@@ -167,13 +167,16 @@ def _witness_for(container, port, bran, alias):
 
 def _volume_for(image):
     name = f"witness-upgrade-{uuid.uuid4().hex[:8]}"
-    _docker("volume", "create", name)
-    _docker(
-        "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "kli", image,
-        "init", "--name", "witness", "--nopasscode",
-    )
     containers = []
     try:
+        # Inside the try, so the sweep below also covers a volume whose `kli init` failed -- an
+        # unpullable image, a stale registry credential, a broken keystore. Created before it,
+        # that volume outlived every failed setup (~63fs).
+        _docker("volume", "create", name)
+        _docker(
+            "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "kli", image,
+            "init", "--name", "witness", "--nopasscode",
+        )
         yield name, containers
     finally:
         for container in containers:
@@ -202,8 +205,10 @@ def baseline_volume():
     The premise is checked BEFORE the volume is built, not in the test body afterwards. A
     misconfigured baseline would otherwise create a volume and run `kli init` in a container before
     anything noticed, which is a slow way to reach a message that needed no containers at all.
+    The pin check belongs here for the same reason: a skip for differing pins needs no volume.
     """
     _two_images_or_fail()
+    _same_pin_or_skip()
     yield from _volume_for(BASELINE)
 
 
@@ -310,7 +315,6 @@ def test_this_image_takes_over_a_volume_the_deployed_one_wrote(baseline_volume):
     state, and accept a FURTHER event. The last clause is again the one with teeth: holding the
     history proves storage, receipting a new event proves the signing keys came across too.
     """
-    _same_pin_or_skip()
     name, containers = baseline_volume
     old, new = f"{name}-old", f"{name}-new"
     port_old, port_new = _free_port(), _free_port()
@@ -345,7 +349,6 @@ def test_the_deployed_image_takes_the_volume_back(baseline_volume):
     anything the previous one cannot read, and the harm from discovering that during an incident
     is that the escape hatch is the thing that is broken.
     """
-    _same_pin_or_skip()
     name, containers = baseline_volume
     new, back = f"{name}-new", f"{name}-back"
     port_new, port_back = _free_port(), _free_port()
