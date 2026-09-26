@@ -14,6 +14,7 @@ import json
 import re
 import threading
 import time
+from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 import falcon
@@ -22,8 +23,9 @@ import http_sfv
 from fiki.messages import DEFAULT_SKEW
 
 from ..app import _PROBLEM_JSON, RequestIdMiddleware
-from ..errors import (RegistrarDenied, RegistrarInput, RegistrarResolverTimeout,
-                      RegistrarTooLarge, RegistrarUnauthenticated, WitnessError)
+from ..errors import (RegistrarDenied, RegistrarInput, RegistrarPending, RegistrarReplay,
+                      RegistrarResolverTimeout, RegistrarTooLarge, RegistrarUnauthenticated,
+                      WitnessError)
 from .batcher import CallbackPolicy, _within
 from .store import Sighting
 
@@ -147,8 +149,8 @@ class _Resource:
         self.max_subscriptions = max_subscriptions
         self.max_sightings, self.max_sightings_per_signer = max_sightings, max_sightings_per_signer
         self.admission_timeout = admission_timeout
-        self._admissions: list[threading.Thread] = []
-        self._reserved = 0
+        self._resolving = 0
+        self._admitting: set[tuple[str, int, bytes]] = set()
         self._admissions_lock = threading.Lock()
 
     def _sighting(self, req, now: int) -> Sighting:
@@ -157,30 +159,59 @@ class _Resource:
                         per_signer=self.max_sightings_per_signer, total=self.max_sightings)
 
     def _admit(self, callback: str) -> None:
-        """The callback policy, under a deadline, with abandoned resolutions capped.
+        """The callback policy, under a deadline, with resolutions alive at once capped.
 
         Resolution is synchronous and a hostile resolver can stall it, so it runs on a daemon
         thread the request waits for at most ``admission_timeout``, and no more than
-        MAX_ADMISSIONS such threads may be alive at once.
+        MAX_ADMISSIONS resolutions may be running at once. A slot is held from here until the
+        resolving thread gives it back as its resolution ends, so a resolution is never
+        uncounted while it can still run (@t3ju3fxz).
         """
         with self._admissions_lock:  # reserve a slot; the wait happens outside the lock
-            self._admissions = [thread for thread in self._admissions if thread.is_alive()]
-            if len(self._admissions) + self._reserved >= MAX_ADMISSIONS:
+            if self._resolving >= MAX_ADMISSIONS:
                 raise RegistrarResolverTimeout("Too many callback resolutions are pending.")
-            self._reserved += 1
+            self._resolving += 1
 
-        def track(thread):
+        def release():
             with self._admissions_lock:
-                self._admissions.append(thread)
-                self._reserved -= 1
+                self._resolving -= 1
 
+        def resolve():
+            try:
+                return self.callbacks.check(callback)
+            finally:
+                release()
+
+        workers = []
         try:
-            _within(time.monotonic() + self.admission_timeout,
-                    lambda: self.callbacks.check(callback), f"resolving {callback}", track=track)
+            _within(time.monotonic() + self.admission_timeout, resolve, f"resolving {callback}",
+                    track=workers.append)
         except TimeoutError:
             raise RegistrarResolverTimeout(
                 f"The callback host did not resolve within {self.admission_timeout} s.",
                 args=[callback]) from None
+        finally:
+            if not workers or workers[0].ident is None:  # never started, so never releases
+                release()
+
+    @contextmanager
+    def _only_copy(self, signer: str, sighting):
+        """Refuse a request already acted on, or identical to one still being admitted, before
+        anything is resolved on its behalf (@t3ju3fxz). Nothing is recorded here: the replay record
+        still commits with the subscription, so a request refused later can be retried."""
+        key = (signer, sighting.created, sighting.signature)
+        with self._admissions_lock:
+            if key in self._admitting:
+                raise RegistrarPending("That signed request is still being admitted; if it is "
+                                       "refused, this one may be sent again.", args=[signer])
+            if self.store.replayed(signer, sighting):
+                raise RegistrarReplay("That signed request was already acted on.", args=[signer])
+            self._admitting.add(key)
+        try:
+            yield
+        finally:
+            with self._admissions_lock:
+                self._admitting.discard(key)
 
     def _answer(self, req, resp, act) -> None:
         try:
@@ -217,11 +248,13 @@ class Subscription(_Resource):
             body = _body(req)
             signer, now = _signer(req, body, self.max_age, clock=self.clock)
             callback, nonce = _subscription(_object(body))
-            self._admit(callback)  # refused here too, not only at delivery
-            # The replay record and the subscription commit together, so a refused request
-            # leaves nothing behind and its retry is not mistaken for a replay.
-            self.store.subscribe(signer, callback, nonce, limit=self.max_subscriptions,
-                                 sighting=self._sighting(req, now))
+            sighting = self._sighting(req, now)
+            with self._only_copy(signer, sighting):
+                self._admit(callback)  # refused here too, not only at delivery
+                # The replay record and the subscription commit together, so a refused request
+                # leaves nothing behind and its retry is not mistaken for a replay.
+                self.store.subscribe(signer, callback, nonce, limit=self.max_subscriptions,
+                                     sighting=sighting)
             return 200, {"subscriber": signer, "registrar": self.store.key().aid}
         self._answer(req, resp, act)
 

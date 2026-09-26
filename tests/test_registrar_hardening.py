@@ -624,3 +624,237 @@ def test_the_query_string_is_delivered_as_subscribed(sink):
     transport = HttpTransport(timeout=5, policy=CallbackPolicy(allow=("127.0.0.0/8",)))
     transport.send(f"http://127.0.0.1:{sink}/batch?observer=bar", b"{}", {})
     assert _Sink.hits == ["/batch?observer=bar"]
+
+
+# --- (6) the admission cap cannot be walked around (~7onn) --------------------------------------
+
+
+def test_an_admission_slot_is_held_before_its_thread_starts(store, monkeypatch):
+    """A slot released when its thread was tracked, before that thread started, let a concurrent
+    admission prune it as dead and resolve past the cap (Codex on PR #19 at 129f2fd)."""
+    from witness.registrar import app as module
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+    stuck = _Stuck()
+    resource = module.Subscription(store, frozenset(), 60, admission_timeout=0.05,
+                                   callbacks=CallbackPolicy(resolve=stuck))
+    real, raced, injected = module._within, [], []
+
+    def race_between_track_and_start(deadline, work, what, abandon=lambda: None,
+                                     track=lambda thread: None):
+        def track_then_race(thread):
+            track(thread)
+            if not injected:
+                injected.append(thread)  # before the call: the nested admission comes back here
+                try:
+                    resource._admit("http://stuck.example/two")
+                except Exception as refused:  # noqa: BLE001 - the refusal is what is asserted
+                    raced.append(refused)
+        return real(deadline, work, what, abandon=abandon, track=track_then_race)
+
+    monkeypatch.setattr(module, "_within", race_between_track_and_start)
+    try:
+        with pytest.raises(Exception):
+            resource._admit("http://stuck.example/one")
+        assert raced, "the race was never injected, so this test proved nothing"
+        assert stuck.calls == 1, "a second resolution started while the first held the only slot"
+        assert "Too many" in str(raced[0])
+    finally:
+        stuck.release.set()
+
+
+class _Counting:
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, host):
+        self.calls += 1
+        return ["203.0.113.5"]
+
+
+def test_a_replayed_subscription_is_refused_before_its_callback_is_resolved(store):
+    resolver = _Counting()
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60,
+        callbacks=CallbackPolicy(allow=("a.example",), resolve=resolver)))
+    first, headers, body = _subscribe(app, fiki.Key.generate())
+    assert first.status_code == 200
+
+    replay = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+
+    assert replay.json["code"] == "e.state.conflict.registrar.replay.f"
+    assert resolver.calls == 1, "a replay made the Registrar resolve the callback host again"
+
+
+def test_a_copy_of_a_request_still_in_admission_is_refused_without_resolving(store):
+    stuck = _Stuck()
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=10,
+        callbacks=CallbackPolicy(allow=("stuck.example",), resolve=stuck)))
+    body = json.dumps({"callback": "http://stuck.example/batch",
+                       "nonce": "nonce-00000000000000"}).encode()
+    headers = fiki.sign_request(key=fiki.Key.generate(), method="POST", url=BASE + SUBSCRIPTION,
+                                body=body)
+    answers = []
+    first = threading.Thread(target=lambda: answers.append(
+        app.simulate_post(SUBSCRIPTION, headers=headers, body=body)))
+    first.start()
+    try:
+        deadline = time.monotonic() + 5
+        while stuck.calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.005)
+
+        copy = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+
+        # Retryable, not a replay: the original may still be refused and leave nothing behind.
+        assert copy.json["code"] == "e.state.conflict.registrar.pending.r"
+        assert stuck.calls == 1
+    finally:
+        stuck.release.set()
+        first.join(timeout=5)
+    assert answers[0].status_code == 200, "the original request was not disturbed by its copy"
+
+
+def test_a_request_refused_in_admission_can_be_retried_as_is(store):
+    """Refusing copies still in admission must not turn into refusing the retry once it failed."""
+    stuck = _Stuck()
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=0.05,
+        callbacks=CallbackPolicy(allow=("stuck.example",), resolve=stuck)))
+    refused, headers, body = _subscribe(app, fiki.Key.generate(), "http://stuck.example/batch")
+    assert refused.json["code"] == "e.env.resolver.timeout.r"
+    stuck.release.set()
+
+    retried = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+
+    assert retried.status_code == 200
+
+
+def test_the_default_resolver_resolves_through_the_system_resolver():
+    from witness.registrar.batcher import _resolve
+    assert {"127.0.0.1", "::1"} & set(_resolve("localhost", timeout=10))
+
+
+def test_a_resolution_that_never_returns_is_killed_at_its_timeout(monkeypatch):
+    from witness.registrar import batcher
+    monkeypatch.setattr(batcher, "_RESOLVER", "import time; time.sleep(60)")
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError):
+        batcher._resolve("stuck.example", timeout=0.3)
+
+    assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize("script", ["import sys; sys.exit(1)", "print('not json')",
+                                    "print('{}')", "print('[1]')"])
+def test_a_resolver_child_that_fails_or_answers_nonsense_resolves_nothing(monkeypatch, script):
+    from witness.registrar import batcher
+    monkeypatch.setattr(batcher, "_RESOLVER", script)
+
+    with pytest.raises(RegistrarCallbackRefused):
+        CallbackPolicy(resolve_timeout=10).check("http://broken.example/batch")
+
+
+def test_a_killed_resolution_gives_its_admission_slot_back(store, monkeypatch):
+    """Sixteen resolutions that never returned closed admission until a restart. A killed one
+    has to release its slot, so the next subscriber is resolved rather than turned away."""
+    from witness.registrar import app as module, batcher
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+    monkeypatch.setattr(batcher, "_RESOLVER", "import time; time.sleep(60)")
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=0.05,
+        callbacks=CallbackPolicy(resolve_timeout=0.3)))
+    first, _, _ = _subscribe(app, fiki.Key.generate(), "http://stuck.example/one")
+    assert first.json["code"] == "e.env.resolver.timeout.r"
+
+    deadline, second = time.monotonic() + 5, None
+    while time.monotonic() < deadline:
+        second, _, _ = _subscribe(app, fiki.Key.generate(), "http://stuck.example/two")
+        if "Too many" not in second.json.get("detail", ""):
+            break
+        time.sleep(0.1)
+
+    assert "Too many" not in second.json.get("detail", ""), "the killed resolution kept its slot"
+
+
+def test_a_resolver_thread_that_cannot_start_gives_its_slot_back(store, monkeypatch):
+    """Only a started thread releases its own slot, so one that never started must be released
+    by the request that reserved it, or a thread-exhausted process loses a slot for good."""
+    from witness.registrar import app as module
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+    resource = module.Subscription(store, frozenset(), 60,
+                                   callbacks=CallbackPolicy(resolve=lambda host: ["8.8.8.8"]))
+
+    def cannot_start(thread):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", cannot_start)
+    with pytest.raises(RuntimeError):
+        resource._admit("http://one.example/batch")
+    monkeypatch.undo()
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+
+    resource._admit("http://two.example/batch")  # the slot came back
+
+
+def test_a_copy_refused_while_its_original_was_pending_is_welcome_once_that_fails(store):
+    """Codex on #22: the copy's refusal must not outlive the original's failure."""
+    stuck = _Stuck()
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=0.3,
+        callbacks=CallbackPolicy(allow=("stuck.example",), resolve=stuck)))
+    body = json.dumps({"callback": "http://stuck.example/batch",
+                       "nonce": "nonce-00000000000000"}).encode()
+    headers = fiki.sign_request(key=fiki.Key.generate(), method="POST", url=BASE + SUBSCRIPTION,
+                                body=body)
+    answers = []
+    first = threading.Thread(target=lambda: answers.append(
+        app.simulate_post(SUBSCRIPTION, headers=headers, body=body)))
+    first.start()
+    try:
+        deadline = time.monotonic() + 5
+        while stuck.calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        copy = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+        first.join(timeout=5)
+    finally:
+        stuck.release.set()
+    assert copy.json["code"] == "e.state.conflict.registrar.pending.r"
+    assert answers[0].json["code"] == "e.env.resolver.timeout.r"
+
+    again = app.simulate_post(SUBSCRIPTION, headers=headers, body=body)
+
+    assert again.status_code == 200
+
+
+def test_a_resolver_thread_that_cannot_be_created_gives_its_slot_back(store, monkeypatch):
+    """Codex on #22: the constructor can fail too, before anything is tracked."""
+    from witness.registrar import app as module, batcher
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+    resource = module.Subscription(store, frozenset(), 60,
+                                   callbacks=CallbackPolicy(resolve=lambda host: ["8.8.8.8"]))
+
+    def cannot_create(*args, **kwargs):
+        raise RuntimeError("can't create thread")
+
+    monkeypatch.setattr(batcher.threading, "Thread", cannot_create)
+    with pytest.raises(RuntimeError):
+        resource._admit("http://one.example/batch")
+    monkeypatch.undo()
+    monkeypatch.setattr(module, "MAX_ADMISSIONS", 1)
+
+    resource._admit("http://two.example/batch")  # the slot came back
+
+
+def test_a_killed_resolution_is_a_retryable_timeout_not_a_refusal(store, monkeypatch):
+    """Codex on #22: a resolver too slow to answer says nothing about the host, so the killed
+    child must surface as the 503 timeout, never as 403 'does not resolve'."""
+    from witness.registrar import batcher
+    monkeypatch.setattr(batcher, "_RESOLVER", "import time; time.sleep(60)")
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, admission_timeout=10,
+        callbacks=CallbackPolicy(resolve_timeout=0.3)))
+
+    answer, _, _ = _subscribe(app, fiki.Key.generate(), "http://slow.example/batch")
+
+    assert (answer.status_code, answer.json["code"]) == (503, "e.env.resolver.timeout.r")

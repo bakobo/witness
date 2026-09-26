@@ -1089,6 +1089,33 @@ Operator layer over a stock keripy witness = goal:
             way: resolving a callback at subscription time has its own deadline, and resolutions
             alive at once are capped, so a stalled resolver cannot hold a request thread. One failing
             subscriber, or one failing window, never ends the batch thread.
+          children:
+
+            A resolution holds its slot until it ends  and ends because it can be killed = decision:
+              id: t3ju3fxz
+              why: >
+                Codex on PR #19 at 129f2fd (tick ~7onn) found three ways around the admission cap.
+                The slot was released when its thread was tracked, but the thread started only
+                afterwards, so a concurrent admission could prune it as dead and admit past the
+                cap; a slot is now counted from reservation until the resolution returns, and
+                released by the resolving thread itself. Admission ran before the replay check, so
+                re-sending one accepted signed request made the Registrar resolve an
+                attacker-chosen host again each time; a request already acted on, or identical to
+                one still in admission, is now refused before anything is resolved: a replay as
+                final, a copy as retryable, since its original may yet fail and leave nothing
+                behind (Codex on #22). A resolver killed at its timeout is the retryable 503, not
+                a refusal of the host. The replay
+                record still commits with the subscription, so a request refused for any other
+                reason can be retried. And a resolution that never returns held its slot until
+                restart, because getaddrinfo cannot be interrupted from Python; sixteen of them
+                closed admission for good. The host is now resolved in a child interpreter that
+                is killed at a fixed timeout, so every slot is released in bounded time. Rejected
+                an async resolver library (a new dependency, and resolvers such as dnspython skip
+                /etc/hosts and nsswitch, which would change what an allowed host name means from
+                what the operator sees with getaddrinfo). The same resolver serves delivery, whose
+                abandoned threads had the same unbounded lifetime. Accepted tradeoff: an
+                interpreter start per resolution, tens of milliseconds, at subscription time and
+                once per subscriber per window.
 
         The Registrar's state survives a restart = decision:
           id: oxtmbdfq

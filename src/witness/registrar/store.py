@@ -172,6 +172,15 @@ class RegistrarStore:
         self._db.execute("INSERT INTO sightings VALUES (?, ?, ?)",
                          (aid, sighting.created, sighting.signature))
 
+    def replayed(self, aid: str, sighting: Sighting) -> bool:
+        """Whether ``sighting`` was already acted on and is still in its window. Records nothing,
+        so a request can be refused as a replay before any work is spent on it (@t3ju3fxz)."""
+        with self._lock:
+            return self._db.execute(
+                "SELECT 1 FROM sightings WHERE aid=? AND created=? AND signature=? "
+                "AND created >= ?", (aid, sighting.created, sighting.signature,
+                                     sighting.now - sighting.keep)).fetchone() is not None
+
     def subscribe(self, aid: str, callback: str, nonce: str, *, limit: int | None = None,
                   sighting: Sighting | None = None) -> None:
         """Subscribe ``aid`` under ``nonce``, or update its callback and nonce without disturbing

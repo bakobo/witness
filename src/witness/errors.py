@@ -374,6 +374,17 @@ class RegistrarReplay(WitnessError):
     status = 409
 
 
+class RegistrarPending(WitnessError):
+    """An exact copy of a signed request that is still being admitted.
+
+    Retryable, unlike a replay: the original may yet be refused for a reason that leaves nothing
+    behind, and then this same request is welcome."""
+
+    code = "e.state.conflict.registrar.pending.r"
+    title = "That exact signed request is already being acted on."
+    status = 409
+
+
 class RegistrarFull(WitnessError):
     """The Registrar has as many subscriptions as it is configured to hold."""
 
