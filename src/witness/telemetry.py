@@ -30,6 +30,7 @@ from __future__ import annotations
 import mmap
 import os
 import struct
+import time
 from struct import pack_into
 
 from .errors import TelemetryIncompatible, TelemetryUnavailable
@@ -53,6 +54,10 @@ _CURRENT_OFF = 40
 _SLOTS_OFF = _BODY.size
 
 _NO_DOER = -1
+
+# The reader's first pause after a torn read; each later pause doubles (@cuog5my4). With the
+# default attempts, a reader that gives up has waited ~0.2 s in all, several GIL switch intervals.
+_FIRST_PAUSE = 0.0001
 
 
 def hot_path(func):
@@ -204,9 +209,15 @@ class SegmentReader:
             for index in range(slots)
         ]
 
-    def read(self, attempts=5):
-        """Return a coherent snapshot, retrying past writes in flight."""
-        for _ in range(attempts):
+    def read(self, attempts=12):
+        """Return a coherent snapshot, retrying past writes in flight.
+
+        Pauses between attempts, doubling each time (@cuog5my4). The writer is a Python thread,
+        so a GIL handoff between its two sequence stores can hold a write open for milliseconds,
+        and attempts made back to back all land inside it.
+        """
+        pause = _FIRST_PAUSE
+        for attempt in range(attempts):
             before = struct.unpack_from("<Q", self._map, self._body + _SEQ_OFF)[0]
             if before % 2 == 0:
                 snapshot = self._snapshot()
@@ -215,6 +226,9 @@ class SegmentReader:
                     return snapshot
             if self._on_retry is not None:
                 self._on_retry()
+            if attempt + 1 < attempts:
+                time.sleep(pause)
+                pause = pause * 2
         raise TelemetryUnavailable(
             "The witness telemetry segment was being written throughout every read attempt; "
             "try again."
