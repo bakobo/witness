@@ -2,3 +2,4 @@
 kind: todo
 created: 2026-09-26T09:21Z
 
+- 2026-09-29T18:39Z Closed by PR #24 (merged 4522151, 2026-09-29): the total sighting cap counts and judges only signers without a live subscription (@2tz77xdw); live subscribers are held to their per-signer budget; store bounded at total + 2 x max_subscriptions x per_signer.
