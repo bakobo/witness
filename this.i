@@ -1186,6 +1186,28 @@ Operator layer over a stock keripy witness = goal:
                 changes nothing (an exact repeat is re-acknowledged, anything older is stale) and a
                 publisher retrying one snapshot produces byte-identical signatures. The state
                 directory and database are owner-only, since they hold the signing seed.
+              children:
+                Churn cannot fill the cap live subscribers depend on = decision:
+                  id: 2tz77xdw
+                  why: >
+                    The total cap on sightings was one pool for every signer, and any AID may
+                    subscribe. Throwaway AIDs that subscribed and then unsubscribed left their
+                    sightings behind while their subscription slots came free again, so about 63
+                    requests a second held the table full for the whole keep window and every
+                    subscriber's resubscribe or unsubscribe was refused 429 (SEC-F1, 2026-09-26
+                    health panel, tick ~7zhq). The cap is now two pools of the same size. A signer
+                    with a live subscription is judged only against the sightings of live
+                    subscribers, which nobody can add to without holding one of the capped
+                    subscriptions. A signer without one, which is to say a new subscriber, is
+                    judged against the sightings of signers without one too. Churn fills only that
+                    second pool, and the most it can do is refuse new subscriptions with a
+                    retryable 429, which holding every subscription slot already does for 64
+                    requests. The store stays bounded: each pool is capped at subscribe time, and
+                    an unsubscribe needs a live subscription to end. Rejected pruning an
+                    unsubscribed signer's sightings, because a replay of its subscribe would then
+                    quietly restore a subscription its owner ended; rejected rate-limiting churn per
+                    source, because a signed request's source is an AID any attacker mints for
+                    free, and an address is not what this layer authenticates.
             Every batch names the subscription it was sent for = decision:
               id: jpag4sof
               why: >
