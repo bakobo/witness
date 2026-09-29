@@ -155,6 +155,12 @@ class RegistrarStore:
 
         Called in the same transaction as the action it protects, so a request that is refused
         for any reason leaves no sighting behind and can be retried.
+
+        The total cap is two pools of that size (@2tz77xdw). A signer with a live subscription is
+        judged against the sightings of live subscribers alone, so throwaway AIDs that subscribe
+        and unsubscribe cannot fill the cap a subscriber depends on. A signer without one is a new
+        subscriber, judged against both pools, since its sighting joins the live pool once it
+        subscribes.
         """
         if sighting is None:
             return
@@ -165,10 +171,15 @@ class RegistrarStore:
             raise RegistrarReplay("That signed request was already acted on.", args=[aid])
         mine, = self._db.execute("SELECT COUNT(*) FROM sightings WHERE aid=?",
                                  (aid,)).fetchone()
-        everyone, = self._db.execute("SELECT COUNT(*) FROM sightings").fetchone()
-        if mine >= sighting.per_signer or everyone >= sighting.total:
+        live, others = self._db.execute(
+            "SELECT COUNT(subscribers.aid), COUNT(*) - COUNT(subscribers.aid) FROM sightings "
+            "LEFT JOIN subscribers ON subscribers.aid = sightings.aid").fetchone()
+        subscribed = self._db.execute("SELECT 1 FROM subscribers WHERE aid=?",
+                                      (aid,)).fetchone() is not None
+        full = live >= sighting.total or (not subscribed and others >= sighting.total)
+        if mine >= sighting.per_signer or full:
             raise RegistrarQuota("Too many recent signed requests are remembered already.",
-                                 args=[mine, everyone])
+                                 args=[mine, live if subscribed else live + others])
         self._db.execute("INSERT INTO sightings VALUES (?, ?, ?)",
                          (aid, sighting.created, sighting.signature))
 

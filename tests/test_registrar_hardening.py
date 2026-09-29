@@ -544,6 +544,74 @@ def test_recent_signed_requests_are_bounded_per_signer_and_in_total(store):
     assert store.sighting_count() == 3
 
 
+def _unsubscribe(app, key, created=None):
+    headers = fiki.sign_request(key=key, method="DELETE", url=BASE + SUBSCRIPTION,
+                                created=created)
+    return app.simulate_delete(SUBSCRIPTION, headers=headers)
+
+
+def _churn(app, now, attempts=20) -> int:
+    """Throwaway AIDs that subscribe and at once unsubscribe, leaving only their sightings
+    behind; how many got a subscription before the Registrar refused one."""
+    for done in range(attempts):
+        key = fiki.Key.generate()
+        if _subscribe(app, key, created=now)[0].status_code != 200:
+            return done
+        _unsubscribe(app, key, created=now)
+    return attempts
+
+
+def test_churn_cannot_refuse_a_live_subscriber(store):
+    """SEC-F1 (@2tz77xdw): throwaway AIDs that subscribed and unsubscribed filled the one total
+    cap, and then every live subscriber's request was refused 429 for the whole keep window."""
+    app = _app(store, max_sightings=4)
+    now = int(time.time())
+    live = fiki.Key.generate()
+    assert _subscribe(app, live, created=now - 5)[0].status_code == 200
+
+    assert _churn(app, now) < 20, "churn was refused once its own pool was full"
+
+    resubscribed = _subscribe(app, live, created=now - 4)[0]
+    assert resubscribed.status_code == 200, resubscribed.json
+    assert _unsubscribe(app, live, created=now - 3).status_code == 204
+
+
+def test_churn_can_refuse_only_new_subscriptions_and_retryably(store):
+    app = _app(store, max_sightings=4)
+    now = int(time.time())
+    _churn(app, now)
+
+    newcomer = _subscribe(app, fiki.Key.generate(), created=now)[0]
+
+    assert (newcomer.status_code, newcomer.json["code"]) == (429, "e.grant.quota.requests.r")
+    assert newcomer.headers["Retry-After"]
+
+
+def test_churn_leaves_the_store_bounded(store):
+    """Each pool is capped when a subscription is taken, and an unsubscribe needs a live
+    subscription to end, so churn stops at the cap plus the unsubscribes already admitted."""
+    app = _app(store, max_sightings=4)
+    now = int(time.time())
+
+    assert _churn(app, now) == 2
+    assert _churn(app, now) == 0
+    assert store.sighting_count() == 4
+
+
+def test_a_new_subscriber_is_also_held_to_the_live_pool(store):
+    """A new subscriber's sighting joins the live pool the moment it subscribes, so a full
+    live pool refuses it even when no churn has happened at all."""
+    app = _app(store, max_sightings=2)
+    now = int(time.time())
+    first = fiki.Key.generate()
+    assert _subscribe(app, first, created=now)[0].status_code == 200
+    assert _subscribe(app, first, created=now - 1)[0].status_code == 200
+
+    newcomer = _subscribe(app, fiki.Key.generate(), created=now)[0]
+
+    assert newcomer.json["code"] == "e.grant.quota.requests.r"
+
+
 def test_an_empty_chain_or_kel_is_not_a_publication(store):
     publisher = fiki.Key.generate()
     app = falcon.testing.TestClient(make_registrar_app(
