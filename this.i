@@ -1187,7 +1187,7 @@ Operator layer over a stock keripy witness = goal:
                 publisher retrying one snapshot produces byte-identical signatures. The state
                 directory and database are owner-only, since they hold the signing seed.
               children:
-                Churn cannot fill the cap live subscribers depend on = decision:
+                Churn cannot refuse a live subscriber = decision:
                   id: 2tz77xdw
                   why: >
                     The total cap on sightings was one pool for every signer, and any AID may
@@ -1195,19 +1195,25 @@ Operator layer over a stock keripy witness = goal:
                     sightings behind while their subscription slots came free again, so about 63
                     requests a second held the table full for the whole keep window and every
                     subscriber's resubscribe or unsubscribe was refused 429 (SEC-F1, 2026-09-26
-                    health panel, tick ~7zhq). The cap is now two pools of the same size. A signer
-                    with a live subscription is judged only against the sightings of live
-                    subscribers, which nobody can add to without holding one of the capped
-                    subscriptions. A signer without one, which is to say a new subscriber, is
-                    judged against the sightings of signers without one too. Churn fills only that
-                    second pool, and the most it can do is refuse new subscriptions with a
-                    retryable 429, which holding every subscription slot already does for 64
-                    requests. The store stays bounded: each pool is capped at subscribe time, and
-                    an unsubscribe needs a live subscription to end. Rejected pruning an
-                    unsubscribed signer's sightings, because a replay of its subscribe would then
-                    quietly restore a subscription its owner ended; rejected rate-limiting churn per
-                    source, because a signed request's source is an AID any attacker mints for
-                    free, and an address is not what this layer authenticates.
+                    health panel, tick ~7zhq). The total cap now counts only the sightings of
+                    signers without a live subscription, and only such a signer, a new subscriber,
+                    is judged against it. A live subscriber is held to its own per-signer budget
+                    alone. Live subscribers need no total cap: there are at most as many as the
+                    subscription limit, each with at most its per-signer budget, so their sightings
+                    are bounded by configuration and not by anything a stranger does. Churn fills
+                    only the new subscribers' cap, and the most it can do is refuse new
+                    subscriptions with a retryable 429, which holding every subscription slot
+                    already does for 64 requests. The store stays bounded at the total cap plus
+                    twice the subscription limit times the per-signer budget: an unsubscribe is
+                    judged as a live subscriber's request, so sightings of subscriptions ended after
+                    the cap filled can pass it, but only that many. An earlier draft kept a second
+                    total cap on live subscribers' sightings; a cross-model review showed that a
+                    churned AID that resubscribes brings its older sightings into the live count,
+                    so churn could still fill that cap and refuse a subscriber that did nothing.
+                    Rejected pruning an unsubscribed signer's sightings, because a replay of its
+                    subscribe would then quietly restore a subscription its owner ended; rejected
+                    rate-limiting churn per source, because a signed request's source is an AID any
+                    attacker mints for free, and an address is not what this layer authenticates.
             Every batch names the subscription it was sent for = decision:
               id: jpag4sof
               why: >
