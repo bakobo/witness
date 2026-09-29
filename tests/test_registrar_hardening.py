@@ -529,19 +529,110 @@ def test_a_refused_subscription_leaves_no_sighting_so_its_retry_is_not_a_replay(
     assert retried.status_code == 200, "the same signed request succeeds once there is room"
 
 
-def test_recent_signed_requests_are_bounded_per_signer_and_in_total(store):
-    app = _app(store, max_sightings_per_signer=2, max_sightings=3)
+def test_recent_signed_requests_are_bounded_per_signer(store):
+    app = _app(store, max_sightings_per_signer=2)
     key = fiki.Key.generate()
     now = int(time.time())
     assert _subscribe(app, key, created=now)[0].status_code == 200
     assert _subscribe(app, key, created=now - 1)[0].status_code == 200
     third = _subscribe(app, key, created=now - 2)[0]
     assert (third.status_code, third.json["code"]) == (429, "e.grant.quota.requests.r")
-    other = fiki.Key.generate()
-    assert _subscribe(app, other, created=now)[0].status_code == 200
-    fifth = _subscribe(app, fiki.Key.generate(), created=now)[0]
-    assert fifth.json["code"] == "e.grant.quota.requests.r"
-    assert store.sighting_count() == 3
+    assert store.sighting_count() == 2
+
+
+def _unsubscribe(app, key, created=None):
+    headers = fiki.sign_request(key=key, method="DELETE", url=BASE + SUBSCRIPTION,
+                                created=created)
+    return app.simulate_delete(SUBSCRIPTION, headers=headers)
+
+
+def _churn(app, now, attempts=20) -> int:
+    """Throwaway AIDs that subscribe and at once unsubscribe, leaving only their sightings
+    behind; how many got a subscription before the Registrar refused one."""
+    for done in range(attempts):
+        key = fiki.Key.generate()
+        if _subscribe(app, key, created=now)[0].status_code != 200:
+            return done
+        assert _unsubscribe(app, key, created=now).status_code == 204
+    return attempts
+
+
+def test_churn_cannot_refuse_a_live_subscriber(store):
+    """SEC-F1 (@2tz77xdw): throwaway AIDs that subscribed and unsubscribed filled the one total
+    cap, and then every live subscriber's request was refused 429 for the whole keep window."""
+    app = _app(store, max_sightings=4)
+    now = int(time.time())
+    live = fiki.Key.generate()
+    assert _subscribe(app, live, created=now - 5)[0].status_code == 200
+
+    assert _churn(app, now) < 20, "churn was refused once its own pool was full"
+
+    resubscribed = _subscribe(app, live, created=now - 4)[0]
+    assert resubscribed.status_code == 200, resubscribed.text
+    assert _unsubscribe(app, live, created=now - 3).status_code == 204
+
+
+def test_churn_can_refuse_only_new_subscriptions_and_retryably(store):
+    app = _app(store, max_sightings=4)
+    now = int(time.time())
+    _churn(app, now)
+
+    newcomer = _subscribe(app, fiki.Key.generate(), created=now)[0]
+
+    assert (newcomer.status_code, newcomer.json["code"]) == (429, "e.grant.quota.requests.r")
+    assert newcomer.headers["Retry-After"]
+
+
+def test_churn_leaves_the_store_bounded(store):
+    """The total cap is checked when a subscription is taken, so churn stops once the sightings
+    of signers without a subscription reach it."""
+    app = _app(store, max_sightings=4)
+    now = int(time.time())
+
+    assert _churn(app, now) == 2
+    assert _churn(app, now) == 0
+    assert store.sighting_count() == 4
+
+
+def test_the_store_stays_bounded_when_subscribers_leave_after_the_cap_fills(store):
+    """An unsubscribe is judged as a live subscriber's request, so ending subscriptions after
+    churn filled the cap moves their sightings past it. They are bounded all the same: at most
+    the subscription limit's worth of signers, each holding at most its per-signer budget. The
+    holders need the subscription slots, so churn runs with one slot left over for it."""
+    total, subscriptions, per_signer = 4, 3, 3
+    app = _app(store, max_sightings=total, max_subscriptions=subscriptions,
+               max_sightings_per_signer=per_signer)
+    now = int(time.time())
+    holders = [fiki.Key.generate() for _ in range(subscriptions - 1)]
+    for key in holders:
+        for age in range(per_signer - 1):
+            assert _subscribe(app, key, created=now - age)[0].status_code == 200
+    assert _churn(app, now) == 2, "churn filled the cap"
+    for key in holders:  # the holders leave after it filled
+        assert _unsubscribe(app, key, created=now - per_signer).status_code == 204
+
+    assert store.sighting_count() == total + len(holders) * per_signer
+    assert store.sighting_count() <= total + 2 * subscriptions * per_signer
+    assert _churn(app, now) == 0, "and nothing new gets in until sightings expire"
+
+
+def test_a_churned_aid_that_resubscribes_cannot_refuse_a_live_subscriber(store):
+    """A signer's older sightings count as live again once it resubscribes. With a total cap on
+    live subscribers too, churned AIDs resubscribing could fill it and refuse a subscriber that
+    did nothing (a cross-model review of this fix); live subscribers are held only to their own
+    per-signer budget, and there are only as many of them as the subscription limit."""
+    app = _app(store, max_sightings=4)
+    now = int(time.time())
+    victim = fiki.Key.generate()
+    assert _subscribe(app, victim, created=now - 5)[0].status_code == 200
+    churned = fiki.Key.generate()
+    assert _subscribe(app, churned, created=now)[0].status_code == 200
+    assert _unsubscribe(app, churned, created=now).status_code == 204
+    assert _subscribe(app, churned, created=now - 1)[0].status_code == 200
+
+    answer = _subscribe(app, victim, created=now - 4)[0]
+
+    assert answer.status_code == 200, answer.text
 
 
 def test_an_empty_chain_or_kel_is_not_a_publication(store):
