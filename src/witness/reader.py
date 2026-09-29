@@ -15,6 +15,7 @@ supplies process vitals, reachable only because @a24p3kbw made the two processes
 from __future__ import annotations
 
 import os
+import re
 import time
 
 import keri
@@ -36,6 +37,9 @@ from .errors import (
     WitnessNotIncepted,
 )
 from .telemetry import SegmentReader
+
+_QB64 = re.compile(r"[A-Za-z0-9_-]{4,128}")
+"""What an AID in a URL may look like before it is used as a database key."""
 
 #: How many delegation levels to follow before giving up and reporting the rest unfollowed.
 #:
@@ -134,6 +138,8 @@ class WitnessReader:
         # reaches lmdb.open. @k3p7wr's "physically cannot corrupt" is a property of the
         # environment, not of our restraint, so it has to be real; ~5s3e is the same defect seen
         # from the other side.
+        # Collapsing this back into one call reopens read-write with no error anywhere; only
+        # tests/test_reader.py::test_open_yields_a_genuinely_readonly_environment would notice.
         rdb = basing.Baser(
             name=self._config.name,
             base=self._config.base,
@@ -391,27 +397,30 @@ class WitnessReader:
         """One controller's current key state, or a 404 if this witness does not hold it."""
         rdb = self._open()
         try:
-            for held, state in _key_states(rdb):
-                if held == aid:
-                    witnesses, unfollowed = _chain(rdb, state)
-                    derived = _decls.derive(
-                        witnesses=witnesses,
-                        known=self._own_tags(rdb),
-                        unfollowed=unfollowed,
-                    )
-                    return {
-                        "aid": held,
-                        "sequence_number": int(state.s, 16),
-                        "said": state.d,
-                        "witnesses": list(state.b),
-                        "threshold": state.bt,
-                        "tags": {
-                            "derived": list(derived.tags),
-                            "from": list(derived.resolved),
-                            "unresolved": list(derived.unresolved),
-                            "unfollowed": list(derived.unfollowed),
-                        },
-                    }
+            # Looked up, not scanned (PERF-F1): the store is keyed by AID. The shape check comes
+            # first because the path segment is now a database key, and LMDB raises on a key over
+            # 511 bytes; anything that is not qb64 cannot be held here anyway.
+            state = rdb.states.get(keys=aid) if _QB64.fullmatch(aid) else None
+            if state is not None:
+                witnesses, unfollowed = _chain(rdb, state)
+                derived = _decls.derive(
+                    witnesses=witnesses,
+                    known=self._own_tags(rdb),
+                    unfollowed=unfollowed,
+                )
+                return {
+                    "aid": aid,
+                    "sequence_number": int(state.s, 16),
+                    "said": state.d,
+                    "witnesses": list(state.b),
+                    "threshold": state.bt,
+                    "tags": {
+                        "derived": list(derived.tags),
+                        "from": list(derived.resolved),
+                        "unresolved": list(derived.unresolved),
+                        "unfollowed": list(derived.unfollowed),
+                    },
+                }
             raise ControllerUnknown(
                 f"This witness holds no key state for {aid}; it may not witness that controller.",
                 args=[aid],

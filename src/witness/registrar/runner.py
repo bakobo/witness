@@ -12,7 +12,12 @@ from .batcher import Batcher, CallbackPolicy, HttpTransport
 from .store import RegistrarStore
 
 _BATCHER: dict = {}
-"""The running batch thread and its stop event, so a test (or a supervisor) can end it."""
+"""The running batch thread and its stop event, so a test (or a supervisor) can end it.
+
+A module-level dict rather than attributes on some object because run() is the process's entry
+point and returns nothing a caller could hold; join_batcher() is how anyone else reaches the
+thread, and tests reset it by replacing the one dict. There is one per process: run() joins the
+thread before it returns, so a later run() never orphans an earlier one."""
 
 
 def join_batcher(timeout: float | None = None) -> None:

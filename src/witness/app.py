@@ -21,7 +21,7 @@ import falcon
 
 from .errors import WitnessError
 
-_PROBLEM_JSON = "application/problem+json"
+PROBLEM_JSON = "application/problem+json"
 _REQUEST_ID_HEADER = "Bakobo-Request-Id"
 #: A caller-supplied correlation id is echoed into a response header and into the error body, so
 #: it is attacker-controlled data on two output paths. Bounded and character-restricted rather
@@ -91,7 +91,7 @@ class Endpoint:
             resp.media = self._produce(**params)
         except WitnessError as exc:
             resp.status = falcon.util.code_to_http_status(exc.status)
-            resp.content_type = _PROBLEM_JSON
+            resp.content_type = PROBLEM_JSON
             # http-errors.md's worked examples carry Content-Language, because `detail` is prose
             # and a client that localises needs to know what it just received.
             resp.set_header("Content-Language", "en")
@@ -115,7 +115,7 @@ def make_app(reader, counter=None):
     # falcon serializes resp.media only for media types it has a handler for, so setting the
     # RFC 9457 content type without registering it turns every error into a 415 — the error
     # about the error, which is the least useful response there is.
-    app.resp_options.media_handlers[_PROBLEM_JSON] = falcon.media.JSONHandler()
+    app.resp_options.media_handlers[PROBLEM_JSON] = falcon.media.JSONHandler()
     app.add_route("/v1/witness/health", Endpoint(reader.health))
     app.add_route("/v1/witness/identity", Endpoint(reader.identity))
     app.add_route("/v1/witness/version", Endpoint(reader.version))
