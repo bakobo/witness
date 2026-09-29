@@ -33,9 +33,21 @@ _KERI_HOME = "/usr/local/var/keri"
 
 
 def _docker(*args, check=True, **kwargs):
-    return subprocess.run(
-        ["docker", *args], check=check, capture_output=True, text=True, timeout=300, **kwargs
+    """Run docker, and on failure say what the command wrote to stderr.
+
+    subprocess's own CalledProcessError carries stderr but pytest prints only its repr, so a
+    failing `docker exec` reported an exit status and nothing else -- which is how ~332h failed a
+    release build without saying why.
+    """
+    result = subprocess.run(
+        ["docker", *args], check=False, capture_output=True, text=True, timeout=300, **kwargs
     )
+    if check and result.returncode != 0:
+        raise AssertionError(
+            f"docker {' '.join(args)} exited {result.returncode}\n"
+            f"--- stderr ---\n{result.stderr}--- stdout ---\n{result.stdout}"
+        )
+    return result
 
 
 def _free_port():
