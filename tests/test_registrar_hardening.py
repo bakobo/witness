@@ -9,7 +9,8 @@ import falcon.testing
 import fiki
 import pytest
 
-from witness.errors import (RegistrarCallbackRefused, RegistrarFull, RegistrarInstance)
+from witness.errors import (RegistrarCallbackRefused, RegistrarFull, RegistrarInstance,
+                            RegistrarResolverFailed)
 from witness.registrar.app import make_registrar_app
 from witness.registrar.batcher import Batcher, CallbackPolicy, HttpTransport
 from witness.registrar.store import RegistrarStore
@@ -747,12 +748,61 @@ def test_a_resolution_that_never_returns_is_killed_at_its_timeout(monkeypatch):
 
 @pytest.mark.parametrize("script", ["import sys; sys.exit(1)", "print('not json')",
                                     "print('{}')", "print('[1]')"])
-def test_a_resolver_child_that_fails_or_answers_nonsense_resolves_nothing(monkeypatch, script):
+def test_a_resolver_child_that_fails_or_answers_nonsense_is_not_the_subscribers_fault(
+        monkeypatch, script):
+    """A broken resolver says nothing about the host, so it must not become the permanent 403
+    that blames the callback: it is this Registrar's failure, and retryable."""
     from witness.registrar import batcher
     monkeypatch.setattr(batcher, "_RESOLVER", script)
 
+    with pytest.raises(RegistrarResolverFailed):
+        CallbackPolicy(resolve_timeout=10).check("http://broken.example/batch")
+
+
+def test_a_resolver_child_that_cannot_start_is_not_the_subscribers_fault(monkeypatch):
+    from witness.registrar import batcher
+
+    def exhausted(*args, **kwargs):
+        raise OSError(24, "Too many open files")
+    monkeypatch.setattr(batcher.subprocess, "run", exhausted)
+
+    with pytest.raises(RegistrarResolverFailed):
+        CallbackPolicy(resolve_timeout=10).check("http://broken.example/batch")
+
+
+def _failing_getaddrinfo(batcher, errno: str) -> str:
+    """The real resolver script, run in a child whose getaddrinfo fails with ``errno``."""
+    return ("import socket\n"
+            "def refuse(*args, **kwargs):\n"
+            f"    raise socket.gaierror(socket.{errno}, 'refused')\n"
+            "socket.getaddrinfo = refuse\n" + batcher._RESOLVER)
+
+
+def test_a_temporary_dns_failure_is_not_the_subscribers_fault(monkeypatch):
+    from witness.registrar import batcher
+    monkeypatch.setattr(batcher, "_RESOLVER", _failing_getaddrinfo(batcher, "EAI_AGAIN"))
+
+    with pytest.raises(RegistrarResolverFailed):
+        CallbackPolicy(resolve_timeout=10).check("http://broken.example/batch")
+
+
+def test_only_an_unknown_host_refuses_the_callback(monkeypatch):
+    from witness.registrar import batcher
+    monkeypatch.setattr(batcher, "_RESOLVER", _failing_getaddrinfo(batcher, "EAI_NONAME"))
+
     with pytest.raises(RegistrarCallbackRefused):
         CallbackPolicy(resolve_timeout=10).check("http://broken.example/batch")
+
+
+def test_subscribing_while_the_resolver_is_broken_is_retryable(store, monkeypatch):
+    from witness.registrar import batcher
+    monkeypatch.setattr(batcher, "_RESOLVER", "import sys; sys.exit(1)")
+    app = falcon.testing.TestClient(make_registrar_app(
+        store, publishers=frozenset(), max_age=60, callbacks=CallbackPolicy(resolve_timeout=10)))
+
+    answer, _, _ = _subscribe(app, fiki.Key.generate(), "http://broken.example/batch")
+
+    assert (answer.status_code, answer.json["code"]) == (503, "e.env.resolver.failed.r")
 
 
 def test_a_killed_resolution_gives_its_admission_slot_back(store, monkeypatch):

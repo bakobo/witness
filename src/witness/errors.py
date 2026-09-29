@@ -415,3 +415,11 @@ class RegistrarResolverTimeout(WitnessError):
     code = "e.env.resolver.timeout.r"
     title = "I could not resolve that callback host in time."
     status = 503
+
+
+class RegistrarResolverFailed(WitnessError):
+    """The resolver process failed for a reason of its own, which says nothing about the host."""
+
+    code = "e.env.resolver.failed.r"
+    title = "My resolver failed while looking up that callback host."
+    status = 503

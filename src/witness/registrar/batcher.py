@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 import fiki
 
-from ..errors import RegistrarCallbackRefused
+from ..errors import RegistrarCallbackRefused, RegistrarResolverFailed
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,20 @@ MAX_IN_FLIGHT = 64
 RESOLVE_TIMEOUT = 5.0
 """Seconds a resolution may run before its child interpreter is killed (@t3ju3fxz)."""
 
-_RESOLVER = ("import json, socket, sys; print(json.dumps([info[4][0] for info in "
-             "socket.getaddrinfo(sys.argv[1], None, type=socket.SOCK_STREAM)]))")
+_UNRESOLVED = 2
+"""The resolver child's exit status when the host has no address: the name is unknown or has no
+data, or is not a valid name at all. Any other failure, a temporary one like EAI_AGAIN included,
+says nothing about the host."""
+
+_RESOLVER = ("import json, socket, sys\n"
+             "unknown = {socket.EAI_NONAME, getattr(socket, 'EAI_NODATA', socket.EAI_NONAME)}\n"
+             "try:\n"
+             "    found = socket.getaddrinfo(sys.argv[1], None, type=socket.SOCK_STREAM)\n"
+             "except socket.gaierror as failure:\n"
+             f"    sys.exit({_UNRESOLVED} if failure.errno in unknown else 3)\n"
+             "except UnicodeError:\n"
+             f"    sys.exit({_UNRESOLVED})\n"
+             "print(json.dumps([info[4][0] for info in found]))")
 
 
 def _resolve(host: str, *, timeout: float) -> list[str]:
@@ -46,17 +58,31 @@ def _resolve(host: str, *, timeout: float) -> list[str]:
     the thread that asked for as long as the process lives. A child can be killed, which bounds
     every resolution by ``timeout`` (@t3ju3fxz). The child is the system resolver, so /etc/hosts
     and nsswitch mean what they mean to every other program on the host.
+
+    Only getaddrinfo's own refusal is an OSError, which the policy reads as a host that does not
+    resolve. A child that could not start, died, or answered nonsense is this Registrar's
+    failure, not the subscriber's, and raises RegistrarResolverFailed.
     """
     try:
         child = subprocess.run([sys.executable, "-I", "-S", "-c", _RESOLVER, host],
                                capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         raise TimeoutError(f"Resolving {host!r} took longer than {timeout} s.") from None
-    if child.returncode != 0:
+    except OSError as failure:
+        raise RegistrarResolverFailed(f"The resolver process could not start: {failure}.",
+                                      args=[host]) from None
+    if child.returncode == _UNRESOLVED:
         raise OSError(f"{host!r} did not resolve.")
-    found = json.loads(child.stdout)
+    if child.returncode != 0:
+        raise RegistrarResolverFailed(
+            f"The resolver process exited with status {child.returncode}.", args=[host])
+    try:
+        found = json.loads(child.stdout)
+    except ValueError:
+        found = None
     if not isinstance(found, list) or not all(isinstance(address, str) for address in found):
-        raise ValueError(f"The resolver answered {child.stdout!r}, not a list of addresses.")
+        raise RegistrarResolverFailed(
+            "The resolver answered something other than a list of addresses.", args=[host])
     return found
 
 
@@ -83,8 +109,8 @@ class CallbackPolicy:
         try:
             addresses = [ipaddress.ip_address(host)] if _is_address(host) else \
                 [ipaddress.ip_address(found) for found in self.resolve(host)]
-        except TimeoutError:
-            raise  # the resolver was too slow, which says nothing about the host: not a refusal
+        except (TimeoutError, RegistrarResolverFailed):
+            raise  # the resolver was too slow or broke, which says nothing about the host
         except (OSError, ValueError):
             addresses = []
         if not addresses:
