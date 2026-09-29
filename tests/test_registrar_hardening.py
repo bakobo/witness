@@ -597,23 +597,23 @@ def test_churn_leaves_the_store_bounded(store):
 def test_the_store_stays_bounded_when_subscribers_leave_after_the_cap_fills(store):
     """An unsubscribe is judged as a live subscriber's request, so ending subscriptions after
     churn filled the cap moves their sightings past it. They are bounded all the same: at most
-    the subscription limit's worth of signers, each holding at most its per-signer budget."""
-    total, subscriptions, per_signer = 4, 2, 3
+    the subscription limit's worth of signers, each holding at most its per-signer budget. The
+    holders need the subscription slots, so churn runs with one slot left over for it."""
+    total, subscriptions, per_signer = 4, 3, 3
     app = _app(store, max_sightings=total, max_subscriptions=subscriptions,
                max_sightings_per_signer=per_signer)
     now = int(time.time())
-    holders = [fiki.Key.generate() for _ in range(subscriptions)]
+    holders = [fiki.Key.generate() for _ in range(subscriptions - 1)]
     for key in holders:
         for age in range(per_signer - 1):
             assert _subscribe(app, key, created=now - age)[0].status_code == 200
-    for key in holders:  # the cap is still empty, so churn in turn has room to fill it
+    assert _churn(app, now) == 2, "churn filled the cap"
+    for key in holders:  # the holders leave after it filled
         assert _unsubscribe(app, key, created=now - per_signer).status_code == 204
-    _churn(app, now)
-    for key in holders:  # later, each subscribes again and leaves once more
-        _subscribe(app, key, created=now - per_signer - 1)
-        _unsubscribe(app, key, created=now - per_signer - 2)
 
-    assert total < store.sighting_count() <= total + 2 * subscriptions * per_signer
+    assert store.sighting_count() == total + len(holders) * per_signer
+    assert store.sighting_count() <= total + 2 * subscriptions * per_signer
+    assert _churn(app, now) == 0, "and nothing new gets in until sightings expire"
 
 
 def test_a_churned_aid_that_resubscribes_cannot_refuse_a_live_subscriber(store):

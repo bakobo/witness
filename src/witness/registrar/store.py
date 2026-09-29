@@ -174,7 +174,8 @@ class RegistrarStore:
         subscribed = self._db.execute("SELECT 1 FROM subscribers WHERE aid=?",
                                       (aid,)).fetchone() is not None
         others = 0 if subscribed else self._db.execute(
-            "SELECT COUNT(*) FROM sightings WHERE aid NOT IN (SELECT aid FROM subscribers)"
+            "SELECT COUNT(*) FROM sightings WHERE NOT EXISTS "
+            "(SELECT 1 FROM subscribers WHERE subscribers.aid = sightings.aid)"
         ).fetchone()[0]
         if mine >= sighting.per_signer or others >= sighting.total:
             raise RegistrarQuota("Too many recent signed requests are remembered already.",
