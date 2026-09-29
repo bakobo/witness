@@ -61,7 +61,8 @@ def _resolve(host: str, *, timeout: float) -> list[str]:
 
     Only getaddrinfo's own refusal is an OSError, which the policy reads as a host that does not
     resolve. A child that could not start, died, or answered nonsense is this Registrar's
-    failure, not the subscriber's, and raises RegistrarResolverFailed.
+    failure, not the subscriber's, and raises RegistrarResolverFailed. An empty answer is
+    nonsense too: getaddrinfo reports an unknown host as an error, never as no addresses.
     """
     try:
         child = subprocess.run([sys.executable, "-I", "-S", "-c", _RESOLVER, host],
@@ -80,8 +81,8 @@ def _resolve(host: str, *, timeout: float) -> list[str]:
         found = json.loads(child.stdout)
     except ValueError:
         found = None
-    if not isinstance(found, list) or not all(isinstance(address, str) and _is_address(address)
-                                              for address in found):
+    if not isinstance(found, list) or not found or not all(
+            isinstance(address, str) and _is_address(address) for address in found):
         raise RegistrarResolverFailed(
             "The resolver answered something other than a list of addresses.", args=[host])
     return found
