@@ -747,7 +747,8 @@ def test_a_resolution_that_never_returns_is_killed_at_its_timeout(monkeypatch):
 
 
 @pytest.mark.parametrize("script", ["import sys; sys.exit(1)", "print('not json')",
-                                    "print('{}')", "print('[1]')"])
+                                    "print('{}')", "print('[1]')",
+                                    """print('["not-an-ip"]')"""])
 def test_a_resolver_child_that_fails_or_answers_nonsense_is_not_the_subscribers_fault(
         monkeypatch, script):
     """A broken resolver says nothing about the host, so it must not become the permanent 403

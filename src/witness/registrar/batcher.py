@@ -80,7 +80,8 @@ def _resolve(host: str, *, timeout: float) -> list[str]:
         found = json.loads(child.stdout)
     except ValueError:
         found = None
-    if not isinstance(found, list) or not all(isinstance(address, str) for address in found):
+    if not isinstance(found, list) or not all(isinstance(address, str) and _is_address(address)
+                                              for address in found):
         raise RegistrarResolverFailed(
             "The resolver answered something other than a list of addresses.", args=[host])
     return found

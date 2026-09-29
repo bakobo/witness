@@ -174,6 +174,19 @@ def test_an_unknown_controller_is_a_404_problem_document(witness_container):
     assert body["request_id"]
 
 
+def test_the_registrar_resolves_callbacks_through_the_images_own_interpreter():
+    """The Registrar resolves a callback host in a child of sys.executable run with -I -S, so it
+    depends on the image's interpreter and its isolated standard library. A layout that breaks
+    either would turn every subscription into a 503, which no host-side test can see."""
+    probe = _docker(
+        "run", "--rm", "--entrypoint", "python", IMAGE, "-c",
+        "from witness.registrar.batcher import CallbackPolicy;"
+        "print(CallbackPolicy(allow=('localhost',)).check('http://localhost:9/batch'))",
+    ).stdout
+
+    assert probe.strip().splitlines()[-1] in {"127.0.0.1", "::1"}
+
+
 def test_both_processes_run_in_the_one_container(witness_container):
     """@a24p3kbw: one container, two processes, under a supervisor that is PID 1."""
     container, port = witness_container
