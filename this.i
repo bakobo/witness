@@ -208,6 +208,25 @@ Operator layer over a stock keripy witness = goal:
                 too late to be useful. Accepted tradeoff: one extra generator frame per doer per
                 pass, and a wrapper whose correctness the witness now depends on.
 
+            The reader backs off between attempts  and gives up within a bounded budget = decision:
+              id: cuog5my4
+              why: >
+                The seqlock makes the writer never wait, so every cost of contention lands on the
+                reader, and the first reader made its attempts back to back. Five attempts in a
+                few microseconds only outlast a write in flight if the writer finishes it in that
+                window — and the writer is a Python thread, so a GIL handoff or a descheduled core
+                between its two sequence stores holds the sequence odd for milliseconds. Measured
+                2026-09-26 against a live container: about one read in 1,800 ran out of attempts
+                and raised, which is ~332h's release-gating flake and also a spurious 503 from
+                /v1/witness/loop at the same rate. Chose exponential pauses between attempts from
+                100 microseconds, doubling, so the common case stays a single uncontended read and
+                a reader that does give up has waited ~0.2 s in total, several GIL switch
+                intervals. Rejected a longer spin without pauses (burns a core against a writer
+                that needs the CPU to finish) and an unbounded wait (a crashed writer can leave the
+                sequence odd forever, and the health check must still answer). The writer is
+                untouched, so @e3uji3mv's frozen hot path is unaffected. Accepted tradeoff: a read
+                that meets a stuck writer now costs ~0.2 s instead of nothing before it fails.
+
     Input completeness is enforced by a door census  with a review date = decision:
       id: bb3yndtf
       why: >
@@ -1100,6 +1119,35 @@ Operator layer over a stock keripy witness = goal:
             way: resolving a callback at subscription time has its own deadline, and resolutions
             alive at once are capped, so a stalled resolver cannot hold a request thread. One failing
             subscriber, or one failing window, never ends the batch thread.
+          children:
+
+            A resolution holds its slot until it ends  and ends because it can be killed = decision:
+              id: t3ju3fxz
+              why: >
+                Codex on PR #19 at 129f2fd (tick ~7onn) found three ways around the admission cap.
+                The slot was released when its thread was tracked, but the thread started only
+                afterwards, so a concurrent admission could prune it as dead and admit past the
+                cap; a slot is now counted from reservation until the resolution returns, and
+                released by the resolving thread itself. Admission ran before the replay check, so
+                re-sending one accepted signed request made the Registrar resolve an
+                attacker-chosen host again each time; a request already acted on, or identical to
+                one still in admission, is now refused before anything is resolved: a replay as
+                final, a copy as retryable, since its original may yet fail and leave nothing
+                behind (Codex on #22). A resolver killed at its timeout is the retryable 503, not
+                a refusal of the host, and so is a resolver that could not start, died, answered
+                nonsense, or met a temporary DNS failure (Copilot on #22): only a host the system
+                resolver reports as unknown is refused. The replay
+                record still commits with the subscription, so a request refused for any other
+                reason can be retried. And a resolution that never returns held its slot until
+                restart, because getaddrinfo cannot be interrupted from Python; sixteen of them
+                closed admission for good. The host is now resolved in a child interpreter that
+                is killed at a fixed timeout, so every slot is released in bounded time. Rejected
+                an async resolver library (a new dependency, and resolvers such as dnspython skip
+                /etc/hosts and nsswitch, which would change what an allowed host name means from
+                what the operator sees with getaddrinfo). The same resolver serves delivery, whose
+                abandoned threads had the same unbounded lifetime. Accepted tradeoff: an
+                interpreter start per resolution, tens of milliseconds, at subscription time and
+                once per subscriber per window.
 
         The Registrar's state survives a restart = decision:
           id: oxtmbdfq

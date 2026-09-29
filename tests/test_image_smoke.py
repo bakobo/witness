@@ -33,9 +33,21 @@ _KERI_HOME = "/usr/local/var/keri"
 
 
 def _docker(*args, check=True, **kwargs):
-    return subprocess.run(
-        ["docker", *args], check=check, capture_output=True, text=True, timeout=300, **kwargs
+    """Run docker, and on failure say what the command wrote to stderr.
+
+    subprocess's own CalledProcessError carries stderr but pytest prints only its repr, so a
+    failing `docker exec` reported an exit status and nothing else -- which is how ~332h failed a
+    release build without saying why.
+    """
+    result = subprocess.run(
+        ["docker", *args], check=False, capture_output=True, text=True, timeout=300, **kwargs
     )
+    if check and result.returncode != 0:
+        raise AssertionError(
+            f"docker {' '.join(args)} exited {result.returncode}\n"
+            f"--- stderr ---\n{result.stderr}--- stdout ---\n{result.stdout}"
+        )
+    return result
 
 
 def _free_port():
@@ -172,6 +184,19 @@ def test_an_unknown_controller_is_a_404_problem_document(witness_container):
     assert body["type"] == "https://errors.bakobo.com/e.state.missing.controller.f"
     assert body["instance"].startswith("/v1/witness/controller/")
     assert body["request_id"]
+
+
+def test_the_registrar_resolves_callbacks_through_the_images_own_interpreter():
+    """The Registrar resolves a callback host in a child of sys.executable run with -I -S, so it
+    depends on the image's interpreter and its isolated standard library. A layout that breaks
+    either would turn every subscription into a 503, which no host-side test can see."""
+    probe = _docker(
+        "run", "--rm", "--entrypoint", "python", IMAGE, "-c",
+        "from witness.registrar.batcher import CallbackPolicy;"
+        "print(CallbackPolicy(allow=('localhost',)).check('http://localhost:9/batch'))",
+    ).stdout
+
+    assert probe.strip().splitlines()[-1] in {"127.0.0.1", "::1"}
 
 
 def test_both_processes_run_in_the_one_container(witness_container):

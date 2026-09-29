@@ -37,10 +37,12 @@ ALL = [
     errors.RegistrarNoSubscription,
     errors.RegistrarInstance,
     errors.RegistrarReplay,
+    errors.RegistrarPending,
     errors.RegistrarFull,
     errors.RegistrarCallbackRefused,
     errors.RegistrarQuota,
     errors.RegistrarResolverTimeout,
+    errors.RegistrarResolverFailed,
 ]
 
 # sorter . descriptor . at least one sub-descriptor . disposition
@@ -129,10 +131,12 @@ def test_an_envelope_omits_correlation_members_it_was_not_given():
         (errors.RegistrarNoSubscription, 404),
         (errors.RegistrarInstance, 409),
         (errors.RegistrarReplay, 409),
+        (errors.RegistrarPending, 409),
         (errors.RegistrarFull, 429),
         (errors.RegistrarCallbackRefused, 403),
         (errors.RegistrarQuota, 429),
         (errors.RegistrarResolverTimeout, 503),
+        (errors.RegistrarResolverFailed, 503),
     ],
 )
 def test_the_status_follows_the_codes_prefix(kind, status):

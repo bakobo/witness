@@ -374,6 +374,17 @@ class RegistrarReplay(WitnessError):
     status = 409
 
 
+class RegistrarPending(WitnessError):
+    """An exact copy of a signed request that is still being admitted.
+
+    Retryable, unlike a replay: the original may yet be refused for a reason that leaves nothing
+    behind, and then this same request is welcome."""
+
+    code = "e.state.conflict.registrar.pending.r"
+    title = "That exact signed request is already being acted on."
+    status = 409
+
+
 class RegistrarFull(WitnessError):
     """The Registrar has as many subscriptions as it is configured to hold."""
 
@@ -403,4 +414,12 @@ class RegistrarResolverTimeout(WitnessError):
 
     code = "e.env.resolver.timeout.r"
     title = "I could not resolve that callback host in time."
+    status = 503
+
+
+class RegistrarResolverFailed(WitnessError):
+    """The resolver process failed for a reason of its own, which says nothing about the host."""
+
+    code = "e.env.resolver.failed.r"
+    title = "My resolver failed while looking up that callback host."
     status = 503
