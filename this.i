@@ -1104,7 +1104,9 @@ Operator layer over a stock keripy witness = goal:
                 one still in admission, is now refused before anything is resolved: a replay as
                 final, a copy as retryable, since its original may yet fail and leave nothing
                 behind (Codex on #22). A resolver killed at its timeout is the retryable 503, not
-                a refusal of the host. The replay
+                a refusal of the host, and so is a resolver that could not start, died, answered
+                nonsense, or met a temporary DNS failure (Copilot on #22): only a host the system
+                resolver reports as unknown is refused. The replay
                 record still commits with the subscription, so a request refused for any other
                 reason can be retried. And a resolution that never returns held its slot until
                 restart, because getaddrinfo cannot be interrupted from Python; sixteen of them
