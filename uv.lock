@@ -385,7 +385,7 @@ wheels = [
 [[package]]
 name = "hio"
 version = "0.7.20"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/bakobo/hio?rev=f818517b4bac749fda17bff3ed504962df6c99c2#f818517b4bac749fda17bff3ed504962df6c99c2" }
 dependencies = [
     { name = "blake3" },
     { name = "cbor2" },
@@ -397,7 +397,6 @@ dependencies = [
     { name = "pysodium" },
     { name = "sortedcontainers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ce/71/1abecf7fcc42bf84c81b35ca9cfcee84f63b81b72bd0115577ebc18d31cb/hio-0.7.20.tar.gz", hash = "sha256:f88bd74fa5d680697f24b565cdfbc543224607222720687e2fc0d2cd67ccd70f", size = 210443, upload-time = "2026-09-10T20:35:30.718Z" }
 
 [[package]]
 name = "hjson"
@@ -468,7 +467,7 @@ wheels = [
 [[package]]
 name = "keri"
 version = "2.1.0.dev1"
-source = { git = "https://github.com/bakobo/keripy?rev=173678c0bad44203609942fd9b52134453f0d936#173678c0bad44203609942fd9b52134453f0d936" }
+source = { git = "https://github.com/bakobo/keripy?rev=8573aa57e7fb31aa12a90f7923e813a6acd63077#8573aa57e7fb31aa12a90f7923e813a6acd63077" }
 dependencies = [
     { name = "apispec" },
     { name = "blake3" },
@@ -1095,7 +1094,7 @@ requires-dist = [
     { name = "falcon" },
     { name = "fiki", git = "https://github.com/bakobo/fiki?subdirectory=py&rev=f1c8999bd78d9fee7661672c92a9931fae9ab6f1" },
     { name = "http-sfv", specifier = ">=0.9" },
-    { name = "keri", git = "https://github.com/bakobo/keripy?rev=173678c0bad44203609942fd9b52134453f0d936" },
+    { name = "keri", git = "https://github.com/bakobo/keripy?rev=8573aa57e7fb31aa12a90f7923e813a6acd63077" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
     { name = "waitress" },

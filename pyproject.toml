@@ -9,11 +9,11 @@ authors = [{ name = "Bakobo" }]
 dependencies = [
     # Public, so plain HTTPS resolves it anonymously — for anyone, with or without a Bakobo
     # account. That is now true of the whole closure (@qojsxe7s); heti was the one exception.
-    # A FORK-ONLY pin: 173678c0 sits on bakobo/keripy's feature/witness-decls, which upstream has
-    # not taken. @enyp5khx permits that only while an open upstream PR carries the commit home,
+    # A FORK-ONLY pin: 8573aa57 sits on bakobo/keripy's witness-stack, which is feature/witness-decls
+    # (not yet taken upstream) plus maintenance commits and a hio pin to bakobo/hio f818517b. @enyp5khx permits that only while an open upstream PR carries the commit home,
     # and keripy-drift.yml fails the week that stops being true. Full 40-char SHA, like fiki's
     # below: a short ref is ambiguous by construction, and the canary parses this line.
-    "keri @ git+https://github.com/bakobo/keripy@173678c0bad44203609942fd9b52134453f0d936",
+    "keri @ git+https://github.com/bakobo/keripy@8573aa57e7fb31aa12a90f7923e813a6acd63077",
     "falcon",
     "waitress",
     # The RFC 9421 signer and verifier @s6v3qm rides, now a runtime dependency because the
