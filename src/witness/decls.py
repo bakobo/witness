@@ -214,10 +214,10 @@ def without_unsafe_links(mapping):
     kept = {}
     for key, value in mapping.items():
         if key in _LINK_ATTRIBS:
-            if not isinstance(value, str):
-                continue
+            # The general value rule first, as both operator doors apply it: _admit_link assumes a
+            # bounded, printable-ASCII string and checks only what makes one a safe link.
             try:
-                _admit_link(key, value)
+                _admit_link(key, _admit_value(value))
             except InvalidArguments:
                 continue
         kept[key] = value

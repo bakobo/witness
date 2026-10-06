@@ -360,6 +360,19 @@ class TestLinkAttribs:
             "operator": "B", "pool": 7, "bakobo.x": None, "contact": "not a url at all"
         }
 
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "https://example.com/a\tb",                      # tab
+            "https://example.com/a\nb",                      # newline, a forged log line
+            "https://exаmple.com/terms",                      # Cyrillic homograph
+            "https://example.com/" + "a" * decls.MAX_VALUE_LENGTH,  # over the length bound
+        ],
+    )
+    def test_without_unsafe_links_applies_the_value_rule_first(self, hostile):
+        """A signed record never passed the operator door, so the value rule is applied here too."""
+        assert decls.without_unsafe_links({"terms": hostile, "operator": "B"}) == {"operator": "B"}
+
     def test_without_unsafe_links_withholds_a_link_that_is_not_text(self):
         assert decls.without_unsafe_links({"terms": 5, "operator": "B"}) == {"operator": "B"}
 
