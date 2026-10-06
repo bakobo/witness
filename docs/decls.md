@@ -26,7 +26,7 @@ The decisive reason they cannot be one thing is that union is defined for names 
 
 The second reason is evidential. `testnet` is believable because it is a claim against interest; no valued attribute has that property, so a self-reported region is worth exactly what a self-reported `production` would have been.
 
-Bare tag names and bare attribute keys are a defined vocabulary. Anything with a dotted vendor prefix — `bakobo.pool`, `bakobo.rack` — is anyone's to mint. That split is what keeps an open namespace from collapsing into mutual unintelligibility while still leaving an extension point: a bare name that is not recognized is a typo, and a misspelled `testnet` that silently fails to apply leaves a witness looking production-grade with nothing to say otherwise.
+Bare tag names and bare attribute keys are a defined vocabulary. The attribute keys are `operator`, `contact`, `pool`, `terms` and `registration`. The last two are links a witness's landing page renders, so their values must be absolute https URLs with a host and no user name (`@3syf5w8x`). Anything with a dotted vendor prefix — `bakobo.pool`, `bakobo.rack` — is anyone's to mint. That split is what keeps an open namespace from collapsing into mutual unintelligibility while still leaving an extension point: a bare name that is not recognized is a typo, and a misspelled `testnet` that silently fails to apply leaves a witness looking production-grade with nothing to say otherwise.
 
 ## Why not a keripy configuration trait
 

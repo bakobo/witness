@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from .errors import InvalidArguments
 
@@ -46,7 +47,19 @@ KNOWN_ATTRIBS = {
     "operator": "Who runs this witness, as a human-readable name.",
     "contact": "How to reach that operator about this witness — an address or a URL.",
     "pool": "The laboratory pool this witness belongs to, when it belongs to one.",
+    "terms": (
+        "Where the operator's terms of service are published: what the witness promises and what "
+        "it asks of a controller in exchange — an absolute https URL."
+    ),
+    "registration": (
+        "Where the operator explains how a controller registers before this witness accepts its "
+        "events — an absolute https URL."
+    ),
 }
+
+#: The keys whose only use is as a link a landing page renders and a person follows (@3syf5w8x),
+#: so their values are held to an absolute https URL rather than to the general value rule alone.
+_LINK_ATTRIBS = frozenset({"terms", "registration"})
 
 #: A flood guard, not an opinion about how many tags a witness legitimately has. Sixteen is far
 #: past any real configuration and far below anything that would trouble the process.
@@ -159,6 +172,29 @@ def _admit_value(value):
     return value
 
 
+def _admit_link(key, value):
+    """Narrow an already-admitted value to an absolute https URL with a plain host (@3syf5w8x).
+
+    Exact lowercase ``https://`` rather than a case-insensitive scheme, so that every later check
+    — the landing page's renderer above all — can test one spelling. No userinfo, because
+    ``https://bakobo.com@evil.example/`` shows a reader one host and takes the browser to another.
+    No whitespace, because no URL carries it unescaped and a renderer should never meet it.
+    """
+    parts = urlsplit(value)
+    if (
+        not value.startswith("https://")
+        or not parts.hostname
+        or "@" in parts.netloc
+        or " " in value
+    ):
+        # The key and the rule, never the value (rubric item 6).
+        raise InvalidArguments(
+            f"The attribute {key!r} must be an absolute https URL naming a host, with no user "
+            "name before the host and no spaces anywhere."
+        )
+    return value
+
+
 def tags_from_operator(values):
     """Door for tags the operator supplied. Returns them sorted and deduplicated.
 
@@ -216,10 +252,13 @@ def _admit_attribs(mapping):
         raise InvalidArguments(
             f"At most {MAX_ATTRIBS} attributes may be supplied, but {len(mapping)} were."
         )
-    return {
+    admitted = {
         _admit_name(key, KNOWN_ATTRIBS, "attribute"): _admit_value(value)
         for key, value in mapping.items()
     }
+    for key in _LINK_ATTRIBS & admitted.keys():
+        _admit_link(key, admitted[key])
+    return admitted
 
 
 class _DuplicateMember(ValueError):
