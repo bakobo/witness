@@ -508,21 +508,23 @@ Operator layer over a stock keripy witness = goal:
                   why: >
                     A witness's landing page (bakobo/infra) has to tell a visitor two things a
                     stranger needs before relying on it: the terms the operator offers, meaning what
-                    availability and retention it promises and what it asks in exchange, and whether
-                    it accepts events only from registered controllers. Both are things a consumer
-                    DISPLAYS rather than DECIDES on, so they are attributes under @e4ceoopg rather
-                    than tags, and both are bare keys because every operator has the same need and a
-                    vendor-prefixed spelling per operator would defeat the interoperability bare
-                    keys exist for. The value is a URL to the operator's own text, never the text
-                    itself. Rejected an inline paragraph: 256 printable ASCII characters cannot hold
-                    terms of service, raising the bound for two keys would make the bound per-key,
-                    and prose rendered into HTML is an injection surface where a URL is a validated
-                    string. Unlike operator and contact, these two values are constrained to
-                    absolute https URLs with no whitespace, because their only use is as a link a
-                    page renders and a person follows. A javascript: or data: URL in an href is
-                    script execution, and an http URL to a terms document can be rewritten in
-                    transit. contact keeps its looser rule because a bare email address is a
-                    legitimate contact and is rendered as text rather than as a link. Accepted
+                    availability and retention it promises and what it asks in exchange, and how a
+                    controller registers with the operator, which on Bakobo's production pool is
+                    what turns use the terms promise nothing to into use they cover; registration
+                    need not gate whether the witness accepts events at all. Both are things a
+                    consumer DISPLAYS rather than DECIDES on, so they are attributes under @e4ceoopg
+                    rather than tags, and both are bare keys because every operator has the same
+                    need and a vendor-prefixed spelling per operator would defeat the
+                    interoperability bare keys exist for. The value is a URL to the operator's own
+                    text, never the text itself. Rejected an inline paragraph: 256 printable ASCII
+                    characters cannot hold terms of service, raising the bound for two keys would
+                    make the bound per-key, and prose rendered into HTML is an injection surface
+                    where a URL is a validated string. Unlike operator and contact, these two values
+                    are constrained to absolute https URLs with no whitespace, because their only
+                    use is as a link a page renders and a person follows. A javascript: or data: URL
+                    in an href is script execution, and an http URL to a terms document can be
+                    rewritten in transit. contact keeps its looser rule because a bare email address
+                    is a legitimate contact and is rendered as text rather than as a link. Accepted
                     tradeoff: an operator whose terms are not on the web at all cannot declare them.
                     Rejected a separate registration tag: whether registration is required is a fact
                     a wallet would decide on, and that does argue for a tag, but no witness enforces
