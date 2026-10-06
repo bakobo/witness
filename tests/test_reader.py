@@ -685,6 +685,20 @@ class TestSignedDeclarations:
         answer = self._reader(tmp_path, rdb, attribs={"operator": "other"}).attribs()
         assert answer == {"attribs": {"operator": "B"}, "source": "signed-reply"}
 
+    def test_a_signed_link_that_is_not_https_is_withheld(self, tmp_path):
+        """The signed record never passed the operator door, so the link rule is applied here too
+        (@3syf5w8x). Withheld rather than refused: one bad value is not a reason to hide the rest
+        of what the witness signed, and it must never reach a page's href."""
+        signed = {"operator": "B", "terms": "javascript:alert(1)",
+                  "registration": "https://example.com/register"}
+        rdb = _FakeRdb(_NONTRANSFERABLE,
+                       decls={(_NONTRANSFERABLE, "attribs"): _FakeDecl(attribs=signed)})
+        answer = self._reader(tmp_path, rdb).attribs()
+        assert answer == {
+            "attribs": {"operator": "B", "registration": "https://example.com/register"},
+            "source": "signed-reply",
+        }
+
     def test_the_database_is_closed_even_when_it_answers(self, tmp_path):
         rdb = _FakeRdb(_NONTRANSFERABLE,
                        decls={(_NONTRANSFERABLE, "tags"): _FakeDecl(tags=["testnet"])})

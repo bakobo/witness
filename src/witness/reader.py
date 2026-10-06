@@ -302,7 +302,10 @@ class WitnessReader:
         """
         record = self._declared("attribs")
         if record is not None:
-            return {"attribs": dict(record.attribs), "source": "signed-reply"}
+            return {
+                "attribs": _decls.without_unsafe_links(dict(record.attribs)),
+                "source": "signed-reply",
+            }
         if self._config.attribs:
             return {"attribs": dict(self._config.attribs), "source": "operator-config"}
         seeded = self._seeded()

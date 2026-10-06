@@ -333,6 +333,9 @@ class TestLinkAttribs:
             "https:///terms",                   # no host, with a path
             "https://bakobo.com@evil.example/", # userinfo, which makes the visible host a lie
             "https://bakobo.com/a b",           # whitespace, which no URL carries unescaped
+            "https://bakobo.com:bad/terms",     # a port that is not a number
+            "https://bakobo.com:99999/terms",   # a port out of range
+            "https://[::1",                     # an unclosed IPv6 literal, which urlsplit raises on
         ],
     )
     def test_anything_but_an_absolute_https_url_is_refused(self, key, hostile):
@@ -343,9 +346,22 @@ class TestLinkAttribs:
         # The rule, never the value: a refusal must not hand the operator back a payload.
         assert hostile not in str(caught.value)
 
-    def test_the_seed_door_holds_the_same_rule(self):
+    @pytest.mark.parametrize("hostile", ["javascript:alert(1)", "https://[::1"])
+    def test_the_seed_door_holds_the_same_rule(self, hostile):
+        """Including a value urlsplit raises on, which must surface as the coded refusal the seed
+        reader catches rather than as a ValueError it does not."""
         with pytest.raises(InvalidArguments):
-            decls.from_seed('{"attribs": {"terms": "javascript:alert(1)"}}')
+            decls.from_seed(json.dumps({"attribs": {"terms": hostile}}))
+
+    def test_without_unsafe_links_keeps_everything_else(self):
+        mapping = {"operator": "B", "terms": "https://[::1", "registration": "http://x.example/",
+                   "pool": 7, "bakobo.x": None, "contact": "not a url at all"}
+        assert decls.without_unsafe_links(mapping) == {
+            "operator": "B", "pool": 7, "bakobo.x": None, "contact": "not a url at all"
+        }
+
+    def test_without_unsafe_links_withholds_a_link_that_is_not_text(self):
+        assert decls.without_unsafe_links({"terms": 5, "operator": "B"}) == {"operator": "B"}
 
     def test_other_keys_keep_their_looser_rule(self):
         """A bare email address is a legitimate contact, and it is not a URL."""
