@@ -100,7 +100,7 @@ Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated i
 | `/v1/witness/database` | Size against keripy's fixed 100 MB map ceiling, and the registered reader count. |
 | `/v1/witness/process` | CPU, memory, threads and descriptors for the witness process. |
 | `/v1/witness/tags` | What this witness claims about itself — `testnet`, and any vendor-prefixed tag its operator set. |
-| `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`. |
+| `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`, and `terms` and `registration`, which must be https URLs. |
 | `/v1/witness/controller` | Every controller whose key state this witness holds. |
 | `/v1/witness/controller/{aid}` | One controller's key state and the tags it inherits, or `404`. |
 

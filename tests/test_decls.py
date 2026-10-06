@@ -202,7 +202,7 @@ class TestAttribDoor:
     """
 
     def test_the_defined_keys_are_a_closed_vocabulary(self):
-        assert set(decls.KNOWN_ATTRIBS) == {"operator", "contact", "pool"}
+        assert set(decls.KNOWN_ATTRIBS) == {"operator", "contact", "pool", "terms", "registration"}
         assert all(decls.KNOWN_ATTRIBS[key] for key in decls.KNOWN_ATTRIBS)
 
     def test_none_is_no_attribs(self):
@@ -305,6 +305,82 @@ class TestAttribsAreNotInherited:
         import inspect
 
         assert "attribs" not in inspect.signature(decls.derive).parameters
+
+
+class TestLinkAttribs:
+    """terms and registration are links a landing page renders and a person follows (@3syf5w8x).
+
+    So their values are held to an absolute https URL with a host and nothing else. Every other
+    value rule still applies first; this is a further narrowing, never a relaxation.
+    """
+
+    @pytest.mark.parametrize("key", ["terms", "registration"])
+    def test_an_https_url_is_admitted(self, key):
+        value = "https://bakobo.com/witness/terms?v=2#sla"
+        assert decls.attribs_from_operator([f"{key}={value}"]) == {key: value}
+
+    @pytest.mark.parametrize("key", ["terms", "registration"])
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "javascript:alert(1)",              # script execution in an href
+            "data:text/html,<p>hi</p>",         # a whole document in an href
+            "http://bakobo.com/terms",          # rewritable in transit
+            "HTTPS://bakobo.com/terms",         # one spelling, so a check elsewhere can be exact
+            "//bakobo.com/terms",               # scheme-relative
+            "/terms",                           # relative to whatever page shows it
+            "https://",                         # no host
+            "https:///terms",                   # no host, with a path
+            "https://bakobo.com@evil.example/", # userinfo, which makes the visible host a lie
+            "https://bakobo.com/a b",           # whitespace, which no URL carries unescaped
+            "https://bakobo.com:bad/terms",     # a port that is not a number
+            "https://bakobo.com:99999/terms",   # a port out of range
+            "https://[::1",                     # an unclosed IPv6 literal, which urlsplit raises on
+        ],
+    )
+    def test_anything_but_an_absolute_https_url_is_refused(self, key, hostile):
+        with pytest.raises(InvalidArguments) as caught:
+            decls.attribs_from_operator([f"{key}={hostile}"])
+        assert key in str(caught.value)
+        assert "https" in str(caught.value)
+        # The rule, never the value: a refusal must not hand the operator back a payload.
+        assert hostile not in str(caught.value)
+
+    @pytest.mark.parametrize("hostile", ["javascript:alert(1)", "https://[::1"])
+    def test_the_seed_door_holds_the_same_rule(self, hostile):
+        """Including a value urlsplit raises on, which must surface as the coded refusal the seed
+        reader catches rather than as a ValueError it does not."""
+        with pytest.raises(InvalidArguments):
+            decls.from_seed(json.dumps({"attribs": {"terms": hostile}}))
+
+    def test_without_unsafe_links_keeps_everything_else(self):
+        mapping = {"operator": "B", "terms": "https://[::1", "registration": "http://x.example/",
+                   "pool": 7, "bakobo.x": None, "contact": "not a url at all"}
+        assert decls.without_unsafe_links(mapping) == {
+            "operator": "B", "pool": 7, "bakobo.x": None, "contact": "not a url at all"
+        }
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "https://example.com/a\tb",                      # tab
+            "https://example.com/a\nb",                      # newline, a forged log line
+            "https://exаmple.com/terms",                      # Cyrillic homograph
+            "https://example.com/" + "a" * decls.MAX_VALUE_LENGTH,  # over the length bound
+        ],
+    )
+    def test_without_unsafe_links_applies_the_value_rule_first(self, hostile):
+        """A signed record never passed the operator door, so the value rule is applied here too."""
+        assert decls.without_unsafe_links({"terms": hostile, "operator": "B"}) == {"operator": "B"}
+
+    def test_without_unsafe_links_withholds_a_link_that_is_not_text(self):
+        assert decls.without_unsafe_links({"terms": 5, "operator": "B"}) == {"operator": "B"}
+
+    def test_other_keys_keep_their_looser_rule(self):
+        """A bare email address is a legitimate contact, and it is not a URL."""
+        assert decls.attribs_from_operator(["contact=ops@bakobo.com"]) == {
+            "contact": "ops@bakobo.com"
+        }
 
 
 class TestSeedDoor:

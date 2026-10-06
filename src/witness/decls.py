@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from .errors import InvalidArguments
 
@@ -46,7 +47,19 @@ KNOWN_ATTRIBS = {
     "operator": "Who runs this witness, as a human-readable name.",
     "contact": "How to reach that operator about this witness — an address or a URL.",
     "pool": "The laboratory pool this witness belongs to, when it belongs to one.",
+    "terms": (
+        "Where the operator's terms of service are published: what the witness promises and what "
+        "it asks of a controller in exchange — an absolute https URL."
+    ),
+    "registration": (
+        "Where the operator explains how a controller registers before this witness accepts its "
+        "events — an absolute https URL."
+    ),
 }
+
+#: The keys whose only use is as a link a landing page renders and a person follows (@3syf5w8x),
+#: so their values are held to an absolute https URL rather than to the general value rule alone.
+_LINK_ATTRIBS = frozenset({"terms", "registration"})
 
 #: A flood guard, not an opinion about how many tags a witness legitimately has. Sixteen is far
 #: past any real configuration and far below anything that would trouble the process.
@@ -159,6 +172,58 @@ def _admit_value(value):
     return value
 
 
+def _admit_link(key, value):
+    """Narrow an already-admitted value to an absolute https URL with a plain host (@3syf5w8x).
+
+    Exact lowercase ``https://`` rather than a case-insensitive scheme, so that every later check
+    — the landing page's renderer above all — can test one spelling. No userinfo, because
+    ``https://bakobo.com@evil.example/`` shows a reader one host and takes the browser to another.
+    No whitespace, because no URL carries it unescaped and a renderer should never meet it.
+    """
+    try:
+        parts = urlsplit(value)
+        # Read for its side effect: urlsplit is lazy about the port and raises only on access, so
+        # "https://host:bad/" would otherwise pass as a link a browser cannot follow.
+        parts.port
+    except ValueError:
+        # urlsplit raises on an unclosed IPv6 literal and on a non-numeric or out-of-range port.
+        # Both are refusals, and an uncoded ValueError would escape the seed reader's handler.
+        parts = None
+    if (
+        parts is None
+        or not value.startswith("https://")
+        or not parts.hostname
+        or "@" in parts.netloc
+        or " " in value
+    ):
+        # The key and the rule, never the value (rubric item 6).
+        raise InvalidArguments(
+            f"The attribute {key!r} must be an absolute https URL naming a host, with no user "
+            "name before the host and no spaces anywhere."
+        )
+    return value
+
+
+def without_unsafe_links(mapping):
+    """``mapping`` without any link attribute whose value fails the link rule (@3syf5w8x).
+
+    For a signed declaration, which arrives without passing an operator door. A bad link is
+    withheld rather than failing the whole record: the rest of what the witness signed is still
+    true, and the one thing that must never happen is for that value to reach an href.
+    """
+    kept = {}
+    for key, value in mapping.items():
+        if key in _LINK_ATTRIBS:
+            # The general value rule first, as both operator doors apply it: _admit_link assumes a
+            # bounded, printable-ASCII string and checks only what makes one a safe link.
+            try:
+                _admit_link(key, _admit_value(value))
+            except InvalidArguments:
+                continue
+        kept[key] = value
+    return kept
+
+
 def tags_from_operator(values):
     """Door for tags the operator supplied. Returns them sorted and deduplicated.
 
@@ -216,10 +281,13 @@ def _admit_attribs(mapping):
         raise InvalidArguments(
             f"At most {MAX_ATTRIBS} attributes may be supplied, but {len(mapping)} were."
         )
-    return {
+    admitted = {
         _admit_name(key, KNOWN_ATTRIBS, "attribute"): _admit_value(value)
         for key, value in mapping.items()
     }
+    for key in _LINK_ATTRIBS & admitted.keys():
+        _admit_link(key, admitted[key])
+    return admitted
 
 
 class _DuplicateMember(ValueError):
