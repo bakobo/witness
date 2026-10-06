@@ -52,8 +52,8 @@ KNOWN_ATTRIBS = {
         "it asks of a controller in exchange — an absolute https URL."
     ),
     "registration": (
-        "Where the operator explains how a controller registers before this witness accepts its "
-        "events — an absolute https URL."
+        "Where the operator explains how a controller registers with it, and what registering "
+        "changes — an absolute https URL."
     ),
 }
 
