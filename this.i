@@ -628,6 +628,36 @@ Operator layer over a stock keripy witness = goal:
                 refuses to make about fiki. `run` grows one when @vqqh6zdk's second increment makes
                 the runner the thing that publishes them.
 
+            The image renders a witness landing page, and any operator can brand it = decision:
+              nid: 78m6fs3g
+              why: >
+                A witness opened in a browser answers GET / with keripy's bare 405, which tells a
+                stranger nothing and still fingerprints the server. bakobo/infra built a static
+                landing page for Bakobo's own witnesses (@6sqzrvzg there), rendered at deploy time
+                from the witness's own identity, tags and attribs, but the renderer lived in a
+                private repo, so an operator running this public image had no page and nothing to
+                rebrand. The renderer moves here as 'witness landing'. It reads exactly what
+                /v1/witness/identity, /tags and /attribs return, as one JSON document on stdin, and
+                writes one static HTML file to stdout. It makes no network call and reads no
+                database: the operator's deploy fetches the three documents and serves the file, so
+                nothing a visitor does ever reaches hio, whose single thread is the asset the whole
+                design protects. Branding is CSS and an SVG logo, inlined. Without --css the page
+                carries a neutral stylesheet shipped in the package, built on a few CSS custom
+                properties so that a small override rebrands it; --print-default-css writes it out
+                as a starting point. --class-prefix exists because an operator's existing stylesheet
+                already has class names, and renaming eight classes in the HTML costs less than
+                rewriting someone's brand. The safety rules travel with it unchanged: every value
+                HTML-escaped, terms and registration re-checked as https links (@3syf5w8x), CSS
+                refused if it could fetch anything or end its style element, the input document and
+                every file bounded before it is read, and an AID that is not a 44-character qb64
+                identifier refused rather than built into an OOBI link. The page names no version
+                and no internals, and tells the reader to verify through the OOBI rather than trust
+                it. Rejected serving the page from the witness process itself: a GET handler in hio
+                is exactly the cost this design refuses, and Caddy or any static server does it for
+                free. Rejected rendering inside the control plane on request, for the same reason
+                one level removed. Accepted tradeoff: the page is as fresh as the operator's last
+                render, so a changed declaration appears only when the deploy runs again.
+
         Metrics leave over OTLP  and only when an endpoint is configured = decision:
           id: wea6qjmk
           why: >
