@@ -268,6 +268,9 @@ class TestDocument:
             {**declared(), "attribs": {"attribs": {"operator": 5}}},            # not text
             {**declared(), "attribs": {"attribs": {f"x.k{n}": "v" for n in range(17)}}},
             {**declared(), "tags": {"tags": ["x.foo\n"]}},                      # trailing newline
+            {**declared(), "tags": {"tags": ["testnetz"], "source": "seed-file"}},  # unsigned typo
+            {**declared(), "attribs": {"attribs": {"region": "eu"}, "source": "operator-config"}},
+            {**declared(), "tags": {"tags": ["production"], "source": "signed-reply"}},
             {**declared(), "tags": {"tags": [f"x.t{n}" for n in range(17)]}},   # too many
         ],
     )

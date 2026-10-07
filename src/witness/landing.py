@@ -234,17 +234,24 @@ def render(
         )
     tags = _member(declared, "tags", "tags", list)
     attribs = _member(declared, "attribs", "attribs", dict)
+    signed = declared["attribs"].get("source") == "signed-reply"
     # The control plane's own declaration rules, applied again (@e4ceoopg): the page is where a
     # person reads these values, so the bidi, homograph and length rules that exist for exactly
     # that reader hold here whatever route the document took.
-    # The peer doors, not the operator ones: a signed declaration may use a bare name newer than
-    # this release, which the control plane serves and the page must therefore render.
+    # Each member by its own source. A signed declaration may use a bare name newer than this
+    # release, which the control plane serves, so it takes the peer door; anything unsigned came
+    # from operator configuration and keeps the operator door's vocabulary, so a typo still fails.
     try:
-        tags = list(decls.tags_from_peer(tags))
-        attribs = decls.attribs_from_peer(attribs)
+        if declared["tags"].get("source") == "signed-reply":
+            tags = list(decls.tags_from_peer(tags))
+        else:
+            tags = list(decls.tags_from_operator(tags))
+        if signed:
+            attribs = decls.attribs_from_peer(attribs)
+        else:
+            attribs = decls.admit_attribs(attribs)
     except InvalidArguments as exc:
         raise LandingInput(f"The declaration document breaks a declaration rule: {exc}") from exc
-    signed = declared["attribs"].get("source") == "signed-reply"
     styles = "\n".join(admit_css(name, text) for name, text in css)
     sibling_link = admit_link("siblings", siblings) if siblings is not None else None
 

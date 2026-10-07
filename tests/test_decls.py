@@ -486,7 +486,7 @@ class TestPeerDoors:
         assert decls.attribs_from_peer({"region": "eu"}) == {"region": "eu"}
 
     @pytest.mark.parametrize("hostile", [["x.foo\n"], ["Future"], ["a" * 65], [5],
-                                         [f"x.t{n}" for n in range(17)]])
+                                         [f"x.t{n}" for n in range(17)], ["production"]])
     def test_the_shape_and_size_rules_still_hold_for_tags(self, hostile):
         with pytest.raises(InvalidArguments):
             decls.tags_from_peer(hostile)
@@ -505,4 +505,13 @@ def test_a_name_ending_in_a_newline_is_refused(door):
     at the operator door. Found by the hostile pass on #29."""
     with pytest.raises(InvalidArguments):
         door("x.foo\n")
+
+
+def test_production_is_refused_at_every_tag_door():
+    """@pmtzkn6j: a self-serving claim nothing verifies. A peer's unknown bare name passes as a
+    newer vocabulary, but this one is not unknown -- it is refused by design, from anyone."""
+    for door in (decls.tags_from_operator, decls.tags_from_peer):
+        with pytest.raises(InvalidArguments) as caught:
+            door(["production"])
+        assert "production" in str(caught.value)
 

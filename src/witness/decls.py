@@ -43,6 +43,11 @@ KNOWN_TAGS = {
     ),
 }
 
+#: Bare names refused from anyone, peers included, rather than passed as a newer vocabulary.
+#: `production` is a self-serving claim nothing verifies (@pmtzkn6j), so no vocabulary, old or new,
+#: makes it worth displaying.
+FORBIDDEN_TAGS = frozenset({"production"})
+
 KNOWN_ATTRIBS = {
     "operator": "Who runs this witness, as a human-readable name.",
     "contact": "How to reach that operator about this witness — an address or a URL.",
@@ -288,8 +293,20 @@ def tags_from_peer(values):
         raise InvalidArguments(
             f"At most {MAX_TAGS} tags may be supplied, but {len(supplied)} were."
         )
-    return tuple(sorted({_admit_name(value, KNOWN_TAGS, "tag", vocabulary=False)
-                         for value in supplied}))
+    admitted = {_admit_name(value, KNOWN_TAGS, "tag", vocabulary=False) for value in supplied}
+    forbidden = sorted(admitted & FORBIDDEN_TAGS)
+    if forbidden:
+        raise InvalidArguments(
+            f"{forbidden[0]!r} is refused from any witness: a claim nothing can verify is not one "
+            "worth displaying (@pmtzkn6j)."
+        )
+    return tuple(sorted(admitted))
+
+
+def admit_attribs(mapping):
+    """The operator door's rules, vocabulary included, for a caller that already holds a dict --
+    `witness landing`, re-checking attribs the control plane served from configuration."""
+    return _admit_attribs(mapping)
 
 
 def attribs_from_peer(mapping):
