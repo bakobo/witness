@@ -31,6 +31,9 @@ from html import escape
 from importlib import resources
 from urllib.parse import urlsplit
 
+from keri import kering
+from keri.core import coring
+
 from .errors import LandingInput, LandingMissing, LandingTooLarge, LandingUnsafe, WitnessError
 
 #: Flood guards, far past a real brand (a few KB of CSS, a 10 KB logo) and far below anything a
@@ -43,9 +46,8 @@ MAX_CSS_FILES = 8
 #: at most 256 characters, so a real document is a few kilobytes.
 MAX_DOCUMENT_BYTES = 64 * 1024
 
-#: A non-transferable witness AID: an Ed25519 key in CESR qb64, 44 URL-safe base64 characters. The
-#: OOBI link is built from it, so anything else -- a path above all -- is refused, not linked to.
-_AID = re.compile(r"[A-Za-z0-9_-]{44}")
+#: One DNS label: letters, digits and inner hyphens, at most 63 characters.
+_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 #: A tag name in the shape decls.py admits: lowercase dot-separated segments.
 _TAG = re.compile(r"[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*")
 
@@ -145,6 +147,29 @@ def _member(document: dict, name: str, inner: str, kind: type) -> object:
     return value
 
 
+def _is_hostname(value: object) -> bool:
+    """A lowercase DNS name of at least two labels, at most 253 characters in all."""
+    if not isinstance(value, str) or len(value) > 253:
+        return False
+    labels = value.split(".")
+    return len(labels) >= 2 and all(_LABEL.fullmatch(label) for label in labels)
+
+
+def _is_witness_aid(value: str) -> bool:
+    """Whether keripy parses ``value`` as a non-transferable prefix, which every witness AID is.
+
+    keripy rather than a regex, because the shape alone -- 44 URL-safe characters -- admits strings
+    no KERI software would resolve, and the page tells its reader to resolve this one.
+    """
+    try:
+        prefixer = coring.Prefixer(qb64=value)
+    except (kering.KeriError, ValueError, TypeError):
+        return False
+    # Prefixer reads the code's full size and ignores what follows, so a trailing character would
+    # otherwise pass and then land in the OOBI link.
+    return prefixer.qb64 == value and not prefixer.transferable
+
+
 def _logo_tag(logo: bytes | None) -> str:
     if logo is None:
         return ""
@@ -189,13 +214,16 @@ def render(
     if not isinstance(declared, dict):
         raise LandingInput("The declaration document must be a JSON object.")
     hostname = declared.get("hostname")
-    if not isinstance(hostname, str) or not re.fullmatch(r"[a-z0-9.-]+", hostname):
-        raise LandingInput("The declaration document needs the witness's hostname, in lowercase.")
-    aid = _member(declared, "identity", "aid", str)
-    if not _AID.fullmatch(aid):
+    if not _is_hostname(hostname):
         raise LandingInput(
-            "The identity's aid is not a 44-character qb64 witness identifier, so the page will not "
-            "build an OOBI link from it."
+            "The declaration document needs the witness's hostname: lowercase DNS labels joined by "
+            "dots, at least two of them, as in 'w.example.com'. The OOBI link is built from it."
+        )
+    aid = _member(declared, "identity", "aid", str)
+    if not _is_witness_aid(aid):
+        raise LandingInput(
+            "The identity's aid is not a non-transferable qb64 identifier, which a witness's always "
+            "is, so the page will not build an OOBI link from it."
         )
     tags = _member(declared, "tags", "tags", list)
     if not all(isinstance(tag, str) and _TAG.fullmatch(tag) for tag in tags):
@@ -234,8 +262,11 @@ def render(
             *([f"<dt>Tags</dt><dd>{escape(', '.join(other_tags))}</dd>"] if other_tags else []),
         ]
     )
+    # Attributed, never asserted: this function holds no signature, only the control plane's word
+    # that keripy verified one. So the page reports that word and points at the check.
     provenance = (
-        "The operator details above are signed by this witness's own key."
+        "Its control plane reports the operator details above as signed by its own key, and "
+        "resolving the OOBI is how to check that."
         if signed
         else "The operator details above come from the witness's configuration and are not yet "
         "signed by its key."
@@ -311,6 +342,23 @@ def _read_bounded(path: str, limit: int, what: str) -> bytes:
     return data
 
 
+def _no_repeats(pairs):
+    """An object hook that refuses a repeated member, which json.loads would resolve last-one-wins.
+
+    Last-one-wins would let a document carrying "tags": ["testnet"] and then "tags": [] render a
+    page with no testnet notice, and nothing about the output would say so.
+    """
+    seen = {}
+    for name, value in pairs:
+        if name in seen:
+            raise LandingInput(
+                f"The declaration document repeats the member {name!r}, and which one wins would "
+                "otherwise depend on the order the bytes happen to be in."
+            )
+        seen[name] = value
+    return seen
+
+
 def _page(cfg, source) -> str:
     # Bytes, not characters: the bound is on what crossed the boundary, and four-byte UTF-8 would
     # otherwise let a document four times the limit through.
@@ -321,7 +369,7 @@ def _page(cfg, source) -> str:
             "anything a witness's control plane returns."
         )
     try:
-        declared = json.loads(raw.decode("utf-8"))
+        declared = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_repeats)
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise LandingInput(f"The declaration document is not valid UTF-8 JSON: {exc}.") from exc
     if cfg.css:

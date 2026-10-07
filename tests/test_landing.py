@@ -132,7 +132,15 @@ class TestPage:
 
     def test_provenance_says_whether_the_details_are_signed(self):
         assert "not yet signed" in landing.render(declared(source="seed-file"), [])
-        assert "signed by this witness's own key" in landing.render(declared(source="signed-reply"), [])
+        assert "reports the operator details above as signed" in landing.render(
+            declared(source="signed-reply"), [])
+
+    def test_a_signed_claim_is_attributed_to_the_control_plane_not_asserted(self):
+        """The renderer holds no signature, only the control plane's word that one exists, so
+        the page reports that word and sends the reader to the OOBI rather than vouching itself."""
+        page = landing.render(declared(source="signed-reply"), [])
+        assert "are signed by this witness's own key" not in page
+        assert "resolving the OOBI" in page
 
     def test_the_operator_names_the_page_when_there_is_one(self):
         assert "run by Example" in landing.render(declared(attribs={"operator": "Example"}), [])
@@ -232,6 +240,12 @@ class TestDocument:
             {**declared(), "identity": {"aid": AID + "x"}},                    # wrong length
             {**declared(), "tags": {"tags": ["other", 4]}},                    # not all text
             {**declared(), "tags": {"tags": ["Not A Tag"]}},                   # not a tag's shape
+            {**declared(), "identity": {"aid": "A" * 44}},                     # right shape, no code
+            {**declared(), "identity": {"aid": "E" + "A" * 43}},               # transferable
+            {**declared(), "hostname": ".."},                                   # not a hostname
+            {**declared(), "hostname": "-a.example.com"},                       # label edge hyphen
+            {**declared(), "hostname": "localhost"},                            # no dot
+            {**declared(), "hostname": "a" * 64 + ".example.com"},              # label over 63
         ],
     )
     def test_a_document_not_shaped_like_the_control_plane_is_refused(self, broken):
@@ -343,3 +357,13 @@ class TestCommand:
         code, _, err = run(["--css", str(path)], json.dumps(declared()), capsys)
         assert code == 1
         assert err.startswith(LandingMissing.code + ": ")
+
+    def test_a_repeated_member_is_refused_rather_than_resolved_last_one_wins(self, capsys):
+        """json.loads keeps the last of two members, so a document with "tags": ["testnet"] then
+        "tags": [] would render a page with no testnet notice."""
+        doc = json.dumps(declared(tags=["testnet"]))
+        doc = doc.replace('"tags": ["testnet"]', '"tags": ["testnet"], "tags": []')
+        code, out, err = run([], doc, capsys)
+        assert code == 1 and out == ""
+        assert err.startswith(LandingInput.code + ": ")
+        assert "tags" in err

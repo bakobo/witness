@@ -56,7 +56,7 @@ A refusal writes `<code>: <detail>` to stderr, writes nothing to stdout, and exi
 
 | Code | When |
 |---|---|
-| `e.input.format.landing.f` | The input is not valid UTF-8 JSON, or not shaped like the control plane's documents: a missing member, an AID that is not 44 qb64 characters, a tag that is not a tag name. |
+| `e.input.format.landing.f` | The input is not valid UTF-8 JSON, or not shaped like the control plane's documents: a repeated or missing member, an AID keripy does not parse as non-transferable, a hostname that is not a DNS name, a tag that is not a tag name. |
 | `e.input.range.landing.f` | The input document, the stylesheets together, or the logo is over its bound (64 KiB each). |
 | `e.input.missing.landing.f` | A `--css` or `--logo` file cannot be read, or a stylesheet is not UTF-8. |
 | `e.rule.landing.unsafe.f` | A stylesheet could fetch or escape, or a link is not an absolute https URL with a host. |

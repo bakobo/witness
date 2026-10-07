@@ -649,14 +649,17 @@ Operator layer over a stock keripy witness = goal:
                 rewriting someone's brand. The safety rules travel with it unchanged: every value
                 HTML-escaped, terms and registration re-checked as https links (@3syf5w8x), CSS
                 refused if it could fetch anything or end its style element, the input document and
-                every file bounded before it is read, and an AID that is not a 44-character qb64
-                identifier refused rather than built into an OOBI link. The page names no version
-                and no internals, and tells the reader to verify through the OOBI rather than trust
-                it. Rejected serving the page from the witness process itself: a GET handler in hio
-                is exactly the cost this design refuses, and Caddy or any static server does it for
-                free. Rejected rendering inside the control plane on request, for the same reason
-                one level removed. Accepted tradeoff: the page is as fresh as the operator's last
-                render, so a changed declaration appears only when the deploy runs again.
+                every file bounded before it is read, and an AID keripy does not parse as
+                non-transferable, or a hostname that is not a DNS name, refused rather than built
+                into an OOBI link. The page reports a signed declaration as the control plane's
+                claim and points the reader at the OOBI to check it, because the renderer holds no
+                signature of its own. The page names no version and no internals, and tells the
+                reader to verify through the OOBI rather than trust it. Rejected serving the page
+                from the witness process itself: a GET handler in hio is exactly the cost this
+                design refuses, and Caddy or any static server does it for free. Rejected rendering
+                inside the control plane on request, for the same reason one level removed. Accepted
+                tradeoff: the page is as fresh as the operator's last render, so a changed
+                declaration appears only when the deploy runs again.
 
         Metrics leave over OTLP  and only when an endpoint is configured = decision:
           id: wea6qjmk
