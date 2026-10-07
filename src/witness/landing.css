@@ -1,0 +1,110 @@
+/* The default stylesheet for `witness landing` (@78m6fs3g). Neutral on purpose: it is what an
+   operator gets before choosing a brand. To rebrand, write this out with
+   `witness landing --print-default-css`, change the custom properties in the first two blocks,
+   and pass the result with --css. The page is inlined and served under a CSP that forbids
+   fetching, so fonts and images must be system fonts or data: URIs. */
+
+:root {
+  --wl-bg: #ffffff;
+  --wl-surface: #f3f4f6;
+  --wl-text: #1f2937;
+  --wl-muted: #6b7280;
+  --wl-accent: #2563eb;
+  --wl-border: #d1d5db;
+  --wl-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --wl-mono: ui-monospace, "Cascadia Code", Menlo, monospace;
+  --wl-width: min(46rem, 100% - 2.5rem);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wl-bg: #111827;
+    --wl-surface: #1f2937;
+    --wl-text: #e5e7eb;
+    --wl-muted: #9ca3af;
+    --wl-accent: #60a5fa;
+    --wl-border: #374151;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--wl-bg);
+  color: var(--wl-text);
+  font-family: var(--wl-font);
+  line-height: 1.6;
+}
+
+a { color: var(--wl-accent); overflow-wrap: anywhere; }
+code { font-family: var(--wl-mono); font-size: 0.9em; overflow-wrap: anywhere; }
+h1, h2 { line-height: 1.2; margin: 1.4em 0 0.5em; }
+h1 { font-size: clamp(1.6rem, 4vw, 2.1rem); }
+h2 { font-size: 1.2rem; }
+
+.wl-page {
+  width: var(--wl-width);
+  margin-inline: auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.wl-masthead {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-block: 1.25rem;
+  border-bottom: 1px solid var(--wl-border);
+}
+
+.wl-masthead img { height: 1.75rem; width: auto; }
+
+.wl-masthead__label {
+  font-family: var(--wl-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--wl-muted);
+}
+
+.wl-main { flex: 1 1 auto; padding-block: 1.5rem 2.5rem; }
+.wl-lede { font-size: 1.08rem; }
+
+.wl-notice__code {
+  display: inline-block;
+  margin: 0;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--wl-surface);
+  font-family: var(--wl-mono);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1.25rem;
+  padding: 1rem 1.25rem;
+  border-radius: 0.5rem;
+  background: var(--wl-surface);
+}
+
+dt { font-weight: 600; }
+dd { margin: 0; min-width: 0; }
+
+@media (max-width: 34rem) {
+  dl { grid-template-columns: 1fr; }
+  dd { margin-bottom: 0.5rem; }
+}
+
+.wl-footer {
+  padding-block: 1.25rem;
+  border-top: 1px solid var(--wl-border);
+  color: var(--wl-muted);
+  font-size: 0.9rem;
+}
+
+.wl-footer p { margin: 0; }

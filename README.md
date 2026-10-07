@@ -86,6 +86,10 @@ That takes a transactionally consistent snapshot of every store — including th
 
 `witness registrar` is a separate process that publishes an issuer's TEL heads to verifiers' Observers in signed batches, so a verifier can check revocation without ever asking the issuer. It never touches the witness. See [`docs/registrar.md`](docs/registrar.md).
 
+## A landing page
+
+`witness landing` renders a static page to serve at a witness's `/`, from what its control plane says about itself, with an operator's own CSS and logo. It runs offline and is never served by the witness. See [`docs/landing.md`](docs/landing.md).
+
 ## The control-plane surface
 
 Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated in this release — see the note below.

@@ -43,6 +43,10 @@ ALL = [
     errors.RegistrarQuota,
     errors.RegistrarResolverTimeout,
     errors.RegistrarResolverFailed,
+    errors.LandingInput,
+    errors.LandingTooLarge,
+    errors.LandingMissing,
+    errors.LandingUnsafe,
 ]
 
 # sorter . descriptor . at least one sub-descriptor . disposition
@@ -137,6 +141,10 @@ def test_an_envelope_omits_correlation_members_it_was_not_given():
         (errors.RegistrarQuota, 429),
         (errors.RegistrarResolverTimeout, 503),
         (errors.RegistrarResolverFailed, 503),
+        (errors.LandingInput, 400),
+        (errors.LandingTooLarge, 413),
+        (errors.LandingMissing, 400),
+        (errors.LandingUnsafe, 403),
     ],
 )
 def test_the_status_follows_the_codes_prefix(kind, status):

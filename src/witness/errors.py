@@ -423,3 +423,40 @@ class RegistrarResolverFailed(WitnessError):
     code = "e.env.resolver.failed.r"
     title = "My resolver failed while looking up that callback host."
     status = 503
+
+
+class LandingInput(WitnessError):
+    """The landing page's input is not the control plane's three documents (@78m6fs3g)."""
+
+    code = "e.input.format.landing.f"
+    title = "The landing page's input is not a witness declaration I can render."
+    status = 400
+
+
+class LandingTooLarge(WitnessError):
+    """A landing page input exceeded its bound, refused before being read whole."""
+
+    code = "e.input.range.landing.f"
+    title = "A landing page input is larger than its bound allows."
+    status = 413
+
+
+class LandingMissing(WitnessError):
+    """A branding file named for the landing page could not be read as what it claims to be."""
+
+    code = "e.input.missing.landing.f"
+    title = "A branding file for the landing page could not be read."
+    status = 400
+
+
+class LandingUnsafe(WitnessError):
+    """CSS or a link that could make the landing page fetch something or run something.
+
+    ``e.rule.`` because nothing about the input is malformed: it is refused by a norm this page
+    enforces on itself -- no remote fetches, no script -- and the operator can comply.
+    """
+
+    code = "e.rule.landing.unsafe.f"
+    title = "A landing page input would let the page fetch or run something, so it was refused."
+    status = 403
+
