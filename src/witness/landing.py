@@ -34,7 +34,15 @@ from urllib.parse import urlsplit
 from keri import kering
 from keri.core import coring
 
-from .errors import LandingInput, LandingMissing, LandingTooLarge, LandingUnsafe, WitnessError
+from . import decls
+from .errors import (
+    InvalidArguments,
+    LandingInput,
+    LandingMissing,
+    LandingTooLarge,
+    LandingUnsafe,
+    WitnessError,
+)
 
 #: Flood guards, far past a real brand (a few KB of CSS, a 10 KB logo) and far below anything a
 #: visitor would notice on a page whose whole job is to be small.
@@ -48,8 +56,6 @@ MAX_DOCUMENT_BYTES = 64 * 1024
 
 #: One DNS label: letters, digits and inner hyphens, at most 63 characters.
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
-#: A tag name in the shape decls.py admits: lowercase dot-separated segments.
-_TAG = re.compile(r"[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*")
 
 #: The tag that changes what a visitor should conclude, so it is shown as a notice, not a list item.
 TESTNET = "testnet"
@@ -76,6 +82,7 @@ _CSS_REFUSALS = (
     (re.compile(r"@import", re.I), "an @import, which fetches another stylesheet"),
     (re.compile(r"url\((?!\s*[\"']?\s*data:)", re.I), "a url() that is not a data: URI"),
     (re.compile(r"image-set\(", re.I), "an image-set(), which fetches by bare string"),
+    (re.compile(r"(?<![\w-])image\(", re.I), "an image(), which fetches by bare string"),
 )
 
 #: A CSS comment. Comments do not nest, so the shortest match is exact.
@@ -226,9 +233,15 @@ def render(
             "is, so the page will not build an OOBI link from it."
         )
     tags = _member(declared, "tags", "tags", list)
-    if not all(isinstance(tag, str) and _TAG.fullmatch(tag) for tag in tags):
-        raise LandingInput("Every tag must be a lowercase tag name, as /v1/witness/tags returns them.")
     attribs = _member(declared, "attribs", "attribs", dict)
+    # The control plane's own declaration rules, applied again (@e4ceoopg): the page is where a
+    # person reads these values, so the bidi, homograph, length and vocabulary rules that exist for
+    # exactly that reader hold here whatever route the document took.
+    try:
+        tags = list(decls.tags_from_operator(tags))
+        attribs = decls.admit_attribs(attribs)
+    except InvalidArguments as exc:
+        raise LandingInput(f"The declaration document breaks a declaration rule: {exc}") from exc
     signed = declared["attribs"].get("source") == "signed-reply"
     styles = "\n".join(admit_css(name, text) for name, text in css)
     sibling_link = admit_link("siblings", siblings) if siblings is not None else None

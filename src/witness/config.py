@@ -509,8 +509,22 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
 _CLASS_PREFIX = re.compile(r"[a-z][a-z0-9]*-")
 
 
+#: Size before shape: both values are repeated into the page, so an unbounded one is amplified.
+_MAX_CLASS_PREFIX = 16
+
+
 def _landing_config(ns) -> LandingConfig:
     from .landing import MAX_CSS_FILES
+    if len(ns.class_prefix) > _MAX_CLASS_PREFIX:
+        raise InvalidArguments(
+            f"--class-prefix may be at most {_MAX_CLASS_PREFIX} characters, but was "
+            f"{len(ns.class_prefix)}."
+        )
+    if ns.siblings is not None and len(ns.siblings) > _decls.MAX_VALUE_LENGTH:
+        raise InvalidArguments(
+            f"--siblings may be at most {_decls.MAX_VALUE_LENGTH} characters, but was "
+            f"{len(ns.siblings)}."
+        )
     if not _CLASS_PREFIX.fullmatch(ns.class_prefix):
         raise InvalidArguments(
             "--class-prefix must be lowercase letters and digits, starting with a letter and "

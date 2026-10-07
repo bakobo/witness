@@ -23,8 +23,10 @@ From the image, offline:
 
 ```sh
 docker run --rm -i --network none --entrypoint witness ghcr.io/bakobo/witness@sha256:… \
-    landing < declared.json > index.html
+    landing < declared.json > index.html.new && mv index.html.new index.html
 ```
+
+Render to a new file and rename it into place only on success. Redirecting straight onto the served file truncates it before the renderer runs, so a refusal would leave an empty page and even a success has a moment of serving one. The rename is atomic within a directory.
 
 Serve the file with a strict Content-Security-Policy. The page carries no script and fetches nothing, so this is enough:
 
@@ -38,10 +40,10 @@ Without `--css`, the page carries a neutral stylesheet built on a handful of CSS
 
 ```sh
 witness landing --css brand.css --logo logo.svg --siblings https://example.com/witnesses/ \
-    < declared.json > index.html
+    < declared.json > index.html.new && mv index.html.new index.html
 ```
 
-- `--css` is repeatable and inlined in order, and it replaces the default stylesheet. Rules that could make the browser fetch something or leave the `<style>` element are refused: `@import`, any `url()` that is not a `data:` URI, `image-set()`, a backslash (CSS escapes can spell the others), and `<`. Comments are stripped first. Fonts must be system fonts or `data:` URIs.
+- `--css` is repeatable and inlined in order, and it replaces the default stylesheet. Rules that could make the browser fetch something or leave the `<style>` element are refused: `@import`, any `url()` that is not a `data:` URI, `image()` and `image-set()`, a backslash (CSS escapes can spell the others), and `<`. Comments are stripped first. Fonts must be system fonts or `data:` URIs.
 - `--logo` takes an SVG, embedded as an `<img>` data URI, so any script in it never runs.
 - `--class-prefix` renames every class on the page (default `wl-`), so a stylesheet you already have fits without being rewritten. The classes are `page`, `masthead`, `masthead__label`, `main`, `lede`, `notice__code` and `footer`.
 - `--siblings` links a page listing your other witnesses. Use it only where that page says plainly that one operator runs all of them, because a list of links otherwise implies an independence that does not exist.
@@ -56,7 +58,7 @@ A refusal writes `<code>: <detail>` to stderr, writes nothing to stdout, and exi
 
 | Code | When |
 |---|---|
-| `e.input.format.landing.f` | The input is not valid UTF-8 JSON, or not shaped like the control plane's documents: a repeated or missing member, an AID keripy does not parse as non-transferable, a hostname that is not a DNS name, a tag that is not a tag name. |
+| `e.input.format.landing.f` | The input is not valid UTF-8 JSON, or not shaped like the control plane's documents, or breaks a declaration rule the control plane enforces (a value that is not short printable ASCII, an undefined bare key, a `terms` or `registration` that is not an https link): a repeated or missing member, an AID keripy does not parse as non-transferable, a hostname that is not a DNS name, a tag that is not a tag name. |
 | `e.input.range.landing.f` | The input document, the stylesheets together, or the logo is over its bound (64 KiB each). |
 | `e.input.missing.landing.f` | A `--css` or `--logo` file cannot be read, or a stylesheet is not UTF-8. |
-| `e.rule.landing.unsafe.f` | A stylesheet could fetch or escape, or a link is not an absolute https URL with a host. |
+| `e.rule.landing.unsafe.f` | A stylesheet could fetch or escape, or `--siblings` is not an absolute https URL with a host. |

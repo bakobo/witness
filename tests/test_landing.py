@@ -174,6 +174,8 @@ class TestCss:
             "a { background: URL( 'https://evil.example/t.gif') }",
             "@font-face { src: url(/font.woff2) }",
             "a { background: image-set('https://evil.example/t.png' 1x) }",
+            "a { background: image('https://evil.example/track') }",
+            "a { background: -webkit-image-set('https://evil.example/t.png' 1x) }",
             "a { background: u\\72 l(https://evil.example/) }",
             "a { content: '</style><script>alert(1)</script>' }",
         ],
@@ -216,8 +218,12 @@ class TestLinks:
         ],
     )
     def test_anything_but_https_with_a_host_is_refused(self, hostile):
-        with pytest.raises(LandingUnsafe):
+        """Refused by the declaration rules render() re-applies, which carry the link rule
+        (@3syf5w8x), so it arrives as a declaration that breaks a rule."""
+        with pytest.raises(LandingInput):
             landing.render(declared(attribs={"terms": hostile}), [])
+        with pytest.raises(LandingUnsafe):
+            landing.admit_link("terms", hostile)
 
     def test_the_siblings_link_is_held_to_the_same_rule(self):
         with pytest.raises(LandingUnsafe):
@@ -246,6 +252,16 @@ class TestDocument:
             {**declared(), "hostname": "-a.example.com"},                       # label edge hyphen
             {**declared(), "hostname": "localhost"},                            # no dot
             {**declared(), "hostname": "a" * 64 + ".example.com"},              # label over 63
+            # The control plane's own declaration rules, applied again (@e4ceoopg):
+            {**declared(), "attribs": {"attribs": {"operator": "B\u202ead"}}},  # bidi override
+            {**declared(), "attribs": {"attribs": {"operator": "\ud800"}}},     # lone surrogate
+            {**declared(), "attribs": {"attribs": {"operator": "x" * 257}}},    # over the bound
+            {**declared(), "attribs": {"attribs": {"region": "eu"}}},           # undefined bare key
+            {**declared(), "attribs": {"attribs": {"Operator": "x"}}},          # not a key's shape
+            {**declared(), "attribs": {"attribs": {"operator": 5}}},            # not text
+            {**declared(), "attribs": {"attribs": {f"x.k{n}": "v" for n in range(17)}}},
+            {**declared(), "tags": {"tags": ["testnetz"]}},                     # undefined bare tag
+            {**declared(), "tags": {"tags": [f"x.t{n}" for n in range(17)]}},   # too many
         ],
     )
     def test_a_document_not_shaped_like_the_control_plane_is_refused(self, broken):
@@ -270,6 +286,18 @@ class TestConfig:
         from witness import config
         with pytest.raises(InvalidArguments):
             config.parse_args(["landing", "--class-prefix", prefix])
+
+    def test_an_over_long_class_prefix_is_refused_before_its_shape_is_read(self):
+        from witness import config
+        with pytest.raises(InvalidArguments) as caught:
+            config.parse_args(["landing", "--class-prefix", "a" * 10_000 + "-"])
+        assert "at most" in str(caught.value)
+
+    def test_an_over_long_siblings_url_is_refused(self):
+        from witness import config
+        with pytest.raises(InvalidArguments) as caught:
+            config.parse_args(["landing", "--siblings", "https://x.example/" + "a" * 300])
+        assert "at most" in str(caught.value)
 
     def test_too_many_stylesheets_are_refused(self):
         from witness import config

@@ -275,6 +275,16 @@ def attribs_from_operator(values):
     return _admit_attribs(admitted)
 
 
+def admit_attribs(mapping):
+    """Door for an attribute mapping that some other route already unpacked (@e4ceoopg).
+
+    The same rules as attribs_from_operator, for a caller holding a dict rather than ``key=value``
+    strings -- `witness landing`, which re-checks what the control plane served before a person
+    reads it on a page.
+    """
+    return _admit_attribs(mapping)
+
+
 def _admit_attribs(mapping):
     """Bound an already-unpacked attribute mapping, whatever door unpacked it."""
     if len(mapping) > MAX_ATTRIBS:
