@@ -8,21 +8,27 @@ falcon app over it, then serves; serving is delegated to :mod:`witness.server` (
 of every store while the witness keeps running (@7b34ohbo). ``pool`` stands up throwaway pools
 of this image for experiments (@n2bgpdds), and is the one subcommand that runs on a host rather
 than inside the container. ``registrar`` runs an issuer's Registrar, its own process that never touches the
-witness (@46t5otqe).
+witness (@46t5otqe). ``landing`` renders a static landing page from declarations on stdin, and
+touches nothing at all (@78m6fs3g).
 """
 
 from __future__ import annotations
 
 import json
 
-from . import backup, config, metrics, pool, runner, server, supervisor
+from . import backup, config, landing, metrics, pool, runner, server, supervisor
 from .app import RequestCounter, make_app
 from .reader import WitnessReader
 
 
-def main(argv=None) -> int:
-    """Dispatch the requested subcommand and return its process exit code."""
+def main(argv=None, *, stdin=None) -> int:
+    """Dispatch the requested subcommand and return its process exit code.
+
+    ``stdin`` is a seam for ``landing``, the one subcommand that reads standard input.
+    """
     subcommand, cfg = config.parse_args(argv)
+    if subcommand == "landing":
+        return landing.run(cfg, stdin=stdin)
     if subcommand == "backup":
         manifest = backup.back_up(cfg)
         print(json.dumps(manifest, indent=2, sort_keys=True))

@@ -100,3 +100,22 @@ def test_console_script_serves_the_versioned_control_plane(witness_db):
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=10)
+
+
+def test_console_script_renders_a_landing_page():
+    """@78m6fs3g. The installed `witness landing` entry point, stdin to stdout, with the default
+    stylesheet loaded from the installed package rather than from the source tree."""
+    document = json.dumps({
+        "hostname": "w.example.com",
+        "identity": {"aid": "B" + "A" * 43, "alias": "witness"},
+        "tags": {"tags": ["testnet"], "source": "seed-file"},
+        "attribs": {"attribs": {"operator": "Example"}, "source": "seed-file"},
+    })
+    result = subprocess.run(
+        ["uv", "run", "witness", "landing"], input=document, capture_output=True, text=True,
+        timeout=120, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "w.example.com is a KERI witness." in result.stdout
+    assert "--wl-accent" in result.stdout
+

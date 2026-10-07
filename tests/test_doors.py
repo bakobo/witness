@@ -79,6 +79,20 @@ ACCOUNTED = {
         "failure — absent, unreadable, not UTF-8, malformed, refused by the vocabulary — returns "
         "no declarations rather than propagating."
     ),
+    "landing.py::_read_bounded": (
+        "door: landing._read_bounded. A branding file named by --css or --logo, read at most its "
+        "bound plus one byte and refused past it, before any of it is decoded or inlined; what "
+        "survives then passes admit_css or is wrapped as an <img> data URI."
+    ),
+    "landing.py::default_css": (
+        "exempt: the package's own stylesheet, shipped in the wheel beside this module. It is "
+        "not operator input, and a test holds it to admit_css's rules anyway."
+    ),
+    "landing.py::run": (
+        "door: landing._page. Standard input is read as bytes, at most MAX_DOCUMENT_BYTES plus "
+        "one, refused past that, then decoded and parsed, and every member render() uses is "
+        "checked for type and shape before it reaches the page."
+    ),
     "pool.py::run_docker": (
         "exempt: docker's stdout and stderr are read from a subprocess this repo spawned with a "
         "fixed binary and arguments it built itself, under a timeout. The bytes are parsed by "

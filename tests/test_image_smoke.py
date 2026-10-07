@@ -199,6 +199,30 @@ def test_the_registrar_resolves_callbacks_through_the_images_own_interpreter():
     assert probe.strip().splitlines()[-1] in {"127.0.0.1", "::1"}
 
 
+def test_the_image_renders_a_landing_page_offline():
+    """@78m6fs3g. The default stylesheet is a data file, and a wheel that dropped it would leave
+    `witness landing` failing only inside the image. Run exactly as an operator's deploy runs it:
+    the image's own entry point, stdin in, no network at all."""
+    document = json.dumps({
+        "hostname": "w.example.com",
+        "identity": {"aid": "B" + "A" * 43, "alias": "witness"},
+        "tags": {"tags": ["testnet"], "source": "seed-file"},
+        "attribs": {"attribs": {"operator": "Example",
+                                "terms": "https://example.com/terms"}, "source": "seed-file"},
+    })
+    page = _docker(
+        "run", "--rm", "-i", "--network", "none", "--entrypoint", "witness", IMAGE, "landing",
+        input=document,
+    ).stdout
+    assert "w.example.com is a KERI witness." in page
+    assert "--wl-accent" in page, "the default stylesheet must ship inside the image"
+    assert '<a href="https://example.com/terms">' in page
+
+    css = _docker("run", "--rm", "--network", "none", "--entrypoint", "witness", IMAGE,
+                  "landing", "--print-default-css").stdout
+    assert ".wl-page" in css
+
+
 def test_both_processes_run_in_the_one_container(witness_container):
     """@a24p3kbw: one container, two processes, under a supervisor that is PID 1."""
     container, port = witness_container

@@ -139,6 +139,17 @@ class RegistrarConfig:
 
 
 @dataclass(frozen=True)
+class LandingConfig:
+    """``witness landing``: render a static landing page from stdin (@78m6fs3g)."""
+
+    css: tuple = ()
+    logo: str | None = None
+    siblings: str | None = None
+    class_prefix: str = "wl-"
+    print_default_css: bool = False
+
+
+@dataclass(frozen=True)
 class SupervisorConfig:
     """Resolved configuration for the in-image supervisor: the processes it runs, in order."""
 
@@ -242,6 +253,28 @@ def _build_parser() -> _RaisingParser:
     bak.add_argument("--to", dest="destination", required=True, help="Where to write the backup.")
     bak.add_argument(
         "--force", action="store_true", help="Replace an existing backup at that destination."
+    )
+
+    land = sub.add_parser(
+        "landing",
+        help="Render a static landing page from the control plane's identity, tags and attribs "
+        "on stdin (@78m6fs3g).",
+    )
+    land.add_argument(
+        "--css", action="append", default=[],
+        help="A stylesheet to inline, repeatable and in order. Replaces the default stylesheet.",
+    )
+    land.add_argument("--logo", default=None, help="An SVG logo for the masthead.")
+    land.add_argument(
+        "--siblings", default=None, help="An https URL listing the operator's other witnesses."
+    )
+    land.add_argument(
+        "--class-prefix", default="wl-", dest="class_prefix",
+        help="The prefix on every class the page uses, so an existing stylesheet fits. Default wl-.",
+    )
+    land.add_argument(
+        "--print-default-css", action="store_true", dest="print_default_css",
+        help="Write the default stylesheet to stdout, as a starting point for your own, and stop.",
     )
 
     reg = sub.add_parser("registrar", help="Run an issuer's Registrar (@r3aonvlz).")
@@ -471,6 +504,40 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
     )
 
 
+#: A lowercase name followed by one hyphen: the prefix is glued to class names, so anything else
+#: either breaks the selector or makes the HTML attribute something other than a class list.
+_CLASS_PREFIX = re.compile(r"[a-z][a-z0-9]*-")
+
+
+#: Size before shape: both values are repeated into the page, so an unbounded one is amplified.
+_MAX_CLASS_PREFIX = 16
+
+
+def _landing_config(ns) -> LandingConfig:
+    from .landing import MAX_CSS_FILES
+    if len(ns.class_prefix) > _MAX_CLASS_PREFIX:
+        raise InvalidArguments(
+            f"--class-prefix may be at most {_MAX_CLASS_PREFIX} characters, but was "
+            f"{len(ns.class_prefix)}."
+        )
+    if ns.siblings is not None and len(ns.siblings) > _decls.MAX_VALUE_LENGTH:
+        raise InvalidArguments(
+            f"--siblings may be at most {_decls.MAX_VALUE_LENGTH} characters, but was "
+            f"{len(ns.siblings)}."
+        )
+    if not _CLASS_PREFIX.fullmatch(ns.class_prefix):
+        raise InvalidArguments(
+            "--class-prefix must be lowercase letters and digits, starting with a letter and "
+            "ending in one hyphen, as in 'wl-' or 'bk-'."
+        )
+    if len(ns.css) > MAX_CSS_FILES:
+        raise InvalidArguments(
+            f"At most {MAX_CSS_FILES} stylesheets may be inlined, but {len(ns.css)} were named."
+        )
+    return LandingConfig(css=tuple(ns.css), logo=ns.logo, siblings=ns.siblings,
+                         class_prefix=ns.class_prefix, print_default_css=ns.print_default_css)
+
+
 def _supervisor_config(ns) -> SupervisorConfig:
     specs = [ProcessSpec.from_command("essential", ns.essential, essential=True)]
     for index, command in enumerate(ns.auxiliary, start=1):
@@ -509,4 +576,6 @@ def parse_args(argv):
         return ns.subcommand, _backup_config(ns)
     if ns.subcommand == "registrar":
         return ns.subcommand, _registrar_config(ns)
+    if ns.subcommand == "landing":
+        return ns.subcommand, _landing_config(ns)
     return ns.subcommand, _control_plane_config(ns)

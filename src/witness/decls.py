@@ -43,6 +43,11 @@ KNOWN_TAGS = {
     ),
 }
 
+#: Bare names refused from anyone, peers included, rather than passed as a newer vocabulary.
+#: `production` is a self-serving claim nothing verifies (@pmtzkn6j), so no vocabulary, old or new,
+#: makes it worth displaying.
+FORBIDDEN_TAGS = frozenset({"production"})
+
 KNOWN_ATTRIBS = {
     "operator": "Who runs this witness, as a human-readable name.",
     "contact": "How to reach that operator about this witness — an address or a URL.",
@@ -110,7 +115,7 @@ class Derived:
     unfollowed: tuple[str, ...] = ()
 
 
-def _admit_name(value, known, kind):
+def _admit_name(value, known, kind, *, vocabulary=True):
     """Bound one name by size, then shape, then meaning, or refuse it.
 
     Shared by tag names and attribute keys on purpose: a key is a name, and making it obey exactly
@@ -124,12 +129,13 @@ def _admit_name(value, known, kind):
         raise InvalidArguments(
             f"A {kind} may be at most {MAX_TAG_LENGTH} characters, but one was {len(value)}."
         )
-    if not _SHAPE.match(value):
+    # fullmatch, not match: `$` in a match accepts a final newline, so 'x.foo\n' passed.
+    if not _SHAPE.fullmatch(value):
         raise InvalidArguments(
             f"A {kind} must be lowercase letters, digits and hyphens in dot-separated segments, "
             "each beginning with a letter, as in 'testnet' or 'bakobo.pool'."
         )
-    if "." not in value and value not in known:
+    if vocabulary and "." not in value and value not in known:
         # Bare names are the shared vocabulary, so an unrecognized one is a typo rather than an
         # extension — and a misspelled `testnet` that silently fails to apply leaves the witness
         # looking production-grade with nothing to say otherwise.
@@ -275,14 +281,48 @@ def attribs_from_operator(values):
     return _admit_attribs(admitted)
 
 
-def _admit_attribs(mapping):
+def tags_from_peer(values):
+    """Door for tags a witness declared, rather than ones an operator typed.
+
+    The operator door's bounds, shape and dedup, with one difference: an unknown bare name passes
+    opaquely, because from a witness it means a vocabulary newer than this release, not a typo.
+    `witness landing` uses this on what the control plane served, which may be a signed declaration.
+    """
+    supplied = list(values)
+    if len(supplied) > MAX_TAGS:
+        raise InvalidArguments(
+            f"At most {MAX_TAGS} tags may be supplied, but {len(supplied)} were."
+        )
+    admitted = {_admit_name(value, KNOWN_TAGS, "tag", vocabulary=False) for value in supplied}
+    forbidden = sorted(admitted & FORBIDDEN_TAGS)
+    if forbidden:
+        raise InvalidArguments(
+            f"{forbidden[0]!r} is refused from any witness: a claim nothing can verify is not one "
+            "worth displaying (@pmtzkn6j)."
+        )
+    return tuple(sorted(admitted))
+
+
+def admit_attribs(mapping):
+    """The operator door's rules, vocabulary included, for a caller that already holds a dict --
+    `witness landing`, re-checking attribs the control plane served from configuration."""
+    return _admit_attribs(mapping)
+
+
+def attribs_from_peer(mapping):
+    """Door for an attribute mapping a witness declared. As tags_from_peer: every value, length and
+    link rule holds, and only the bare-key vocabulary is not enforced."""
+    return _admit_attribs(mapping, vocabulary=False)
+
+
+def _admit_attribs(mapping, *, vocabulary=True):
     """Bound an already-unpacked attribute mapping, whatever door unpacked it."""
     if len(mapping) > MAX_ATTRIBS:
         raise InvalidArguments(
             f"At most {MAX_ATTRIBS} attributes may be supplied, but {len(mapping)} were."
         )
     admitted = {
-        _admit_name(key, KNOWN_ATTRIBS, "attribute"): _admit_value(value)
+        _admit_name(key, KNOWN_ATTRIBS, "attribute", vocabulary=vocabulary): _admit_value(value)
         for key, value in mapping.items()
     }
     for key in _LINK_ATTRIBS & admitted.keys():
