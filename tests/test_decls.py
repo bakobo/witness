@@ -473,3 +473,36 @@ class TestSeedDoor:
     def test_a_non_string_attrib_value_is_refused(self):
         with pytest.raises(InvalidArguments):
             decls.from_seed('{"attribs": {"operator": 5}}')
+
+
+class TestPeerDoors:
+    """For declarations that arrive from a witness rather than from an operator's own typing: an
+    unknown bare name means a newer vocabulary, so it passes; every other bound still holds."""
+
+    def test_an_unknown_bare_tag_passes_opaquely(self):
+        assert decls.tags_from_peer(["future", "testnet"]) == ("future", "testnet")
+
+    def test_an_unknown_bare_attribute_key_passes_opaquely(self):
+        assert decls.attribs_from_peer({"region": "eu"}) == {"region": "eu"}
+
+    @pytest.mark.parametrize("hostile", [["x.foo\n"], ["Future"], ["a" * 65], [5],
+                                         [f"x.t{n}" for n in range(17)]])
+    def test_the_shape_and_size_rules_still_hold_for_tags(self, hostile):
+        with pytest.raises(InvalidArguments):
+            decls.tags_from_peer(hostile)
+
+    @pytest.mark.parametrize("hostile", [{"operator": "B\u202ead"}, {"terms": "http://x.example/"},
+                                         {"x.k\n": "v"}])
+    def test_the_value_and_link_rules_still_hold_for_attribs(self, hostile):
+        with pytest.raises(InvalidArguments):
+            decls.attribs_from_peer(hostile)
+
+
+@pytest.mark.parametrize("door", [lambda v: decls.tags_from_operator([v]),
+                                  lambda v: decls.attribs_from_operator([f"{v}=x"])])
+def test_a_name_ending_in_a_newline_is_refused(door):
+    """`$` in a re.match matches just before a trailing newline, so 'x.foo\\n' passed the shape check
+    at the operator door. Found by the hostile pass on #29."""
+    with pytest.raises(InvalidArguments):
+        door("x.foo\n")
+

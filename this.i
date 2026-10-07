@@ -645,7 +645,7 @@ Operator layer over a stock keripy witness = goal:
                 carries a neutral stylesheet shipped in the package, built on a few CSS custom
                 properties so that a small override rebrands it; --print-default-css writes it out
                 as a starting point. --class-prefix exists because an operator's existing stylesheet
-                already has class names, and renaming eight classes in the HTML costs less than
+                already has class names, and renaming seven classes in the HTML costs less than
                 rewriting someone's brand. The safety rules travel with it unchanged: every value
                 HTML-escaped, terms and registration re-checked as https links (@3syf5w8x), CSS
                 refused if it could fetch anything or end its style element, the input document and

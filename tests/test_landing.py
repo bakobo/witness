@@ -142,6 +142,14 @@ class TestPage:
         assert "are signed by this witness's own key" not in page
         assert "resolving the OOBI" in page
 
+    def test_a_newer_vocabulary_renders_rather_than_failing(self):
+        """A signed declaration may carry bare names this release does not define; the control plane
+        serves them, so the page must render them rather than refuse the whole document."""
+        page = landing.render(declared(tags=["future"], attribs={"region": "eu"},
+                                       source="signed-reply"), [])
+        assert "<dt>Tags</dt><dd>future</dd>" in page
+        assert "<dt>region</dt><dd>eu</dd>" in page
+
     def test_the_operator_names_the_page_when_there_is_one(self):
         assert "run by Example" in landing.render(declared(attribs={"operator": "Example"}), [])
         assert "run by its operator" in landing.render(declared(), [])
@@ -256,11 +264,10 @@ class TestDocument:
             {**declared(), "attribs": {"attribs": {"operator": "B\u202ead"}}},  # bidi override
             {**declared(), "attribs": {"attribs": {"operator": "\ud800"}}},     # lone surrogate
             {**declared(), "attribs": {"attribs": {"operator": "x" * 257}}},    # over the bound
-            {**declared(), "attribs": {"attribs": {"region": "eu"}}},           # undefined bare key
             {**declared(), "attribs": {"attribs": {"Operator": "x"}}},          # not a key's shape
             {**declared(), "attribs": {"attribs": {"operator": 5}}},            # not text
             {**declared(), "attribs": {"attribs": {f"x.k{n}": "v" for n in range(17)}}},
-            {**declared(), "tags": {"tags": ["testnetz"]}},                     # undefined bare tag
+            {**declared(), "tags": {"tags": ["x.foo\n"]}},                      # trailing newline
             {**declared(), "tags": {"tags": [f"x.t{n}" for n in range(17)]}},   # too many
         ],
     )

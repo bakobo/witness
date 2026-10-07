@@ -235,11 +235,13 @@ def render(
     tags = _member(declared, "tags", "tags", list)
     attribs = _member(declared, "attribs", "attribs", dict)
     # The control plane's own declaration rules, applied again (@e4ceoopg): the page is where a
-    # person reads these values, so the bidi, homograph, length and vocabulary rules that exist for
-    # exactly that reader hold here whatever route the document took.
+    # person reads these values, so the bidi, homograph and length rules that exist for exactly
+    # that reader hold here whatever route the document took.
+    # The peer doors, not the operator ones: a signed declaration may use a bare name newer than
+    # this release, which the control plane serves and the page must therefore render.
     try:
-        tags = list(decls.tags_from_operator(tags))
-        attribs = decls.admit_attribs(attribs)
+        tags = list(decls.tags_from_peer(tags))
+        attribs = decls.attribs_from_peer(attribs)
     except InvalidArguments as exc:
         raise LandingInput(f"The declaration document breaks a declaration rule: {exc}") from exc
     signed = declared["attribs"].get("source") == "signed-reply"
