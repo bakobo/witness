@@ -1,6 +1,6 @@
 # Deploying a witness
 
-Written for `bakobo/infra`, which consumes this repo's image. It states the contract: what to pull, what to run, what to publish, and the three things that are easy to get wrong and silent when you do.
+Written for the deployment that consumes this repo's image. It states the contract: what to pull, what to run, what to publish, and the three things that are easy to get wrong and silent when you do.
 
 ## What to pull
 
@@ -8,7 +8,7 @@ Written for `bakobo/infra`, which consumes this repo's image. It states the cont
 
 **Deploy by digest, never by tag.** The publish workflow prints the digest to its job summary.
 
-Take the digest from the run triggered by the **release tag**, not from the earlier `main` push. Container builds are not bit-reproducible — apt and pip layers carry timestamps — so the tag run rebuilds the same commit into a different digest and moves `sha-<commit>` onto it. Within that one run both tags point at the same image, so the tag run's digest is the one that agrees with `v<x.y.z>`. The image is built here rather than in `infra` because this repo owns the keripy pin: a direct git reference in `pyproject.toml`. Building anywhere else lets the image and the pin drift apart, which is the whole problem containerizing solves.
+Take the digest from the run triggered by the **release tag**, not from the earlier `main` push. Container builds are not bit-reproducible — apt and pip layers carry timestamps — so the tag run rebuilds the same commit into a different digest and moves `sha-<commit>` onto it. Within that one run both tags point at the same image, so the tag run's digest is the one that agrees with `v<x.y.z>`. The image is built here rather than in the deployment repository because this repo owns the keripy pin: a direct git reference in `pyproject.toml`. Building anywhere else lets the image and the pin drift apart, which is the whole problem containerizing solves.
 
 ## What to run
 
@@ -31,7 +31,7 @@ docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
 
 | Port | What | Expose? |
 | --- | --- | --- |
-| 5631 | keripy witness HTTP | Yes, through Caddy (`infra @m4c35y`) |
+| 5631 | keripy witness HTTP | Yes, through Caddy |
 | 5632 | keripy CESR-over-TCP | No — `@m4c35y` closes it, pending its own unverified caveat |
 | 5633 | Bakobo control plane | **Loopback only.** Unauthenticated in this release |
 
@@ -96,7 +96,7 @@ WITNESS_BASELINE_IMAGE=ghcr.io/bakobo/witness@sha256:<deployed> \
     uv run pytest tests/test_image_upgrade.py -v --no-cov
 ```
 
-With a baseline set, the deployed image creates the volume, initialises the keystore and gets a controller witnessed; the candidate takes the volume over and has to serve the same AID, return the same key state, and accept a further event — and then the deployed image takes it **back**, which is the rollback this document promises two paragraphs down. Without one, those two tests skip and say so; they deliberately do not fall back to using the candidate as its own baseline, because that proves container replacement while reading as version compatibility (`@ktljhcyt`). In CI the baseline comes from the `DEPLOYED_WITNESS_IMAGE` repository variable, which `bakobo/infra` updates when it bumps its pin.
+With a baseline set, the deployed image creates the volume, initialises the keystore and gets a controller witnessed; the candidate takes the volume over and has to serve the same AID, return the same key state, and accept a further event — and then the deployed image takes it **back**, which is the rollback this document promises two paragraphs down. Without one, those two tests skip and say so; they deliberately do not fall back to using the candidate as its own baseline, because that proves container replacement while reading as version compatibility (`@ktljhcyt`). In CI the baseline comes from the `DEPLOYED_WITNESS_IMAGE` repository variable, which the deployment updates when it bumps its pin.
 
 **A keripy pin that moves forward past a migration.** keripy records a version in the database and refuses to open one that is behind the library, so the witness will not start. The control plane reports `e.self.config.migration.f` — permanent, not retryable, because no amount of waiting clears it:
 
@@ -146,4 +146,4 @@ Exercised end to end by `tests/test_image_upgrade.py`, which backs up a running 
 
 **Where this stands, and the pin HAS moved.** As of 2026-09-21 the deployed digest carries keripy `2.0.0-dev6` while `main` carries `2.1.0-dev1`, so the next release to production crosses a migration — this is no longer the hypothetical it was when this section was written. The mechanism is verified by tests: the version check, both refusals, and the same-pin handover in **both directions between two real digests**. The migration itself is **not** exercised by anything here. The oracle declines to guess about it — when the two images carry different keripy versions it skips and names both, because a failure there would read as a broken upgrade when what happened is that it was pointed at a pin bump.
 
-It has been rehearsed by hand, on synthetic data, and `bakobo/infra`'s `docs/runbooks/witness-release.md` records what was measured: the new image refuses the old database and the container crash-loops, `kli migrate run` completes, the witness then keeps its AID and its controllers and receipts a new event, and the old image afterwards refuses the migrated database for good. Two claims made above did **not** survive that rehearsal and are corrected here: the control plane does not report `e.self.config.migration.f` when this happens — it is in the same container, which is down — and `kli migrate list` fails with the same `DatabaseError` rather than listing what is outstanding. The diagnosis is `docker logs`.
+It has been rehearsed by hand, on synthetic data, and this is what was measured: the new image refuses the old database and the container crash-loops, `kli migrate run` completes, the witness then keeps its AID and its controllers and receipts a new event, and the old image afterwards refuses the migrated database for good. Two claims made above did **not** survive that rehearsal and are corrected here: the control plane does not report `e.self.config.migration.f` when this happens — it is in the same container, which is down — and `kli migrate list` fails with the same `DatabaseError` rather than listing what is outstanding. The diagnosis is `docker logs`.

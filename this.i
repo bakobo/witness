@@ -506,7 +506,7 @@ Operator layer over a stock keripy witness = goal:
                 Terms and registration join the attribute vocabulary, as https URLs = decision:
                   nid: 3syf5w8x
                   why: >
-                    A witness's landing page (bakobo/infra) has to tell a visitor two things a
+                    A witness's landing page (in the deployment repository) has to tell a visitor two things a
                     stranger needs before relying on it: the terms the operator offers, meaning what
                     availability and retention it promises and what it asks in exchange, and how a
                     controller registers with the operator, which on Bakobo's production pool is
@@ -632,7 +632,7 @@ Operator layer over a stock keripy witness = goal:
               nid: 78m6fs3g
               why: >
                 A witness opened in a browser answers GET / with keripy's bare 405, which tells a
-                stranger nothing and still fingerprints the server. bakobo/infra built a static
+                stranger nothing and still fingerprints the server. The deployment repository built a static
                 landing page for Bakobo's own witnesses (@6sqzrvzg there), rendered at deploy time
                 from the witness's own identity, tags and attribs, but the renderer lived in a
                 private repo, so an operator running this public image had no page and nothing to
@@ -854,7 +854,7 @@ Operator layer over a stock keripy witness = goal:
       why: >
         This repo owns the keripy pin (a direct git reference in pyproject.toml), so building the
         image anywhere else lets the image and the pin drift — precisely the class of problem
-        containerizing is meant to close. Rejected building in bakobo/infra: infra is the estate and
+        containerizing is meant to close. Rejected building in the deployment repository: it is the estate and
         this repo is the software, and the drift risk falls on whichever side does not hold the pin.
         infra consumes an immutable digest, never a tag. Accepted tradeoff: this repo takes on a
         publish pipeline and a retention policy it did not previously need, and — see @a24p3kbw —
@@ -925,7 +925,7 @@ Operator layer over a stock keripy witness = goal:
             same image, so what it proved was container replacement rather than version
             compatibility. Every real upgrade is two versions by definition, and the one property
             an operator is buying — that the new image can pick up where the old one left off — was
-            the one not under test. bakobo/infra's `bin/release-witness` had to rest its same-pin
+            the one not under test. The deployment repository's release script had to rest its same-pin
             claim on the two pins being textually identical, which is an argument rather than an
             oracle.
             THE BASELINE IS THE DIGEST PRODUCTION IS RUNNING, not merely the previous release.
@@ -953,7 +953,7 @@ Operator layer over a stock keripy witness = goal:
         stands up N containers of THIS repo's image, each with its own volume, keystore, PID
         namespace and published ports, and `witness pool down` removes every container and volume
         the pool created. Rejected in-process witnesses under one hio scheduler, which is what
-        bakobo/heti already has (`heti/tests/produce/witnesses.py`, and `heti demo
+        heti already has (`heti/tests/produce/witnesses.py`, and `heti demo
         --keep-witnesses`): they are genuine keripy witnesses and they are the right tool for a
         question about the KERI protocol, but they are not this repo's artifact. What a pool is for
         here is the image — the supervisor's failure policy, the HEALTHCHECK, the control plane

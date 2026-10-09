@@ -21,7 +21,7 @@ pool lab — 3 witnesses on witness:dev
 
 There is deliberately no floating tag to default to (`@lnk24kwp`), so `--image` is required — from the flag, or from `WITNESS_IMAGE`, the same variable the image oracles take.
 
-**Ports.** Witness *i* takes `--base-port + 10(i-1)` for its witness HTTP port, with its control plane two above; the default base is 5640, clear of the 5631/5632/5633 a hand-run witness uses. Everything binds to `127.0.0.1`. keripy's CESR-over-TCP port is not published, because nothing in an experiment needs it and `infra` closes it in production too.
+**Ports.** Witness *i* takes `--base-port + 10(i-1)` for its witness HTTP port, with its control plane two above; the default base is 5640, clear of the 5631/5632/5633 a hand-run witness uses. Everything binds to `127.0.0.1`. keripy's CESR-over-TCP port is not published, because nothing in an experiment needs it and production closes it too.
 
 **Cleanup.** `witness pool down --name lab` removes every container and every volume carrying the pool's label, and the pool writes nothing else anywhere — no state file, no run directory. `--all` sweeps every pool on the host. Because cleanup keys on labels rather than on bookkeeping, an `up` interrupted halfway still tears down in full.
 
@@ -60,10 +60,10 @@ uv run witness pool heal  --name lab --witness w2            # reverses whicheve
 
 **The pool never incepts anything** (`@jorbhpfq`). It serves witnesses and describes them; whatever holds keys does the designating. `manifest` emits that description in the form its consumer wants.
 
-For [heti](https://github.com/bakobo/heti), whose lockbox takes a standing witness set:
+`--format heti` prints a standing witness set as a TOML `[witnesses]` table: `oobis`, each witness's controller OOBI in alias order, and `toad`, the receipt threshold (below). It is the block heti's lockbox reads from its `config.toml`, and anything else that takes a witness list and a threshold in TOML can read it the same way:
 
 ```sh
-uv run witness pool manifest --name lab --format heti >> ~/.config/heti/config.toml
+uv run witness pool manifest --name lab --format heti > lab-witnesses.toml
 ```
 
 ```toml
@@ -100,7 +100,7 @@ The cost is exactly what it sounds like: **a seeded pool's signing keys are deri
 
 **It is not how you deploy a witness.** That is [`deploying.md`](deploying.md): one container, a persistent volume, a digest, and a reverse proxy. A pool publishes several control planes on loopback with no authentication at all and keeps nothing.
 
-**It is not the cheapest way to get witnesses.** If the question is about the KERI protocol rather than about this image, bakobo/heti runs genuine keripy witnesses in-process, in under a second, with a relay in front of each one so a test can make it slow, absent, refusing or serving garbage. Use that. A pool costs containers, and what it buys is that the witnesses are the artifact `infra` deploys — the supervisor's failure policy, the healthcheck, the escrow pacing in the image's own CMD, and a control plane answering while the experiment runs.
+**It is not the cheapest way to get witnesses.** If the question is about the KERI protocol rather than about this image, genuine keripy witnesses run in-process in under a second, and a relay in front of each one lets a test make it slow, absent, refusing or serving garbage. Prefer that. A pool costs containers, and what it buys is that the witnesses are the artifact production deploys — the supervisor's failure policy, the healthcheck, the escrow pacing in the image's own CMD, and a control plane answering while the experiment runs.
 
 **Its witnesses are not stock keripy.** The image defaults `--escrow-interval` to 1 second and `--escrow-timeout` to 60, where keripy sweeps every hio pass and holds an unanswerable query for 300 (`@zj3h2pzh`, `@znm5uppx`, measured in [`escrow-load.md`](escrow-load.md)). An experiment about keripy's own behaviour should know that.
 

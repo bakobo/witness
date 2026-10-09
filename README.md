@@ -72,7 +72,7 @@ uv run witness pool break --name lab --witness w2       # and `heal` to put it b
 uv run witness pool down --name lab                     # removes every container and volume
 ```
 
-Pooled witnesses declare themselves `testnet` and `bakobo.pool`, with a `pool` attribute naming the set, so their AIDs are no longer indistinguishable from production ones. The pool serves witnesses and describes them; it never incepts anything, so designating it is [`heti`](https://github.com/bakobo/heti)'s or `kli`'s job. Full documentation, including the reproducible-`--seed` caveat and what a pool is *not* good for, is in [`docs/pools.md`](docs/pools.md).
+Pooled witnesses declare themselves `testnet` and `bakobo.pool`, with a `pool` attribute naming the set, so their AIDs are no longer indistinguishable from production ones. The pool serves witnesses and describes them; it never incepts anything, so designating it is the job of whatever holds keys, such as `kli` or heti's lockbox. Full documentation, including the reproducible-`--seed` caveat and what a pool is *not* good for, is in [`docs/pools.md`](docs/pools.md).
 
 And a witness can be backed up without being stopped:
 

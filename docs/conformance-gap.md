@@ -11,7 +11,7 @@
 `h5n2rk`'s freeze on `/healthz` and `/info` survives contact with org standards written after
 them — could be adjudicated against evidence rather than against a summary of it.*
 
-The four standards in force, all in `~/code/bakobo/dev/standards/`: `url-design.md` (namespace),
+The four standards in force, all in the Bakobo `dev/standards/`: `url-design.md` (namespace),
 `http-errors.md` (the HTTP binding), `error-codes.md` (identity and taxonomy), `error-handling.md`
 (message quality). All four claim every Bakobo HTTP surface.
 
@@ -64,7 +64,7 @@ response — every AID's KEL is the same shape — so the AID is a **query param
 segment**. The obvious-looking `/aid/{aid}/kel` nesting is therefore wrong, and it is the
 standard's call rather than a matter of taste.
 
-Prerequisite for all of it: `witness` must be minted in `bakobo/glossary`. That is an authority
+Prerequisite for all of it: `witness` must be minted in the Bakobo glossary. That is an authority
 act and not mine to perform.
 
 ## 4. Proposed error codes

@@ -87,4 +87,4 @@ The load finding itself remains a *hardening* observation rather than a defect â
 
 ## What this does not cover
 
-Single host, single attacker process, one keripy pin, an otherwise idle witness. A witness already serving real traffic starts further along the curve, and a distributed flood was not attempted because the per-source cost is already low enough that distribution adds nothing to the finding. The mitigation was not tested: no measurement was taken with a rate limit in place, because the edge lives in `bakobo/infra`.
+Single host, single attacker process, one keripy pin, an otherwise idle witness. A witness already serving real traffic starts further along the curve, and a distributed flood was not attempted because the per-source cost is already low enough that distribution adds nothing to the finding. The mitigation was not tested: no measurement was taken with a rate limit in place, because the edge lives in the deployment, not in this repo.

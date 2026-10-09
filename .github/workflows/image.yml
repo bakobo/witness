@@ -2,7 +2,7 @@ name: Image
 
 # Builds the witness image, proves it works, and publishes it to GHCR (@lypmcw7f, @lnk24kwp).
 #
-# The image is built HERE rather than in bakobo/infra because this repo owns the keripy pin, so
+# The image is built HERE rather than in the deployment repository because this repo owns the keripy pin, so
 # building anywhere else lets the image and the pin drift — the exact problem containerizing is
 # meant to close. infra consumes an immutable digest, which the summary below surfaces.
 #
@@ -97,7 +97,7 @@ jobs:
       # the same reason as the others — it is the only thing that proves the config a pool seeds
       # into a volume is a config the image's keripy actually reads.
       # DEPLOYED_WITNESS_IMAGE is the digest the estate is currently running, set as a repository
-      # variable and updated when bakobo/infra bumps its pin (@ktljhcyt). With it, the upgrade
+      # variable and updated when the deployment bumps its pin (@ktljhcyt). With it, the upgrade
       # oracle drives a real two-version handover: that digest writes the volume and this build
       # takes it over, and back again. Without it those two tests SKIP rather than falling back to
       # this image as its own baseline, which would prove container replacement while reading as
