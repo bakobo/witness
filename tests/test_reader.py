@@ -223,7 +223,7 @@ def test_version_reports_both_halves_of_what_is_running(reader):
 
 
 def test_escrow_reports_a_depth_for_every_store_including_query_not_found(reader):
-    """Infra asked for query-not-found by name: keripy re-walks that whole escrow on every hio
+    """The deployment asked for query-not-found by name: keripy re-walks that whole escrow on every hio
     loop pass, so its depth is what turns a query flood from a code reading into an observation."""
     escrow = reader.escrow()
 
@@ -466,7 +466,7 @@ def test_a_database_awaiting_migration_says_so_and_says_it_is_permanent(tmp_path
 def test_a_database_written_by_a_newer_keripy_refuses_to_open(tmp_path):
     """The rollback direction, and the one nobody writes down: once a migration has run, deploying
     the previous image on the same volume does not work. keripy refuses rather than corrupting,
-    which is the right behaviour and a hard constraint on how infra rolls back."""
+    which is the right behaviour and a hard constraint on how the deployment rolls back."""
     config = _db_at_version(tmp_path, "ahead", "9.9.9")
 
     with pytest.raises(DatabaseTooNew) as caught:

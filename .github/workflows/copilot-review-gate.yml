@@ -123,8 +123,8 @@ jobs:
           # returns 2xx, the run log shows `PullRequests: write`, and no `review_requested` event
           # ever appears, so the request step spends thirty seconds polling and then fails the job.
           # It is not the repository and it is not the Actions identity -- the same
-          # `github-actions[bot]` successfully requests Copilot in infra, witness, errors, dev,
-          # bakobo.com and status, and a request made by hand on #3 produced a `review_requested`
+          # `github-actions[bot]` successfully requests Copilot in several other Bakobo
+          # repositories, and a request made by hand on #3 produced a `review_requested`
           # event and a posted review within six seconds. The one thing those runs do not share is
           # the PR author, and webvh-gate is simply the first repo here where Dependabot opened one.
           #
@@ -187,7 +187,7 @@ jobs:
           # beginning with "copilot", which would also match a human called copilotfan. The two
           # forms are NOT interchangeable and both are needed: we POST
           # `copilot-pull-request-reviewer[bot]`, but the timeline records the event under the bare
-          # login `Copilot` -- verified on infra #5, #16 and bakobo.com #4, all of which record
+          # login `Copilot` -- verified on PRs in other Bakobo repositories, all of which record
           # `Copilot`. Comparing only against $REVIEWER finds zero events, which would make the
           # gate re-request on every run and then hard-fail on every PR.
           #

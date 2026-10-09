@@ -68,7 +68,7 @@ Operator layer over a stock keripy witness = goal:
                 file writable and the pids distinct. Accepted tradeoff: read-only becomes
                 LMDB-enforced rather than kernel-enforced; @g3w6px's "separate invocations /
                 containers" parenthetical no longer describes the deployment; the image needs a
-                supervisor for two processes; and infra's @tdd36d premise that the control plane
+                supervisor for two processes; and the deployment's @tdd36d premise that the control plane
                 can be added to a running witness without redeploying it acquires a condition —
                 true across systemd units, false across containers.
               children:
@@ -156,7 +156,7 @@ Operator layer over a stock keripy witness = goal:
           id: vxt7feoi
           why: >
             Two signals are worth having and neither is reachable from outside the process: loop
-            lag, which infra named its highest-value alert because it measures the harm directly,
+            lag, which the deployment named its highest-value alert because it measures the harm directly,
             and per-doer timings, which is ~2x3n — witnesses have wedged in production, black-box
             probing says only THAT the loop stalled, and naming the doer is what a fix or an
             upstream report needs. Rejected hio's Boss/Crew multidoing first, per reuse-before-build
@@ -665,7 +665,7 @@ Operator layer over a stock keripy witness = goal:
           id: wea6qjmk
           why: >
             ops.md §7 is explicit — OpenTelemetry SDK inside code Bakobo writes, a Collector on
-            every host, OTLP on the wire, a hosted backend — and infra asked for these signals in
+            every host, OTLP on the wire, a hosted backend — and the deployment asked for these signals in
             those terms. So the control plane exposes escrow depth, loop lag, database usage and
             process vitals as OTel observable gauges rather than as a scrape endpoint. Rejected
             hand-rolled Prometheus text, which is what the Provenant witness does and what an
@@ -828,7 +828,7 @@ Operator layer over a stock keripy witness = goal:
             the rollback path, and a restore that copies `db` without `ks` is exactly that
             something.
             What made this worth a refusal rather than a warning is that the previous behaviour
-            was silent in every channel we have. Measured 2026-09-05 while building infra's
+            was silent in every channel we have. Measured 2026-09-05 while building the deployment's
             tier-one restore drill: keripy creates a fresh keystore, and the witness then serves
             the AID recorded in the DATABASE — the one controllers designated and validators
             trust — while signing with keys that AID does not name. It reports `{"status": "ok"}`,
@@ -856,7 +856,7 @@ Operator layer over a stock keripy witness = goal:
         image anywhere else lets the image and the pin drift — precisely the class of problem
         containerizing is meant to close. Rejected building in the deployment repository: it is the estate and
         this repo is the software, and the drift risk falls on whichever side does not hold the pin.
-        infra consumes an immutable digest, never a tag. Accepted tradeoff: this repo takes on a
+        The deployment consumes an immutable digest, never a tag. Accepted tradeoff: this repo takes on a
         publish pipeline and a retention policy it did not previously need, and — see @a24p3kbw —
         containerizing introduces an LMDB concurrency hazard that the present two-systemd-unit
         deployment does not have.
@@ -893,7 +893,7 @@ Operator layer over a stock keripy witness = goal:
             right one for an Apache-2.0 repo whose whole point is that other operators can run it.
             The last sentence's "a GHCR token must reach the deploy path" now holds for PUSH only.
 
-            GHCR, chosen over ECR because infra bought a vendor-neutral configuration layer
+            GHCR, chosen over ECR because the deployment adopted a vendor-neutral configuration layer
             whose Ansible contract is "a Debian-family host reachable over SSH", and `aws ecr
             get-login-password` would put an AWS-specific step in it. ECR's real advantage is a host
             authenticating with its own identity and storing no secret, but Lightsail has no
@@ -903,7 +903,7 @@ Operator layer over a stock keripy witness = goal:
             Deliberately NO `latest`: a floating tag is exactly the image-to-pin drift this node
             exists to close, and its absence makes the mistake unavailable rather than discouraged.
             The commit tag is the audit trail — it maps an image back to the tree holding the keripy
-            pin — and the semver tag is the human handle for "the version we shipped"; infra
+            pin — and the semver tag is the human handle for "the version we shipped"; the deployment
             resolves either to a digest and deploys that. Rejected commit-SHA tags alone: nothing
             outside the digest would then name a release, so every conversation about what is
             deployed has to go through a lookup. Every workflow action is pinned by commit SHA. A
@@ -930,7 +930,7 @@ Operator layer over a stock keripy witness = goal:
             oracle.
             THE BASELINE IS THE DIGEST PRODUCTION IS RUNNING, not merely the previous release.
             "What we are upgrading FROM" is a fact about the estate, so the value is supplied by
-            whoever knows it — infra, at release time, or a repository variable here — rather than
+            whoever knows it — the deployment, at release time, or a repository variable here — rather than
             derived from this repo's own tags, where it would be a guess that looks authoritative.
             ABSENT RATHER THAN DEFAULTED, and the new tests SKIP with a reason naming the variable
             when it is unset. Rejected falling back to this image as its own baseline, which is

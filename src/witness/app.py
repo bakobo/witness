@@ -42,7 +42,7 @@ def _acceptable_request_id(value):
 
 
 class RequestCounter:
-    """Counts requests by route and outcome, for the metrics infra asked for.
+    """Counts requests by route and outcome, for the metrics the deployment asked for.
 
     Kept here rather than in metrics.py because the count has to be taken where requests actually
     arrive, and kept as plain in-process state because these are the control plane's OWN numbers —

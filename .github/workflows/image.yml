@@ -4,7 +4,7 @@ name: Image
 #
 # The image is built HERE rather than in the deployment repository because this repo owns the keripy pin, so
 # building anywhere else lets the image and the pin drift — the exact problem containerizing is
-# meant to close. infra consumes an immutable digest, which the summary below surfaces.
+# meant to close. The deployment consumes an immutable digest, which the summary below surfaces.
 #
 # Deliberately uses no docker/* actions. Everything is `docker buildx` and `gh api` in shell,
 # which means fewer third-party actions to pin and audit, and no dependency on an action whose
@@ -140,7 +140,7 @@ jobs:
             docker push "${IMAGE}:${tag}"
           done
           digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${PRIMARY}")"
-          # infra deploys by digest, never by tag, so the digest is the output that matters.
+          # Production deploys by digest, never by tag, so the digest is the output that matters.
           {
             echo "### Image published"
             echo

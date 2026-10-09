@@ -3,7 +3,7 @@ name: Image retention
 # @lnk24kwp sets a retention policy from the start, because the realistic risk at 53 MB
 # compressed with shared layers is untended accumulation rather than per-pull cost.
 #
-# Deleting a published image is irreversible and infra deploys by DIGEST, so a deleted version is
+# Deleting a published image is irreversible and production deploys by DIGEST, so a deleted version is
 # a rollback that no longer exists. ops.md §1's principle 7 gates exactly this class of act: the
 # default is to act, and only irreversible high-blast-radius acts meet a gate. So the schedule
 # only ever REPORTS, and deletion requires someone to dispatch this workflow with apply=true.

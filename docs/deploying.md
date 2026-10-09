@@ -107,7 +107,7 @@ docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
 
 Then start the container. `kli migrate list` shows what is outstanding and `kli migrate show` what has run.
 
-**Going backwards — which mostly does not work.** Once a migration has run, the previous image cannot be deployed on that volume: keripy raises rather than opening it, and the control plane reports `e.self.config.rollback.f`. This is correct behaviour — the alternative is a newer database being read by code that does not understand it — but it makes an upgrade across a migration a **one-way door**, and infra's rollback plan cannot be "redeploy the previous digest".
+**Going backwards — which mostly does not work.** Once a migration has run, the previous image cannot be deployed on that volume: keripy raises rather than opening it, and the control plane reports `e.self.config.rollback.f`. This is correct behaviour — the alternative is a newer database being read by code that does not understand it — but it makes an upgrade across a migration a **one-way door**, and the deployment's rollback plan cannot be "redeploy the previous digest".
 
 So: **take a backup before any upgrade that changes the keripy pin**, and treat restoring it as the rollback path. Within a pin, rollback is just redeploying the previous digest and is free.
 
