@@ -60,7 +60,7 @@ uv run witness pool heal  --name lab --witness w2            # reverses whicheve
 
 **The pool never incepts anything** (`@jorbhpfq`). It serves witnesses and describes them; whatever holds keys does the designating. `manifest` emits that description in the form its consumer wants.
 
-`--format heti` prints a standing witness set as a TOML `[witnesses]` table: `oobis`, each witness's controller OOBI in alias order, and `toad`, the receipt threshold (below). It is the block heti's lockbox reads from its `config.toml`, and anything else that takes a witness list and a threshold in TOML can read it the same way:
+`--format heti` prints a standing witness set as a TOML `[witnesses]` table: `oobis`, each witness's controller OOBI in alias order, and `toad`, the receipt threshold (below). Appended to heti's `config.toml`, it is the block heti's lockbox reads; written to a file of its own, as here, it serves anything else that takes a witness list and a threshold in TOML:
 
 ```sh
 uv run witness pool manifest --name lab --format heti > lab-witnesses.toml
