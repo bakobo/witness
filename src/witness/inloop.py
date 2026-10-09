@@ -140,7 +140,7 @@ class TimedDoist(doing.Doist):
 class TelemetryDoer(doing.Doer):
     """One cheap doer that records that the loop is still turning, and how far behind it is.
 
-    Loop lag is what infra asked to alert on: it measures the harm in a single-threaded
+    Loop lag is what the deployment asked to alert on: it measures the harm in a single-threaded
     cooperative loop directly, where CPU and memory thresholds measure nothing actionable.
     """
 

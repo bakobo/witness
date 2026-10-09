@@ -79,8 +79,8 @@ def witness_container():
             "--entrypoint", "kli", IMAGE,
             "init", "--name", "witness", "--nopasscode",
         )
-        # Published to loopback only: the reverse proxy stays the sole public listener (infra
-        # @m4c35y), and Docker's published-port rules bypass the INPUT chain, so binding here is
+        # Published to loopback only: the reverse proxy stays the sole public listener (the
+        # deployment's policy), and Docker's published-port rules bypass the INPUT chain, so binding here is
         # the confinement rather than any host firewall rule.
         _docker(
             "run", "-d", "--name", container,

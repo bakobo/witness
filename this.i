@@ -68,7 +68,7 @@ Operator layer over a stock keripy witness = goal:
                 file writable and the pids distinct. Accepted tradeoff: read-only becomes
                 LMDB-enforced rather than kernel-enforced; @g3w6px's "separate invocations /
                 containers" parenthetical no longer describes the deployment; the image needs a
-                supervisor for two processes; and infra's @tdd36d premise that the control plane
+                supervisor for two processes; and the deployment's @tdd36d premise that the control plane
                 can be added to a running witness without redeploying it acquires a condition —
                 true across systemd units, false across containers.
               children:
@@ -156,7 +156,7 @@ Operator layer over a stock keripy witness = goal:
           id: vxt7feoi
           why: >
             Two signals are worth having and neither is reachable from outside the process: loop
-            lag, which infra named its highest-value alert because it measures the harm directly,
+            lag, which the deployment named its highest-value alert because it measures the harm directly,
             and per-doer timings, which is ~2x3n — witnesses have wedged in production, black-box
             probing says only THAT the loop stalled, and naming the doer is what a fix or an
             upstream report needs. Rejected hio's Boss/Crew multidoing first, per reuse-before-build
@@ -506,7 +506,7 @@ Operator layer over a stock keripy witness = goal:
                 Terms and registration join the attribute vocabulary, as https URLs = decision:
                   nid: 3syf5w8x
                   why: >
-                    A witness's landing page (bakobo/infra) has to tell a visitor two things a
+                    A witness's landing page (in the deployment repository) has to tell a visitor two things a
                     stranger needs before relying on it: the terms the operator offers, meaning what
                     availability and retention it promises and what it asks in exchange, and how a
                     controller registers with the operator, which on Bakobo's production pool is
@@ -632,7 +632,7 @@ Operator layer over a stock keripy witness = goal:
               nid: 78m6fs3g
               why: >
                 A witness opened in a browser answers GET / with keripy's bare 405, which tells a
-                stranger nothing and still fingerprints the server. bakobo/infra built a static
+                stranger nothing and still fingerprints the server. The deployment repository built a static
                 landing page for Bakobo's own witnesses (@6sqzrvzg there), rendered at deploy time
                 from the witness's own identity, tags and attribs, but the renderer lived in a
                 private repo, so an operator running this public image had no page and nothing to
@@ -665,7 +665,7 @@ Operator layer over a stock keripy witness = goal:
           id: wea6qjmk
           why: >
             ops.md §7 is explicit — OpenTelemetry SDK inside code Bakobo writes, a Collector on
-            every host, OTLP on the wire, a hosted backend — and infra asked for these signals in
+            every host, OTLP on the wire, a hosted backend — and the deployment asked for these signals in
             those terms. So the control plane exposes escrow depth, loop lag, database usage and
             process vitals as OTel observable gauges rather than as a scrape endpoint. Rejected
             hand-rolled Prometheus text, which is what the Provenant witness does and what an
@@ -828,7 +828,7 @@ Operator layer over a stock keripy witness = goal:
             the rollback path, and a restore that copies `db` without `ks` is exactly that
             something.
             What made this worth a refusal rather than a warning is that the previous behaviour
-            was silent in every channel we have. Measured 2026-09-05 while building infra's
+            was silent in every channel we have. Measured 2026-09-05 while building the deployment's
             tier-one restore drill: keripy creates a fresh keystore, and the witness then serves
             the AID recorded in the DATABASE — the one controllers designated and validators
             trust — while signing with keys that AID does not name. It reports `{"status": "ok"}`,
@@ -854,9 +854,9 @@ Operator layer over a stock keripy witness = goal:
       why: >
         This repo owns the keripy pin (a direct git reference in pyproject.toml), so building the
         image anywhere else lets the image and the pin drift — precisely the class of problem
-        containerizing is meant to close. Rejected building in bakobo/infra: infra is the estate and
+        containerizing is meant to close. Rejected building in the deployment repository: it is the estate and
         this repo is the software, and the drift risk falls on whichever side does not hold the pin.
-        infra consumes an immutable digest, never a tag. Accepted tradeoff: this repo takes on a
+        The deployment consumes an immutable digest, never a tag. Accepted tradeoff: this repo takes on a
         publish pipeline and a retention policy it did not previously need, and — see @a24p3kbw —
         containerizing introduces an LMDB concurrency hazard that the present two-systemd-unit
         deployment does not have.
@@ -893,7 +893,7 @@ Operator layer over a stock keripy witness = goal:
             right one for an Apache-2.0 repo whose whole point is that other operators can run it.
             The last sentence's "a GHCR token must reach the deploy path" now holds for PUSH only.
 
-            GHCR, chosen over ECR because infra bought a vendor-neutral configuration layer
+            GHCR, chosen over ECR because the deployment adopted a vendor-neutral configuration layer
             whose Ansible contract is "a Debian-family host reachable over SSH", and `aws ecr
             get-login-password` would put an AWS-specific step in it. ECR's real advantage is a host
             authenticating with its own identity and storing no secret, but Lightsail has no
@@ -903,7 +903,7 @@ Operator layer over a stock keripy witness = goal:
             Deliberately NO `latest`: a floating tag is exactly the image-to-pin drift this node
             exists to close, and its absence makes the mistake unavailable rather than discouraged.
             The commit tag is the audit trail — it maps an image back to the tree holding the keripy
-            pin — and the semver tag is the human handle for "the version we shipped"; infra
+            pin — and the semver tag is the human handle for "the version we shipped"; the deployment
             resolves either to a digest and deploys that. Rejected commit-SHA tags alone: nothing
             outside the digest would then name a release, so every conversation about what is
             deployed has to go through a lookup. Every workflow action is pinned by commit SHA. A
@@ -925,12 +925,12 @@ Operator layer over a stock keripy witness = goal:
             same image, so what it proved was container replacement rather than version
             compatibility. Every real upgrade is two versions by definition, and the one property
             an operator is buying — that the new image can pick up where the old one left off — was
-            the one not under test. bakobo/infra's `bin/release-witness` had to rest its same-pin
+            the one not under test. The deployment repository's release script had to rest its same-pin
             claim on the two pins being textually identical, which is an argument rather than an
             oracle.
             THE BASELINE IS THE DIGEST PRODUCTION IS RUNNING, not merely the previous release.
             "What we are upgrading FROM" is a fact about the estate, so the value is supplied by
-            whoever knows it — infra, at release time, or a repository variable here — rather than
+            whoever knows it — the deployment, at release time, or a repository variable here — rather than
             derived from this repo's own tags, where it would be a guess that looks authoritative.
             ABSENT RATHER THAN DEFAULTED, and the new tests SKIP with a reason naming the variable
             when it is unset. Rejected falling back to this image as its own baseline, which is
@@ -953,7 +953,7 @@ Operator layer over a stock keripy witness = goal:
         stands up N containers of THIS repo's image, each with its own volume, keystore, PID
         namespace and published ports, and `witness pool down` removes every container and volume
         the pool created. Rejected in-process witnesses under one hio scheduler, which is what
-        bakobo/heti already has (`heti/tests/produce/witnesses.py`, and `heti demo
+        heti already has (`heti/tests/produce/witnesses.py`, and `heti demo
         --keep-witnesses`): they are genuine keripy witnesses and they are the right tool for a
         question about the KERI protocol, but they are not this repo's artifact. What a pool is for
         here is the image — the supervisor's failure policy, the HEALTHCHECK, the control plane

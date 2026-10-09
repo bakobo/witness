@@ -1,36 +1,3 @@
-## Starting a repo from this template
-
-*This section documents bootstrapping a **new** repo from `bakobo/template`. Once your repo is set
-up, delete this section — like the Testing/CI/README stanzas below, it is self-removing.* Two ways
-to start; both end at the same per-clone setup.
-
-**A. Canonical — GitHub template (preferred).** Create the repo straight from the template so the
-scaffolding arrives automatically:
-
-```sh
-gh repo create bakobo/<name> --template bakobo/template --private
-```
-
-**B. Vendor into an existing / hand-made repo.** When the target repo already exists (you ran
-`git init` yourself, or you are retrofitting an older repo), copy **only** the template's tracked
-scaffolding into it — `AGENTS.md CLAUDE.md GEMINI.md .cursorrules .gitignore this.i.seed .github/`.
-Do **not** copy `.git/` or `.tick/` (the tick ledger is per-clone; see below).
-
-**Per-clone setup (run in every fresh clone, both paths):**
-
-1. **`tick init`** — connect the clone to the task ledger (adopts the remote ledger if a colleague
-   already made one, else creates it). Not tracked on `main`; it is an orphan `tick` branch plus a
-   gitignored `.tick/` store. Once the repo has a remote, `git config tick.remote origin` and push
-   the `tick` branch so the ledger is backed up.
-2. **Intent (`this.i`).** If anyone will later need to know *why* this repo is built the way it is,
-   adopt intent: `cp this.i.seed this.i`, rewrite the root goal to this repo's real purpose (the
-   rebuttal-surface standard), give it a fresh opaque id, and delete `this.i.seed`. A pure
-   content/asset/config repo may instead just delete `this.i.seed` — its absence is the opt-out.
-3. **Docs, README, CI.** Follow the repo-layout convention — design/architecture docs under `docs/`
-   (the **Repo layout** rule in the engineering-standards block below;
-   [`dev/standards/repo-layout.md`](../dev/standards/repo-layout.md)). Add a `README.md` (fresh-clone
-   → passing tests, with a clickable CI badge) and CI once the repo gains code, per the stanzas below.
-
 <!-- >>> bakobo standards >>> (managed by dev/sync-tier1) -->
 
 ## Bakobo engineering standards
@@ -44,7 +11,7 @@ work: `git clone --depth 1 https://github.com/bakobo/dev`. Always on:
   `nid:` — 8 digit-first bech32 characters minted by `i id` or `i add` and never typed or generated
   any other way; a legacy `id:` (base32, hand-made, older) is grandfathered and never rewritten.
 - **Fail closed.** Untrusted input never carries authority; when something can't be checked, the
-  effect does not land ([`org` principle 8](../org/design/purpose-and-principles.md)).
+  effect does not land.
 - **High-quality errors.** Every error carries a stable symbolic code, says whether retrying could
   help (permanent vs. transient), and reads as complete, plain sentences in the house voice — never
   "something went wrong." Full standard: [`dev/standards/error-handling.md`](../dev/standards/error-handling.md).
@@ -63,8 +30,8 @@ work: `git clone --depth 1 https://github.com/bakobo/dev`. Always on:
   `this.i` at the root as the source of truth. Don't leave `design.md` loose at the root. Full
   standard, including the content-repo nuance: [`dev/standards/repo-layout.md`](../dev/standards/repo-layout.md).
 - **Terminology.** Bakobo's architecture has a precise vocabulary (`core`, `steward`, `mint`, …). Its
-  single source of truth is [`bakobo/glossary`](https://github.com/bakobo/glossary), reached via the
-  `glossary` MCP server. Where a word is doing a Bakobo concept's work, reconcile prose to the
+  single source of truth is Bakobo's glossary, reached via the `glossary` MCP
+  server. Where a word is doing a Bakobo concept's work, reconcile prose to the
   glossary (not the reverse), mint/amend terms in-band through the MCP (never hand-edit), and don't
   let a general word masquerade as a formal term. **Consulting the glossary before using a term is a
   suggestion, not a requirement** — it is often a good idea and sometimes noise, because plenty of
@@ -75,15 +42,15 @@ work: `git clone --depth 1 https://github.com/bakobo/dev`. Always on:
   gitignored, one directory per run named `<YYYY-MM-DD>-<milestone>`, and never deleted or pruned on
   triage — it is the evidence behind what `this.i` decided, not a worklist. Open findings become
   **ticks**; a synthesis carries a `status:` header line naming what is still open. A repo that goes
-  **public** moves its tree to the private `bakobo/reviews` and purges it from history in the same
+  **public** moves its tree to a private review archive and purges it from history in the same
   change — a security review is a map of a running system's weak points, and untracking at the tip
   leaves it one `git log` away. Full standard:
   [`dev/standards/reviews.md`](../dev/standards/reviews.md).
 - **Going public is a checklist, not a toggle.** If this repo is public — or you are about to make it
   one — it owes a posture: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md` and `CODE_OF_CONDUCT.md`
-  (copy from `bakobo/template`'s `oss-*` files and drop the prefix), private vulnerability reporting,
+  (copy from the organisation's `oss-*` templates and drop the prefix), private vulnerability reporting,
   Dependabot, secret scanning **with push protection**, CodeQL, a default-branch ruleset requiring a
-  PR, the `reviews/` tree moved to the private `bakobo/reviews` **and purged from history**, and a
+  PR, the `reviews/` tree moved to a private review archive **and purged from history**, and a
   dependency closure a stranger can resolve with no credential. GitHub announces none of this when
   visibility flips, so assume it was missed and check. Full standard:
   [`dev/standards/oss-posture.md`](../dev/standards/oss-posture.md); audit with `dev/oss-posture`.

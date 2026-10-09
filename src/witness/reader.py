@@ -61,7 +61,7 @@ _WEDGE_SECONDS = 5.0
 
 #: Escrow stores whose depth is worth publishing, and what each one parks.
 #:
-#: ``qnfs`` leads because infra asked for it by name: keripy re-walks the whole query-not-found
+#: ``qnfs`` leads because the deployment asked for it by name: keripy re-walks the whole query-not-found
 #: escrow on EVERY hio loop pass, so its depth is the one number that turns a flood of queries for
 #: AIDs this witness does not hold from a code reading into an observation. Entries age out after
 #: TimeoutQNF (300s), so a rising gauge that does not fall is the signal.

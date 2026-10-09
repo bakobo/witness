@@ -66,7 +66,7 @@ KERI_HOME = "/usr/local/var/keri"
 _ALIAS = "witness"
 
 #: The image's in-container ports (Dockerfile EXPOSE): witness HTTP and control plane. TCP (5632)
-#: is deliberately not published — infra closes it too, and nothing in an experiment needs it.
+#: is deliberately not published — the deployment closes it too, and nothing in an experiment needs it.
 _WITNESS_PORT = 5631
 _CONTROL_PORT = 5633
 

@@ -1,7 +1,7 @@
 """``witness landing``: a static landing page from what a witness declares (@78m6fs3g).
 
 Most of these are refusals, because the page's value is what it will not do: fetch anything, run
-anything, or link anywhere but https. Moved here from bakobo/infra's landing/render.py, whose
+anything, or link anywhere but https. Moved here from the deployment repository's landing renderer, whose
 hostile and Copilot review findings are kept as regressions below.
 """
 

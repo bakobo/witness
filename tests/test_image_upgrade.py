@@ -271,7 +271,7 @@ def _two_images_or_fail():
     a claim made falsely: the test would pass, having replaced a container with itself, and report
     cross-version compatibility it never exercised. That is the same hole the absent-rather-than-
     defaulted rule closes, reached by a stale variable instead of a missing one -- and the likely
-    route is real, since DEPLOYED_WITNESS_IMAGE points at this build the moment infra deploys it.
+    route is real, since DEPLOYED_WITNESS_IMAGE points at this build the moment it is deployed.
     Raised by Copilot on #17.
     """
     if _image_id(IMAGE) == _image_id(BASELINE):
