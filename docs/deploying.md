@@ -19,8 +19,11 @@ docker run -d --name witness \
     -v witness-data:/usr/local/var/keri \
     -p 127.0.0.1:5631:5631 \
     -p 127.0.0.1:5633:5633 \
+    -e WITNESS_OPERATORS=<operator AID> \
     ghcr.io/bakobo/witness@sha256:<digest>
 ```
+
+`WITNESS_OPERATORS` names who may read the six signed control-plane nouns; `witness get --key <key> --aid` prints an operator's AID. Leave it out and those nouns refuse everyone while health and identity keep answering. [Authentication](../README.md#authentication) has the rest.
 
 A keystore must exist in the volume before first start. `--nopasscode` leaves the witness's signing key **unencrypted at rest in the volume**, which is accepted deliberately: an encrypted keystore needs its passcode supplied at every start, so the passcode would have to live on the same host as the volume and would protect nothing against the threat that matters (host compromise). What does protect it is the volume's own access control. Do not copy the volume anywhere the host's uid boundary does not follow.
 
@@ -33,7 +36,7 @@ docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
 | --- | --- | --- |
 | 5631 | keripy witness HTTP | Yes, through Caddy |
 | 5632 | keripy CESR-over-TCP | No — `@m4c35y` closes it, pending its own unverified caveat |
-| 5633 | Bakobo control plane | **Loopback only.** Unauthenticated in this release |
+| 5633 | Bakobo control plane | **Loopback only.** Six nouns need a signed request from an operator named by `WITNESS_OPERATORS` |
 
 The volume must persist. It holds the keystore, the AID, the KEL and every receipt; losing it loses the witness's identity, and a controller that designated it would have to rotate.
 

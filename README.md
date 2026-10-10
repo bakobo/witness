@@ -92,21 +92,21 @@ That takes a transactionally consistent snapshot of every store — including th
 
 ## The control-plane surface
 
-Every path is `/v1/witness/<noun>`. All are `GET`, and all are unauthenticated in this release — see the note below.
+Every path is `/v1/witness/<noun>`, and all are `GET`. Five answer anyone; six answer only an operator who signs the request — see [Authentication](#authentication).
 
-| Path | What it answers |
-| --- | --- |
-| `/v1/witness/health` | Whether the witness is *working*: the database opens **and** the hio loop is not stuck inside a doer. |
-| `/v1/witness/identity` | The witness's own AID and alias. |
-| `/v1/witness/version` | This package and the keripy it wraps. |
-| `/v1/witness/loop` | Loop ticks, lag against the tock, the doer currently executing, and per-doer timings. |
-| `/v1/witness/escrow` | Depth of every escrow store, query-not-found first. |
-| `/v1/witness/database` | Size against keripy's fixed 100 MB map ceiling, and the registered reader count. |
-| `/v1/witness/process` | CPU, memory, threads and descriptors for the witness process. |
-| `/v1/witness/tags` | What this witness claims about itself — `testnet`, and any vendor-prefixed tag its operator set. |
-| `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`, and `terms` and `registration`, which must be https URLs. |
-| `/v1/witness/controller` | Every controller whose key state this witness holds. |
-| `/v1/witness/controller/{aid}` | One controller's key state and the tags it inherits, or `404`. |
+| Path | What it answers | Signed? |
+| --- | --- | --- |
+| `/v1/witness/health` | Whether the witness is *working*: the database opens **and** the hio loop is not stuck inside a doer. | No |
+| `/v1/witness/identity` | The witness's own AID and alias. | No |
+| `/v1/witness/version` | This package and the keripy it wraps. | No |
+| `/v1/witness/loop` | Loop ticks, lag against the tock, the doer currently executing, and per-doer timings. | Yes |
+| `/v1/witness/escrow` | Depth of every escrow store, query-not-found first. | Yes |
+| `/v1/witness/database` | Size against keripy's fixed 100 MB map ceiling, and the registered reader count. | Yes |
+| `/v1/witness/process` | CPU, memory, threads and descriptors for the witness process. | Yes |
+| `/v1/witness/tags` | What this witness claims about itself — `testnet`, and any vendor-prefixed tag its operator set. | No |
+| `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`, and `terms` and `registration`, which must be https URLs. | No |
+| `/v1/witness/controller` | Every controller whose key state this witness holds. | Yes |
+| `/v1/witness/controller/{aid}` | One controller's key state and the tags it inherits, or `404`. | Yes |
 
 Tags are worth a paragraph, because what they do *not* say is the point. There is a `testnet` tag and deliberately no `production` tag: a witness claiming to be production makes a self-serving claim nothing verifies, whereas one claiming to be a laboratory speaks against its own interest. So an empty tag list means "nothing claimed", never "this is fine", and a reader must not treat absence as assurance. Set them with `--tag`, repeatable; an undefined bare name is refused at startup, because a misspelled `testnet` that silently fails to apply leaves the witness looking production-grade with nothing to say otherwise. A tag of your own needs a vendor prefix, as in `bakobo.pool`.
 
@@ -151,7 +151,21 @@ The code carries the meaning: it is classified by what the obstacle was rather t
 
 ## Authentication
 
-This release is unauthenticated, which is why the control-plane port must be bound to loopback and reached through the estate's reverse proxy rather than exposed. Signed requests (RFC 9421, via [`fiki`](https://github.com/bakobo/fiki)) are the next phase and are required before any endpoint that changes anything.
+Six nouns — `loop`, `escrow`, `database`, `process`, `controller` and `controller/{aid}` — answer only a request signed with an RFC 9421 HTTP Message Signature, via [`fiki`](https://github.com/bakobo/fiki), by an operator this witness was told about. The other five stay open: a liveness probe cannot sign, a witness's identity is already public through its OOBI, and tags and attributes are what it broadcasts about itself. `@34sgjmxr` in `this.i` has the reasoning.
+
+Name operators with `--operator <AID>`, repeatable, or with `WITNESS_OPERATORS` (comma-separated), which is read only when no flag is given and is how a deployment reaches into the image's fixed command. An operator's AID is a non-transferable one, the Ed25519 key itself. **With no operator named, the six refuse everyone** with `403 e.grant.missing.operator.f`, and the five keep serving, so upgrading an image without setting it costs those reads and nothing else. A missing, stale or wrong signature is `401 e.id.invalid.control.f`.
+
+`witness get` is the client, since curl cannot sign:
+
+```sh
+ssh-keygen -t ed25519 -N '' -f ~/.witness-operator      # a key used for nothing else
+witness get --key ~/.witness-operator --aid             # the AID to give --operator
+witness get --key ~/.witness-operator http://127.0.0.1:5633/v1/witness/escrow | jq .total
+```
+
+A signature is good for `--max-age` seconds (default 60) and there is no replay store, because a replayed read changes nothing and discloses only what the captured request already would have. `--authority host:port`, repeatable, also refuses a signature made for some other address; it is off by default, because through an SSH tunnel the address a caller signs is the tunnel's local end, which the witness cannot know. Without it, a request signed for one witness can be replayed to a sibling that names the same operator, inside the window.
+
+Signing does not change where the port belongs. Keep it on loopback, reached by tunnel; authentication is what makes a slip survivable, not a reason to publish it.
 
 ## License
 

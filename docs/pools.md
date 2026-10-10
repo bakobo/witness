@@ -27,12 +27,14 @@ There is deliberately no floating tag to default to (`@lnk24kwp`), so `--image` 
 
 ## Watching it while it runs
 
-Each witness has its own control plane, unauthenticated on loopback, and it answers throughout:
+Each witness has its own control plane on loopback, and it answers throughout. `loop`, `escrow` and the controller nouns answer only a signed request (`@34sgjmxr`), and every witness in a pool names one operator, generated at `up`, whose seed the pool keeps in a label on each container. `witness pool status` signs with it. To read one noun by hand, give a witness an operator of your own when you start it, or read the open ones directly:
 
 ```sh
-curl -s http://127.0.0.1:5642/v1/witness/loop | jq .lag
-curl -s http://127.0.0.1:5652/v1/witness/escrow | jq .depths.query_not_found
+curl -s http://127.0.0.1:5642/v1/witness/health | jq .ticks
+witness get --key ~/.witness-operator http://127.0.0.1:5652/v1/witness/escrow | jq .depths.query_not_found
 ```
+
+The second line works against a pool only if that key is the pool's operator, which it is not by default; see [Authentication](../README.md#authentication) for `witness get`.
 
 `witness pool status --name lab` asks all of them at once:
 
@@ -41,6 +43,8 @@ curl -s http://127.0.0.1:5652/v1/witness/escrow | jq .depths.query_not_found
   w2  running  ok  ticks 1039  controllers 2
   w3  exited   not running
 ```
+
+A pool made before its witnesses had an operator reports `controllers unknown` rather than a count, since the read is refused rather than empty.
 
 The controller count is the observation a pool exists for: after something incepts against the pool, watching every witness arrive at the same controller — and, through `/v1/witness/controller/<aid>`, at the same sequence number and the same event SAID — is the multi-witness behaviour in one line.
 
@@ -98,7 +102,7 @@ The cost is exactly what it sounds like: **a seeded pool's signing keys are deri
 
 ## What a pool is not
 
-**It is not how you deploy a witness.** That is [`deploying.md`](deploying.md): one container, a persistent volume, a digest, and a reverse proxy. A pool publishes several control planes on loopback with no authentication at all and keeps nothing.
+**It is not how you deploy a witness.** That is [`deploying.md`](deploying.md): one container, a persistent volume, a digest, and a reverse proxy. A pool publishes several control planes on loopback, keeps their operator's signing seed in a container label that anyone with Docker access can read, and keeps nothing else.
 
 **It is not the cheapest way to get witnesses.** If the question is about the KERI protocol rather than about this image, genuine keripy witnesses run in-process in under a second, and a relay in front of each one lets a test make it slow, absent, refusing or serving garbage. Prefer that. A pool costs containers, and what it buys is that the witnesses are the artifact production deploys — the supervisor's failure policy, the healthcheck, the escrow pacing in the image's own CMD, and a control plane answering while the experiment runs.
 
