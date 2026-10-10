@@ -61,12 +61,15 @@ def _signer(req, body: bytes, max_age: int, *, clock=time.time) -> tuple[str, in
     """
     now = int(clock())
     try:
+        # authorities=None declines fiki's @authority check, stated because fiki 0.9.0 requires
+        # the decision. ~7k7c: a Registrar knows its public address and could pin it.
         verdict = fiki.verify_request(method=req.method, url=req.url, headers=req.headers,
-                                      body=body or None, max_age=max_age, skew=SKEW, now=now)
+                                      body=body or None, max_age=max_age, skew=SKEW, now=now,
+                                      authorities=None)
     except fiki.FikiError as refused:
         raise RegistrarUnauthenticated(f"The request's signature did not verify: {refused}.")
-    if body and "content-digest" not in verdict.covered:
-        raise RegistrarUnauthenticated("The signature does not cover the request body.")
+    # No check here that a body's content-digest is covered: fiki's default minimum refuses an
+    # uncovered body itself since py/v0.9.0 (fiki @7f28p7xk), so a second check could not fire.
     return verdict.aid, now
 
 
