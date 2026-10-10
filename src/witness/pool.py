@@ -29,6 +29,7 @@ keys — heti's lockbox, ``kli incept`` — does the designating, which is what 
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -39,6 +40,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+import fiki
 from keri.core.eventing import ample
 from keri.core.signing import Salter
 from keri.help.helping import nowIso8601
@@ -58,6 +60,9 @@ LABEL = "bakobo.pool"
 WITNESS_LABEL = f"{LABEL}.witness"
 HTTP_LABEL = f"{LABEL}.http"
 CONTROL_LABEL = f"{LABEL}.control"
+#: The pool's operator seed (@34sgjmxr), on containers only. Anyone who can read a label can
+#: already `docker exec` in and read the LMDB, so it guards nothing a label would expose.
+OPERATOR_LABEL = f"{LABEL}.operator"
 
 #: Where the image mounts the keri home, and the keystore/alias its CMD uses. Both are the image's
 #: own choices (see the Dockerfile); a pool that disagreed with either would seed a config keripy
@@ -104,7 +109,8 @@ _PS_FORMAT = (
     f'{{{{.Label "{WITNESS_LABEL}"}}}}\t'
     f'{{{{.Label "{HTTP_LABEL}"}}}}\t'
     f'{{{{.Label "{CONTROL_LABEL}"}}}}\t'
-    "{{.State}}\t{{.Image}}"
+    "{{.State}}\t{{.Image}}\t"
+    f'{{{{.Label "{OPERATOR_LABEL}"}}}}'
 )
 _LS_FORMAT = "{{.Names}}\t" f'{{{{.Label "{LABEL}"}}}}\t' "{{.Image}}"
 
@@ -135,14 +141,17 @@ def run_docker(args, *, check=True, timeout=300):
     return result.stdout
 
 
-def fetch_json(url, *, timeout=_REQUEST_TIMEOUT):
+def fetch_json(url, *, timeout=_REQUEST_TIMEOUT, key=None):
     """GET a control-plane document, or ``None`` if that witness did not answer.
 
     Unreachable is an ordinary state for a pool — a stopped witness is the point of ``break`` — so
-    it is a value here rather than an exception, and the caller decides whether it matters.
+    it is a value here rather than an exception, and the caller decides whether it matters. A
+    ``key`` signs the request as the pool's operator, for the nouns that need one (@34sgjmxr).
     """
+    headers = fiki.sign_request(key=key, method="GET", url=url) if key is not None else {}
+    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - loopback
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             return json.loads(response.read().decode())
     except (urllib.error.URLError, OSError, ValueError):
         return None
@@ -158,6 +167,16 @@ class Witness:
     control_port: int
     state: str
     image: str
+    #: The pool operator's seed as its label carries it; empty on a pool made before @34sgjmxr.
+    operator: str = ""
+
+    @property
+    def key(self):
+        """The pool operator's key, or None when this container carries no seed."""
+        if not self.operator:
+            return None
+        padded = self.operator + "=" * (-len(self.operator) % 4)
+        return fiki.Key.from_seed(base64.urlsafe_b64decode(padded))
 
     @property
     def http_url(self) -> str:
@@ -185,8 +204,10 @@ class Pool:
         clock=time.monotonic,
         now=nowIso8601,
         out=None,
+        new_key=fiki.Key.generate,
     ):
         self._config = config
+        self._new_key = new_key
         self._docker = docker
         self._fetch = fetch
         self._sleep = sleep
@@ -224,7 +245,8 @@ class Pool:
             )
         # Built from what was just created rather than read back from `docker ps`: this code knows
         # exactly what it made, and a round trip could only disagree with it.
-        witnesses = [self._create(index, image) for index in range(1, count + 1)]
+        operator = self._new_key()
+        witnesses = [self._create(index, image, operator) for index in range(1, count + 1)]
         self._say(f"pool {self._config.name} — {count} witnesses on {image}")
         for witness in witnesses:
             aid = self._aid(witness, wait=True)
@@ -388,7 +410,7 @@ class Pool:
             )
         return count, self._config.image
 
-    def _create(self, index, image) -> Witness:
+    def _create(self, index, image, operator) -> Witness:
         """Volume, keystore, config, container — in that order, which is not interchangeable."""
         name = f"witness-pool-{self._config.name}-w{index}"
         alias = f"w{index}"
@@ -420,8 +442,11 @@ class Pool:
             "-c", _SEED_CONFIG, _ALIAS, json.dumps(config, separators=(",", ":")),
             _POOL_DECL_FILE, json.dumps(seed, separators=(",", ":")),
         ])
+        seed = base64.urlsafe_b64encode(operator.seed).decode().rstrip("=")
         self._docker([
             "run", "-d", "--name", name, *labels,
+            "--label", f"{OPERATOR_LABEL}={seed}",
+            "-e", f"WITNESS_OPERATORS={operator.aid}",
             "-v", f"{name}:{KERI_HOME}",
             "-p", f"127.0.0.1:{http_port}:{_WITNESS_PORT}",
             "-p", f"127.0.0.1:{control_port}:{_CONTROL_PORT}",
@@ -434,6 +459,7 @@ class Pool:
             control_port=control_port,
             state="running",
             image=image,
+            operator=seed,
         )
 
     def _containers(self, every=False):
@@ -444,7 +470,8 @@ class Pool:
         for line in listed.splitlines():
             if not line.strip():
                 continue
-            container, alias, http_port, control_port, state, image = line.split("\t")[:6]
+            fields = line.split("\t")
+            container, alias, http_port, control_port, state, image = fields[:6]
             witnesses.append(Witness(
                 alias=alias,
                 container=container,
@@ -452,6 +479,7 @@ class Pool:
                 control_port=int(control_port),
                 state=state,
                 image=image,
+                operator=fields[6] if len(fields) > 6 else "",
             ))
         return witnesses
 
@@ -523,8 +551,10 @@ class Pool:
         health = self._fetch(f"{witness.control_url}v1/witness/health")
         if not health:
             return "unreachable"
-        controllers = self._fetch(f"{witness.control_url}v1/witness/controller") or {}
-        held = len(controllers.get("controllers", []))
+        controllers = self._fetch(f"{witness.control_url}v1/witness/controller", key=witness.key)
+        # Unknown rather than 0 when the read fails: a pool made before @34sgjmxr has no operator
+        # to sign with, and a refused read is not an empty witness.
+        held = "unknown" if controllers is None else len(controllers.get("controllers", []))
         status = health.get("status", "unknown")
         return f"{status}  ticks {health.get('ticks', 0)}  controllers {held}"
 

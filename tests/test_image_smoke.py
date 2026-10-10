@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 import uuid
 
+import fiki
 import pytest
 
 IMAGE = os.environ.get("WITNESS_IMAGE")
@@ -30,6 +31,15 @@ pytestmark = pytest.mark.skipif(
 )
 
 _KERI_HOME = "/usr/local/var/keri"
+
+#: Named through WITNESS_OPERATORS, the way a deployment reaches the image's fixed CMD (@34sgjmxr).
+OPERATOR = fiki.Key.generate()
+
+
+def _signed(url):
+    return urllib.request.Request(
+        url, headers=fiki.sign_request(key=OPERATOR, method="GET", url=url)
+    )
 
 
 def _docker(*args, check=True, **kwargs):
@@ -86,6 +96,7 @@ def witness_container():
             "run", "-d", "--name", container,
             "-v", f"{volume}:{_KERI_HOME}",
             "-p", f"127.0.0.1:{port}:5633",
+            "-e", f"WITNESS_OPERATORS={OPERATOR.aid}",
             IMAGE,
         )
         yield container, port
@@ -122,7 +133,8 @@ def _await_healthz(container, port, timeout=120.0):
 
 
 def _get(port, path):
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:  # noqa: S310
+    request = _signed(f"http://127.0.0.1:{port}{path}")
+    with urllib.request.urlopen(request, timeout=5) as resp:  # noqa: S310
         return json.loads(resp.read().decode())
 
 
@@ -169,7 +181,7 @@ def test_an_unknown_controller_is_a_404_problem_document(witness_container):
     container, port = witness_container
     _await_healthz(container, port)
 
-    request = urllib.request.Request(  # noqa: S310
+    request = _signed(
         f"http://127.0.0.1:{port}/v1/witness/controller/EAAAAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     )
     try:
@@ -184,6 +196,17 @@ def test_an_unknown_controller_is_a_404_problem_document(witness_container):
     assert body["type"] == "https://errors.bakobo.com/e.state.missing.controller.f"
     assert body["instance"].startswith("/v1/witness/controller/")
     assert body["request_id"]
+
+
+def test_the_signed_nouns_refuse_an_unsigned_read_in_the_image(witness_container):
+    """401 rather than 403 is the point: it means WITNESS_OPERATORS crossed the supervisor into
+    the control plane, which then wanted a signature. An unset variable would be 403 (@34sgjmxr)."""
+    container, port = witness_container
+    _await_healthz(container, port)
+
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/witness/controller", timeout=5)  # noqa: S310
+    assert refused.value.code == 401
 
 
 def test_the_registrar_resolves_callbacks_through_the_images_own_interpreter():

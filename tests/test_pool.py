@@ -71,10 +71,12 @@ class FakeFetch:
 
     def __init__(self, script=None):
         self.calls = []
+        self.keys = []
         self._script = script or {}
 
-    def __call__(self, url, *, timeout=None):
+    def __call__(self, url, *, timeout=None, key=None):
         self.calls.append(url)
+        self.keys.append(key)
         for fragment, answer in self._script.items():
             if fragment in url:
                 return answer(self) if callable(answer) else answer
@@ -705,3 +707,88 @@ class TestDeclarationSeed:
         seed = decls.from_seed(seeded[-1])
         assert decls.TESTNET in seed.tags
         assert seed.attribs["pool"] == "lab"
+
+
+class TestOperatorKey:
+    """A pool reads /controller, which only an operator may (@34sgjmxr), so it is one.
+
+    One key per pool, its AID handed to every witness through WITNESS_OPERATORS and its seed kept
+    in a container label so ``status`` can sign later without a state file.
+    """
+
+    def test_each_witness_is_started_with_the_pools_operator(self):
+        docker = FakeDocker(script={"ps -a": ""})
+        pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=2)
+        pool.run()
+
+        starts = docker.matching_argv("run -d")
+        operators = {argv[argv.index("-e") + 1] for argv in starts}
+        assert len(operators) == 1, "one operator for the whole pool"
+        (setting,) = operators
+        assert setting.startswith("WITNESS_OPERATORS=B")
+
+    def test_the_seed_rides_a_container_label_and_matches_the_operator(self):
+        import base64
+
+        from fiki import Key
+
+        docker = FakeDocker(script={"ps -a": ""})
+        pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=1)
+        pool.run()
+
+        (argv,) = docker.matching_argv("run -d")
+        label = next(value for value in argv if value.startswith("bakobo.pool.operator="))
+        seed = base64.urlsafe_b64decode(label.split("=", 1)[1] + "==")
+        aid = argv[argv.index("-e") + 1].split("=", 1)[1]
+        assert Key.from_seed(seed).aid == aid
+        assert not any("bakobo.pool.operator" in call for call in docker.matching("volume create"))
+
+    def test_status_signs_its_controller_read_with_the_labelled_key(self):
+        import base64
+
+        from fiki import Key
+
+        key = Key.generate()
+        seed = base64.urlsafe_b64encode(key.seed).decode().rstrip("=")
+        listing = f"witness-pool-lab-w1\tw1\t5640\t5642\trunning\twitness:test\t{seed}\n"
+        fetch = FakeFetch(_healthy())
+        pool, _ = _pool("status", docker=FakeDocker(script={"ps -a": listing}), fetch=fetch)
+        pool.run()
+
+        signed = dict(zip(fetch.calls, fetch.keys))
+        assert signed["http://127.0.0.1:5642/v1/witness/controller"].aid == key.aid
+        assert signed["http://127.0.0.1:5642/v1/witness/health"] is None, "health is open"
+
+    def test_a_pool_from_before_the_operator_label_reports_its_count_as_unknown(self):
+        """Not zero: a refused read is not an empty witness, and saying 0 would be a lie."""
+        fetch = FakeFetch({**_healthy(), ":5642/v1/witness/controller": None})
+        docker = FakeDocker(script={"ps -a": "witness-pool-lab-w1\tw1\t5640\t5642\trunning"
+                                             "\twitness:test\t\n"})
+        pool, written = _pool("status", docker=docker, fetch=fetch)
+        pool.run()
+
+        assert "controllers unknown" in _printed(written)
+
+    def test_fetch_json_signs_when_given_a_key(self, monkeypatch):
+        import contextlib
+        import io
+
+        import fiki
+        from fiki import Key
+
+        from witness import pool as pool_mod
+
+        key, seen = Key.generate(), {}
+
+        @contextlib.contextmanager
+        def fake_open(request, timeout=None):
+            seen["request"] = request
+            yield io.BytesIO(b'{"controllers": []}')
+
+        monkeypatch.setattr(pool_mod.urllib.request, "urlopen", fake_open)
+        url = "http://127.0.0.1:5642/v1/witness/controller"
+
+        assert pool_mod.fetch_json(url, key=key) == {"controllers": []}
+        verdict = fiki.verify_request(method="GET", url=url, max_age=60, authorities=None,
+                                      headers=dict(seen["request"].header_items()))
+        assert verdict.aid == key.aid
