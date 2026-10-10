@@ -9,8 +9,24 @@ not) is exactly what a shared envelope test prevents recurring.
 
 import pytest
 from falcon import testing
+from fiki import Key, sign_request
 
 from witness.app import RequestCounter, make_app
+
+#: These tests are about routing and the error envelope, not about who may ask, so every request
+#: is signed by a configured operator and the six signed nouns (@34sgjmxr) answer like the rest.
+#: Authentication itself is tests/test_control_auth.py.
+OPERATOR = Key.generate()
+
+
+class SigningClient(testing.TestClient):
+    def simulate_get(self, path, headers=None, **kwargs):
+        signed = sign_request(key=OPERATOR, method="GET", url=f"http://falconframework.org{path}")
+        return super().simulate_get(path, headers={**signed, **(headers or {})}, **kwargs)
+
+
+def _client(reader, **kwargs):
+    return SigningClient(make_app(reader, operators=(OPERATOR.aid,), **kwargs))
 from witness.errors import ControllerUnknown, DbUnavailable, WitnessNotIncepted
 
 
@@ -67,7 +83,7 @@ class StubReader:
 
 @pytest.fixture
 def client():
-    return testing.TestClient(make_app(StubReader()))
+    return _client(StubReader())
 
 
 ROUTES = [
@@ -104,7 +120,7 @@ def test_the_old_unversioned_paths_are_gone(client):
 
 
 def test_a_typed_error_renders_as_one_rfc9457_problem_document():
-    client = testing.TestClient(make_app(StubReader(identity=DbUnavailable("No database."))))
+    client = _client(StubReader(identity=DbUnavailable("No database.")))
 
     response = client.simulate_get("/v1/witness/identity")
 
@@ -129,7 +145,7 @@ def test_a_typed_error_renders_as_one_rfc9457_problem_document():
     ],
 )
 def test_the_status_comes_from_the_errors_code_not_the_call_site(view, error, status):
-    client = testing.TestClient(make_app(StubReader(**{view: error})))
+    client = _client(StubReader(**{view: error}))
     route = "/v1/witness/controller/BAid" if view == "controller" else f"/v1/witness/{view}"
 
     assert client.simulate_get(route).status_code == status
@@ -138,7 +154,7 @@ def test_the_status_comes_from_the_errors_code_not_the_call_site(view, error, st
 def test_a_retryable_error_says_when_to_come_back():
     """http-errors.md requires Retry-After on e.state.pending, and the same promise is honest
     wherever the disposition says a retry could help."""
-    client = testing.TestClient(make_app(StubReader(health=WitnessNotIncepted("Not yet."))))
+    client = _client(StubReader(health=WitnessNotIncepted("Not yet.")))
 
     response = client.simulate_get("/v1/witness/health")
 
@@ -146,7 +162,7 @@ def test_a_retryable_error_says_when_to_come_back():
 
 
 def test_a_permanent_error_does_not_invite_a_retry():
-    client = testing.TestClient(make_app(StubReader(controller=ControllerUnknown("Nope."))))
+    client = _client(StubReader(controller=ControllerUnknown("Nope.")))
 
     response = client.simulate_get("/v1/witness/controller/BAid")
 
@@ -188,7 +204,7 @@ def test_requests_are_counted_by_route_template_not_by_path():
     """A counter keyed by the raw path would mint a new series per controller AID, which is the
     classic way to make a metrics backend unusable. falcon's uri_template is the right label."""
     counter = RequestCounter()
-    client = testing.TestClient(make_app(StubReader(), counter=counter))
+    client = _client(StubReader(), counter=counter)
     client.simulate_get("/v1/witness/controller/BOne")
     client.simulate_get("/v1/witness/controller/BTwo")
     client.simulate_get("/v1/witness/health")
@@ -201,7 +217,7 @@ def test_requests_are_counted_by_route_template_not_by_path():
 def test_failures_are_counted_separately_from_successes():
     """Rejection counts are what let a limit be set from evidence rather than guessed."""
     counter = RequestCounter()
-    client = testing.TestClient(make_app(StubReader(health=DbUnavailable("down.")), counter=counter))
+    client = _client(StubReader(health=DbUnavailable("down.")), counter=counter)
 
     client.simulate_get("/v1/witness/health")
 
@@ -210,7 +226,7 @@ def test_failures_are_counted_separately_from_successes():
 
 def test_an_unmatched_path_is_counted_without_inventing_a_route():
     counter = RequestCounter()
-    client = testing.TestClient(make_app(StubReader(), counter=counter))
+    client = _client(StubReader(), counter=counter)
 
     client.simulate_get("/v1/witness/nope")
 
@@ -219,7 +235,7 @@ def test_an_unmatched_path_is_counted_without_inventing_a_route():
 
 def test_error_responses_declare_their_language():
     """DX-F3. `detail` is prose, so a client that localises needs to know what it received."""
-    client = testing.TestClient(make_app(StubReader(health=DbUnavailable("down."))))
+    client = _client(StubReader(health=DbUnavailable("down.")))
 
     response = client.simulate_get("/v1/witness/health")
 
@@ -239,7 +255,7 @@ def test_a_hostile_request_id_is_replaced_rather_than_reflected(hostile):
     """SEC-F4. The caller's id is echoed into a response header AND into the error body, so it is
     attacker-controlled data on two output paths. A caller with a genuine correlation id needs
     neither newlines nor two hundred characters to express it."""
-    client = testing.TestClient(make_app(StubReader()))
+    client = _client(StubReader())
 
     response = client.simulate_get("/v1/witness/health", headers={"Bakobo-Request-Id": hostile})
 
@@ -250,7 +266,7 @@ def test_a_hostile_request_id_is_replaced_rather_than_reflected(hostile):
 
 
 def test_a_well_formed_request_id_is_still_carried_through():
-    client = testing.TestClient(make_app(StubReader()))
+    client = _client(StubReader())
 
     response = client.simulate_get(
         "/v1/witness/health", headers={"Bakobo-Request-Id": "01K1M4YQ8ZP3V7.trace-9"}

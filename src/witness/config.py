@@ -38,6 +38,17 @@ _DEFAULT_BASE_PORT = 5640
 _DEFAULT_POOL_TIMEOUT = 120.0
 
 
+CONTROL_DEFAULT_MAX_AGE = 60
+"""How old, in seconds, a signed control-plane read may be: the Registrar's window (@34sgjmxr)."""
+#: Read only when no --operator is given, because the image's CMD is fixed (@34sgjmxr).
+OPERATORS_ENV = "WITNESS_OPERATORS"
+#: Bounded before it is trusted: an allowlist is a handful of people, not a directory.
+_MAX_OPERATORS = 64
+#: An RFC 3986 authority is a host and an optional port; 255 is DNS's own ceiling on a name.
+_MAX_AUTHORITY = 255
+_AUTHORITY = re.compile(r"[A-Za-z0-9.\-\[\]:]+")
+
+
 @dataclass(frozen=True)
 class ControlPlaneConfig:
     """Resolved configuration for the control-plane reader process."""
@@ -54,6 +65,11 @@ class ControlPlaneConfig:
     #: wanted here, and the alternative of a tuple of pairs would buy nothing but conversions at
     #: every use. Built once by the door and never mutated after.
     attribs: dict = field(default_factory=dict)
+    #: Who may read the six signed nouns (@34sgjmxr). Empty means nobody, not everybody.
+    operators: tuple[str, ...] = ()
+    max_age: int = CONTROL_DEFAULT_MAX_AGE
+    #: The @authority values a signature may name; empty declines fiki's check (@34sgjmxr).
+    authorities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -225,6 +241,24 @@ def _build_parser() -> _RaisingParser:
         "--no-telemetry",
         action="store_true",
         help="Serve without loop telemetry, for a witness started by stock `kli witness start`.",
+    )
+    cp.add_argument(
+        "--operator", action="append", default=[], dest="operators",
+        help=(
+            "The non-transferable AID of an operator who may read the signed nouns. Repeatable. "
+            f"Without one, {OPERATORS_ENV} is read; with neither, those nouns refuse everyone."
+        ),
+    )
+    cp.add_argument(
+        "--max-age", type=int, default=CONTROL_DEFAULT_MAX_AGE, dest="max_age",
+        help=f"How old, in seconds, a signed request may be. Default {CONTROL_DEFAULT_MAX_AGE}.",
+    )
+    cp.add_argument(
+        "--authority", action="append", default=[], dest="authorities",
+        help=(
+            "A host:port a signed request may name as its @authority. Repeatable. Without one, "
+            "any address is accepted, since a tunnel's local end cannot be known here."
+        ),
     )
     _add_declaration_arguments(cp)
     sup = sub.add_parser(
@@ -486,12 +520,45 @@ def _backup_config(ns) -> BackupConfig:
     )
 
 
+def _operators(flagged) -> tuple[str, ...]:
+    """The operator allowlist: the flags if any were given, else the environment (@34sgjmxr)."""
+    source, named = "--operator", list(flagged)
+    if not named:
+        source = OPERATORS_ENV
+        named = [aid.strip() for aid in os.environ.get(OPERATORS_ENV, "").split(",")]
+        named = [aid for aid in named if aid]
+    if len(named) > _MAX_OPERATORS:
+        raise InvalidArguments(
+            f"At most {_MAX_OPERATORS} operators may be named, but {source} named {len(named)}."
+        )
+    for aid in named:
+        if not _NONTRANSFERABLE_AID.fullmatch(aid):
+            raise InvalidArguments(f"{source} names {aid[:64]!r}, which is not a non-transferable "
+                                   "AID.")
+    return tuple(named)
+
+
+def _authorities(named) -> tuple[str, ...]:
+    for authority in named:
+        if not 0 < len(authority) <= _MAX_AUTHORITY or not _AUTHORITY.fullmatch(authority):
+            raise InvalidArguments(
+                f"--authority must be a host or host:port of at most {_MAX_AUTHORITY} characters, "
+                f"but was {authority[:64]!r}."
+            )
+    return tuple(named)
+
+
 def _control_plane_config(ns) -> ControlPlaneConfig:
     if not _MIN_PORT <= ns.port <= _MAX_PORT:
         raise InvalidArguments(
             f"The --port value must be between {_MIN_PORT} and {_MAX_PORT}, but was {ns.port}."
         )
+    if not ns.max_age > 0:
+        raise InvalidArguments("--max-age must be a positive number of seconds.")
     return ControlPlaneConfig(
+        operators=_operators(ns.operators),
+        max_age=ns.max_age,
+        authorities=_authorities(ns.authorities),
         telemetry_path=None if ns.no_telemetry else ns.telemetry_path,
         name=ns.name,
         host=ns.host,

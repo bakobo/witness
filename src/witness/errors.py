@@ -154,6 +154,22 @@ class ControllerUnknown(WitnessError):
     status = 404
 
 
+class ControlUnauthenticated(WitnessError):
+    """A signed control-plane read arrived unsigned, stale, or with a signature that fails (@34sgjmxr)."""
+
+    code = "e.id.invalid.control.f"
+    title = "I could not verify a signature over that request, so I will not answer it."
+    status = 401
+
+
+class ControlDenied(WitnessError):
+    """The signature is genuine, but the signer is not an operator of this witness (@34sgjmxr)."""
+
+    code = "e.grant.missing.operator.f"
+    title = "That signer is not an operator of this witness."
+    status = 403
+
+
 class TelemetryNotConfigured(WitnessError):
     """This control plane was not told where the witness publishes telemetry.
 

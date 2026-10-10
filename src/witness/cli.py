@@ -49,7 +49,8 @@ def main(argv=None, *, stdin=None) -> int:
     # inside it owns the background thread that does the exporting. Returns None, and costs
     # nothing, when no OTLP collector is configured (@wea6qjmk).
     counter = RequestCounter()
-    app = make_app(reader, counter=counter)
+    app = make_app(reader, counter=counter, operators=cfg.operators, max_age=cfg.max_age,
+                   authorities=cfg.authorities)
     _metrics = metrics.configure(  # noqa: F841 - kept alive deliberately
         reader, counter=counter
     )
