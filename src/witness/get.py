@@ -119,7 +119,9 @@ def run(cfg, *, urlopen=open_without_redirects, out=None, err=None) -> int:
             out.write(body.decode("utf-8", "replace"))
             err.write(f"{_refusal(refused, body)}\n")
             return 1
-        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+        except http.client.HTTPException as exc:  # reached, but the reply was not HTTP
+            raise ControlIncomplete(f"{cfg.url} answered with broken HTTP: {exc!r}.") from None
+        except (urllib.error.URLError, OSError) as exc:
             raise ControlUnreachable(f"I could not reach {cfg.url}: {exc}.") from None
     except WitnessError as exc:
         err.write(f"{exc.code}: {exc}\n")

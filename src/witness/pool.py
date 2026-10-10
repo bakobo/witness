@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import math
 import subprocess
@@ -155,7 +156,7 @@ def fetch_json(url, *, timeout=_REQUEST_TIMEOUT, key=None):
     try:
         with opener(request, timeout=timeout) as response:  # noqa: S310
             return json.loads(response.read().decode())
-    except (urllib.error.URLError, OSError, ValueError):
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException):
         return None
 
 

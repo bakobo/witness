@@ -807,11 +807,44 @@ class TestOperatorKey:
         assert "controllers unknown" in _printed(written)
 
     def test_a_signed_pool_read_does_not_follow_a_redirect(self):
-        """Hostile-pass finding 1 on #31, for the pool's half."""
+        """Hostile-pass finding 1 on #31, for the pool's half. The Location is a second loopback
+        listener, so a followed redirect would arrive there: None alone could be a DNS failure."""
         import socket
         import threading
 
         from fiki import Key
+
+        from witness import pool as pool_mod
+
+        target = socket.socket()
+        target.bind(("127.0.0.1", 0))
+        target.listen(1)
+        target.settimeout(1.0)
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        location = f"http://127.0.0.1:{target.getsockname()[1]}/collect".encode()
+
+        def answer():
+            conn, _ = listener.accept()
+            conn.recv(65536)
+            conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: " + location +
+                         b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            conn.close()
+            listener.close()
+
+        threading.Thread(target=answer, daemon=True).start()
+        url = f"http://127.0.0.1:{listener.getsockname()[1]}/v1/witness/controller"
+
+        assert pool_mod.fetch_json(url, key=Key.generate()) is None
+        with pytest.raises(socket.timeout):
+            target.accept()
+        target.close()
+
+    def test_a_pool_read_answered_with_broken_http_is_none(self):
+        """The ds seat on the fix diff: BadStatusLine is an HTTPException, not a URLError."""
+        import socket
+        import threading
 
         from witness import pool as pool_mod
 
@@ -822,12 +855,10 @@ class TestOperatorKey:
         def answer():
             conn, _ = listener.accept()
             conn.recv(65536)
-            conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: http://attacker.invalid/\r\n"
-                         b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            conn.sendall(b"SSH-2.0-OpenSSH_9.6\r\n")
             conn.close()
             listener.close()
 
         threading.Thread(target=answer, daemon=True).start()
-        url = f"http://127.0.0.1:{listener.getsockname()[1]}/v1/witness/controller"
 
-        assert pool_mod.fetch_json(url, key=Key.generate()) is None
+        assert pool_mod.fetch_json(f"http://127.0.0.1:{listener.getsockname()[1]}/") is None

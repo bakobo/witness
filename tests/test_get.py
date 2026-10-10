@@ -237,6 +237,17 @@ def test_a_broken_refusal_body_is_also_a_coded_refusal(key_file):
     assert err.startswith("e.env.control.incomplete.r: ")
 
 
+def test_a_reply_that_is_not_http_is_incomplete_rather_than_unreachable(key_file):
+    """The ds seat on the fix diff: BadStatusLine means the peer was reached and spoke nonsense."""
+    path, _key = key_file
+    url = _serve_once(b"SSH-2.0-OpenSSH_9.6\r\n")
+
+    code, _out, err = _real(["--key", str(path), url])
+
+    assert code == 1
+    assert err.startswith("e.env.control.incomplete.r: ")
+
+
 @pytest.mark.parametrize("url", ["http://example.com/x#fragment", "http://example.com/x?y=é"])
 def test_a_url_fiki_will_not_sign_is_an_argument_error_not_a_traceback(key_file, url):
     """Finding 4."""
