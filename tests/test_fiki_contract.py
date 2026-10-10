@@ -73,3 +73,17 @@ def test_verify_rejects_a_transferable_aid_rather_than_best_effort_checking_it()
             max_age=None,
             authorities=None,
         )
+
+
+def test_verify_refuses_a_body_its_signature_does_not_cover():
+    """The Registrar relies on this rather than checking it again (registrar/app.py ``_signer``),
+    because a second check behind fiki's could never fire and so could never be covered. That
+    makes this test the guard: if a later fiki stops refusing an uncovered body under its default
+    minimum, it fails here instead of the Registrar quietly accepting an unbound body."""
+    from fiki import Key, sign_request
+
+    url = "https://registrar.example/v1/registrar/publication"
+    headers = sign_request(key=Key.generate(), method="POST", url=url)
+    with pytest.raises(fiki_errors.FikiError):
+        verify_request(method="POST", url=url, headers=headers, body=b'{"a":1}', max_age=None,
+                       authorities=None)
