@@ -178,6 +178,14 @@ class ControlUnreachable(WitnessError):
     status = 503
 
 
+class ControlIncomplete(WitnessError):
+    """A control plane's answer to ``witness get`` arrived cut off or with broken framing."""
+
+    code = "e.env.control.incomplete.r"
+    title = "That control plane's answer did not arrive whole."
+    status = 502
+
+
 class OperatorKeyUnusable(WitnessError):
     """``witness get`` was given a key it cannot sign with. Never quotes the key."""
 

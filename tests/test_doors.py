@@ -89,7 +89,10 @@ ACCOUNTED = {
         "oversized file is refused without being read whole, then parsed by fiki, whose refusal "
         "is replaced by a sentence that never quotes the key. The answer get.run fetches is the "
         "same door's other half: read at most MAX_RESPONSE_BYTES plus one, and printed rather "
-        "than trusted (@34sgjmxr)."
+        "than trusted (@34sgjmxr). pool.fetch_json reaches the network through the same "
+        "no-redirect opener when it signs, or urlopen when it does not, chosen at run time where "
+        "this scan cannot see the call. It is a loopback GET to a pool this repo created, every "
+        "failure becomes None, and the value is displayed or compared, never used as authority."
     ),
     "landing.py::_read_bounded": (
         "door: landing._read_bounded. A branding file named by --css or --logo, read at most its "
@@ -110,12 +113,6 @@ ACCOUNTED = {
         "fixed binary and arguments it built itself, under a timeout. The bytes are parsed by "
         "format-specific callers rather than trusted here, and the blast radius is a laboratory "
         "tool that runs on an operator's own host."
-    ),
-    "pool.py::fetch_json": (
-        "exempt: a loopback GET to a control plane in a pool this repo just created, decoded "
-        "inside a try that turns any failure into None. Unreachable is an ordinary state for a "
-        "pool, so the caller decides what it means. Not a door because nothing downstream trusts "
-        "the value: it is displayed or compared, never used as authority."
     ),
     "batcher.py::_resolve": (
         "exempt: the stdout of a child interpreter this module spawns with a fixed script and "

@@ -161,3 +161,88 @@ def test_a_url_is_needed_unless_only_the_aid_is_wanted():
 def test_the_url_is_bounded():
     with pytest.raises(InvalidArguments, match="at most"):
         config.parse_args(["get", "--key", "k", "http://h/" + "x" * 3000])
+
+
+# -- the hostile pass on #31 ----------------------------------------------------------------------
+
+def _serve_once(raw):
+    """A one-shot HTTP server on loopback that writes ``raw`` and closes; returns its URL."""
+    import socket
+    import threading
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def answer():
+        conn, _ = listener.accept()
+        conn.recv(65536)
+        conn.sendall(raw)
+        conn.close()
+        listener.close()
+
+    threading.Thread(target=answer, daemon=True).start()
+    return f"http://127.0.0.1:{listener.getsockname()[1]}/v1/witness/controller"
+
+
+def _real(argv):
+    out, err = io.StringIO(), io.StringIO()
+    _sub, cfg = config.parse_args(["get", *argv])
+    return get.run(cfg, out=out, err=err), out.getvalue(), err.getvalue()
+
+
+def test_a_redirect_is_not_followed_so_the_signature_stays_home(key_file):
+    """Finding 1. urllib re-sends the original headers, Signature included, to the Location."""
+    path, _key = key_file
+    url = _serve_once(b"HTTP/1.1 302 Found\r\nLocation: http://attacker.invalid/collect\r\n"
+                      b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+
+    code, _out, err = _real(["--key", str(path), url])
+
+    assert code == 1
+    assert "302" in err
+
+
+def test_a_truncated_answer_is_not_success(key_file):
+    """Finding 2. A JSON prefix and an early close must not print as the answer."""
+    path, _key = key_file
+    url = _serve_once(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                      b"Content-Length: 100\r\nConnection: close\r\n\r\n{}")
+
+    code, out, err = _real(["--key", str(path), url])
+
+    assert (code, out) == (1, "")
+    assert err.startswith("e.env.control.incomplete.r: ")
+
+
+def test_broken_chunk_framing_is_a_coded_refusal_not_a_traceback(key_file):
+    """Finding 3."""
+    path, _key = key_file
+    url = _serve_once(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+                      b"zz\r\nnot-a-chunk\r\n")
+
+    code, out, err = _real(["--key", str(path), url])
+
+    assert (code, out) == (1, "")
+    assert err.startswith("e.env.control.incomplete.r: ")
+
+
+def test_a_broken_refusal_body_is_also_a_coded_refusal(key_file):
+    path, _key = key_file
+    url = _serve_once(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 50\r\nConnection: close\r\n\r\n{")
+
+    code, _out, err = _real(["--key", str(path), url])
+
+    assert code == 1
+    assert err.startswith("e.env.control.incomplete.r: ")
+
+
+@pytest.mark.parametrize("url", ["http://example.com/x#fragment", "http://example.com/x?y=é"])
+def test_a_url_fiki_will_not_sign_is_an_argument_error_not_a_traceback(key_file, url):
+    """Finding 4."""
+    path, _key = key_file
+
+    code, _out, err = _run(["--key", str(path), url], lambda *a, **k: pytest.fail("fetched"))
+
+    assert code == 1
+    assert err.startswith("e.input.format.f: ")

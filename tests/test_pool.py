@@ -785,10 +785,49 @@ class TestOperatorKey:
             seen["request"] = request
             yield io.BytesIO(b'{"controllers": []}')
 
-        monkeypatch.setattr(pool_mod.urllib.request, "urlopen", fake_open)
+        monkeypatch.setattr(pool_mod.get, "open_without_redirects", fake_open)
         url = "http://127.0.0.1:5642/v1/witness/controller"
 
         assert pool_mod.fetch_json(url, key=key) == {"controllers": []}
         verdict = fiki.verify_request(method="GET", url=url, max_age=60, authorities=None,
                                       headers=dict(seen["request"].header_items()))
         assert verdict.aid == key.aid
+
+
+    @pytest.mark.parametrize("label", ["A", "!!!!", "QUFBQQ"])
+    def test_a_malformed_operator_label_reads_as_no_operator_rather_than_crashing(self, label):
+        """Hostile-pass finding 5 on #31: an undecodable or wrong-length seed is not a key."""
+        fetch = FakeFetch({**_healthy(), ":5642/v1/witness/controller": None})
+        docker = FakeDocker(script={"ps -a": "witness-pool-lab-w1\tw1\t5640\t5642\trunning"
+                                             f"\twitness:test\t{label}\n"})
+        pool, written = _pool("status", docker=docker, fetch=fetch)
+        pool.run()
+
+        assert fetch.keys[fetch.calls.index("http://127.0.0.1:5642/v1/witness/controller")] is None
+        assert "controllers unknown" in _printed(written)
+
+    def test_a_signed_pool_read_does_not_follow_a_redirect(self):
+        """Hostile-pass finding 1 on #31, for the pool's half."""
+        import socket
+        import threading
+
+        from fiki import Key
+
+        from witness import pool as pool_mod
+
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def answer():
+            conn, _ = listener.accept()
+            conn.recv(65536)
+            conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: http://attacker.invalid/\r\n"
+                         b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            conn.close()
+            listener.close()
+
+        threading.Thread(target=answer, daemon=True).start()
+        url = f"http://127.0.0.1:{listener.getsockname()[1]}/v1/witness/controller"
+
+        assert pool_mod.fetch_json(url, key=Key.generate()) is None

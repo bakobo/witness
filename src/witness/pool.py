@@ -45,7 +45,7 @@ from keri.core.eventing import ample
 from keri.core.signing import Salter
 from keri.help.helping import nowIso8601
 
-from . import decls
+from . import decls, get
 from .errors import (
     DockerUnavailable,
     InvalidArguments,
@@ -150,8 +150,10 @@ def fetch_json(url, *, timeout=_REQUEST_TIMEOUT, key=None):
     """
     headers = fiki.sign_request(key=key, method="GET", url=url) if key is not None else {}
     request = urllib.request.Request(url, headers=headers)
+    # A signed request must not follow a redirect, which would carry its signature elsewhere.
+    opener = get.open_without_redirects if key is not None else urllib.request.urlopen
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with opener(request, timeout=timeout) as response:  # noqa: S310
             return json.loads(response.read().decode())
     except (urllib.error.URLError, OSError, ValueError):
         return None
@@ -176,7 +178,10 @@ class Witness:
         if not self.operator:
             return None
         padded = self.operator + "=" * (-len(self.operator) % 4)
-        return fiki.Key.from_seed(base64.urlsafe_b64decode(padded))
+        try:
+            return fiki.Key.from_seed(base64.urlsafe_b64decode(padded))
+        except (ValueError, fiki.FikiError):  # binascii.Error is a ValueError
+            return None
 
     @property
     def http_url(self) -> str:
