@@ -159,3 +159,13 @@ def test_the_operator_flag_reaches_the_served_app(monkeypatch):
 
     assert admitted.status_code not in (401, 403)
     assert refused.json["code"] == "e.grant.missing.operator.f"
+
+
+def test_main_dispatches_get(monkeypatch):
+    from witness import get as get_mod
+
+    seen = {}
+    monkeypatch.setattr(get_mod, "run", lambda cfg: seen.update(cfg=cfg) or 3)
+
+    assert cli.main(["get", "--key", "k", "--aid"]) == 3
+    assert seen["cfg"].print_aid is True

@@ -170,6 +170,30 @@ class ControlDenied(WitnessError):
     status = 403
 
 
+class ControlUnreachable(WitnessError):
+    """``witness get`` could not reach the control plane it was pointed at."""
+
+    code = "e.env.control.unavailable.r"
+    title = "I could not reach that control plane."
+    status = 503
+
+
+class OperatorKeyUnusable(WitnessError):
+    """``witness get`` was given a key it cannot sign with. Never quotes the key."""
+
+    code = "e.input.format.operatorkey.f"
+    title = "That operator key is not one I can sign with."
+    status = 400
+
+
+class ResponseTooLarge(WitnessError):
+    """A control plane's answer to ``witness get`` exceeded its bound, refused unread."""
+
+    code = "e.input.range.response.f"
+    title = "That answer is larger than I will read."
+    status = 413
+
+
 class TelemetryNotConfigured(WitnessError):
     """This control plane was not told where the witness publishes telemetry.
 

@@ -11,6 +11,7 @@ import argparse
 import re
 import os
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from . import decls as _decls
 from .errors import InvalidArguments
@@ -166,6 +167,15 @@ class LandingConfig:
 
 
 @dataclass(frozen=True)
+class GetConfig:
+    """``witness get``: one signed read of a control plane (@34sgjmxr)."""
+
+    key: str
+    url: str | None
+    print_aid: bool = False
+
+
+@dataclass(frozen=True)
 class SupervisorConfig:
     """Resolved configuration for the in-image supervisor: the processes it runs, in order."""
 
@@ -311,6 +321,14 @@ def _build_parser() -> _RaisingParser:
         help="Write the default stylesheet to stdout, as a starting point for your own, and stop.",
     )
 
+    get = sub.add_parser("get", help="Sign one GET to a control plane as an operator and print "
+                         "the answer (@34sgjmxr).")
+    get.add_argument("--key", required=True,
+                     help="An unencrypted OpenSSH Ed25519 private key, as `ssh-keygen -t ed25519 "
+                          "-N ''` writes it.")
+    get.add_argument("--aid", action="store_true", dest="print_aid",
+                     help="Print the key's AID, to name with --operator, and fetch nothing.")
+    get.add_argument("url", nargs="?", default=None, help="The control-plane URL to read.")
     reg = sub.add_parser("registrar", help="Run an issuer's Registrar (@r3aonvlz).")
     reg.add_argument("--store", required=True, help="The directory the Registrar keeps state in.")
     reg.add_argument("--host", default="127.0.0.1", help="The host/interface to bind.")
@@ -510,6 +528,28 @@ def _registrar_config(ns) -> RegistrarConfig:
                            max_subscriptions=ns.max_subscriptions, delivery_timeout=timeout)
 
 
+_MAX_URL = 2048
+
+
+def _get_config(ns) -> GetConfig:
+    if ns.url is None:
+        if not ns.print_aid:
+            raise InvalidArguments("`witness get` needs the URL to read, or --aid.")
+        return GetConfig(key=ns.key, url=None, print_aid=True)
+    if len(ns.url) > _MAX_URL:
+        raise InvalidArguments(f"The URL may be at most {_MAX_URL} characters, but was "
+                               f"{len(ns.url)}.")
+    try:
+        parts = urlsplit(ns.url)
+        parts.port  # noqa: B018 - raises ValueError for a port outside 0-65535
+        usable = parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        usable = False
+    if not usable:
+        raise InvalidArguments(f"The URL must be an http or https URL, but was {ns.url[:64]!r}.")
+    return GetConfig(key=ns.key, url=ns.url, print_aid=ns.print_aid)
+
+
 def _backup_config(ns) -> BackupConfig:
     return BackupConfig(
         name=ns.name,
@@ -645,4 +685,6 @@ def parse_args(argv):
         return ns.subcommand, _registrar_config(ns)
     if ns.subcommand == "landing":
         return ns.subcommand, _landing_config(ns)
+    if ns.subcommand == "get":
+        return ns.subcommand, _get_config(ns)
     return ns.subcommand, _control_plane_config(ns)

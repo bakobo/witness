@@ -84,6 +84,13 @@ ACCOUNTED = {
         "failure — absent, unreadable, not UTF-8, malformed, refused by the vocabulary — returns "
         "no declarations rather than propagating."
     ),
+    "get.py::_key": (
+        "door: get._key. The operator's key file, read at most MAX_KEY_BYTES plus one so an "
+        "oversized file is refused without being read whole, then parsed by fiki, whose refusal "
+        "is replaced by a sentence that never quotes the key. The answer get.run fetches is the "
+        "same door's other half: read at most MAX_RESPONSE_BYTES plus one, and printed rather "
+        "than trusted (@34sgjmxr)."
+    ),
     "landing.py::_read_bounded": (
         "door: landing._read_bounded. A branding file named by --css or --logo, read at most its "
         "bound plus one byte and refused past it, before any of it is decoded or inlined; what "
