@@ -794,9 +794,10 @@ class TestOperatorKey:
         assert verdict.aid == key.aid
 
 
-    @pytest.mark.parametrize("label", ["A", "!!!!", "QUFBQQ"])
+    @pytest.mark.parametrize("label", ["A", "!!!!", "QUFBQQ", "A" * 43 + "!!!"])
     def test_a_malformed_operator_label_reads_as_no_operator_rather_than_crashing(self, label):
-        """Hostile-pass finding 5 on #31: an undecodable or wrong-length seed is not a key."""
+        """Hostile-pass finding 5 on #31: an undecodable or wrong-length seed is not a key. The
+        last case is a good seed with junk appended, which a lenient decoder drops (fix pass 3)."""
         fetch = FakeFetch({**_healthy(), ":5642/v1/witness/controller": None})
         docker = FakeDocker(script={"ps -a": "witness-pool-lab-w1\tw1\t5640\t5642\trunning"
                                              f"\twitness:test\t{label}\n"})

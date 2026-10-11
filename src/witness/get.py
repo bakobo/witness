@@ -27,6 +27,8 @@ MAX_KEY_BYTES = 8 * 1024
 #: Bounded before it is trusted. A controller list is the largest answer and is far below this.
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _TIMEOUT = 10.0
+#: Bounds the int() below: a longer Content-Length is past MAX_RESPONSE_BYTES anyway.
+_MAX_LENGTH_DIGITS = 18
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -82,7 +84,12 @@ def _bounded(response) -> bytes:
         raise ResponseTooLarge(f"The answer is over {MAX_RESPONSE_BYTES} bytes, so I stopped "
                                "reading it.")
     declared = (getattr(response, "headers", None) or {}).get("Content-Length")
-    if declared is not None and declared.isdigit() and int(declared) != len(body):
+    if declared is None:
+        return body
+    declared = declared.strip()  # http.client strips it too, and then honours it
+    if not declared.isdigit() or len(declared) > _MAX_LENGTH_DIGITS:
+        raise ControlIncomplete(f"The answer's Content-Length is not a length: {declared[:40]!r}.")
+    if int(declared) != len(body):
         raise ControlIncomplete(f"The answer said it was {declared} bytes and {len(body)} "
                                 "arrived, so it was cut off.")
     return body

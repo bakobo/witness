@@ -180,7 +180,8 @@ class Witness:
             return None
         padded = self.operator + "=" * (-len(self.operator) % 4)
         try:
-            return fiki.Key.from_seed(base64.urlsafe_b64decode(padded))
+            # validate=True: the lenient decoder drops stray characters and still yields a key.
+            return fiki.Key.from_seed(base64.b64decode(padded, altchars=b"-_", validate=True))
         except (ValueError, fiki.FikiError):  # binascii.Error is a ValueError
             return None
 

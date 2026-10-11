@@ -215,6 +215,19 @@ def test_a_truncated_answer_is_not_success(key_file):
     assert err.startswith("e.env.control.incomplete.r: ")
 
 
+@pytest.mark.parametrize("length", [b"100 ", b"1" * 5000, b"-1", b"abc"])
+def test_a_content_length_that_is_padded_long_or_not_a_number_is_not_success(key_file, length):
+    """The fix pass on #31: a padded length skipped the check, and a 5000-digit one overflowed int()."""
+    path, _key = key_file
+    url = _serve_once(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                      b"Content-Length: " + length + b"\r\nConnection: close\r\n\r\n{}")
+
+    code, out, err = _real(["--key", str(path), url])
+
+    assert (code, out) == (1, "")
+    assert err.startswith("e.env.control.incomplete.r: ")
+
+
 def test_broken_chunk_framing_is_a_coded_refusal_not_a_traceback(key_file):
     """Finding 3."""
     path, _key = key_file
