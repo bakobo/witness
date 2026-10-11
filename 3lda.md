@@ -2,3 +2,4 @@
 kind: todo
 created: 2026-09-04T02:05Z
 
+- 2026-10-11T02:54Z Landed in bakobo/witness#31 (merge 9338818): six control-plane reads signed via fiki 0.9.0, five open, unconfigured witness serves only the five; witness get added. Follow-ups: ~7k7c (Registrar --authority).
