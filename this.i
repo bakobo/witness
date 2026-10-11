@@ -731,6 +731,45 @@ Operator layer over a stock keripy witness = goal:
         requires an explicit max_age, so the call site must decide a replay window rather than
         inherit one.
 
+      children:
+        Six reads are signed and five stay open  and an unconfigured witness serves only the five = decision:
+          nid: 34sgjmxr
+          why: >
+            @s6v3qm chose the mechanism and left the scope open; this node closes it. Six nouns are
+            signed — loop, escrow, database, process, controller and controller/{aid} — and five
+            stay open. health stays open because a liveness probe cannot sign (@h5n2rk's reason,
+            unchanged). identity and version are the low-sensitivity identity @h5n2rk already
+            accepted, and a witness's AID is published by its OOBI anyway. tags and attribs are what
+            a witness broadcasts about itself (@vqqh6zdk), and `witness landing` renders them into a
+            public page, so signing them would protect nothing. The signed six are what tick ~3lda
+            named: every controller's key state, which ~22ut argues is an enumeration surface, plus
+            escrow and database internals and process vitals. Authorization is the operator
+            allowlist @s6v3qm named: `--operator`, repeatable, a non-transferable AID like the
+            Registrar's `--publisher`, with `WITNESS_OPERATORS` read only when no flag is given,
+            because the image's CMD is fixed and an environment variable is how a deployment reaches
+            into it without restating the command. With no operator configured the signed six refuse
+            every request and the open five still serve. Rejected refusing to start: the supervisor
+            restarts an auxiliary that exits, so a witness upgraded without the setting would loop
+            its control plane and lose the health endpoint its healthcheck and the deployment's
+            probes depend on, which punishes the operator for the reads they never should have been
+            serving. Freshness is a 60-second max_age, the Registrar's default, overridable by
+            `--max-age`. There is no replay store: a GET changes nothing, so a replay inside the
+            window discloses state only to someone who already captured the request, and the request
+            travels over loopback or an SSH tunnel where anyone able to capture it can read the
+            response too. A replay store would also end @b2y5nr's statelessness for nothing.
+            `@authority` checking is opt-in through `--authority`. Rejected making it mandatory: the
+            authority a caller signs is the address it dialled — a pool's published port, an SSH
+            tunnel's local end — which the server cannot know in advance, so every new tunnel would
+            become a configuration change. Accepted tradeoffs: a request signed for one witness
+            replays to a sibling that lists the same operator, within the window; and an operator
+            calling these reads needs a signer, which `witness get` provides so nobody has to
+            hand-assemble RFC 9421 headers with curl. `witness pool` keeps its operator's seed in a
+            label on the pool's containers, because anyone who can read a label can already `docker
+            exec` into the container and read the LMDB directly, and a label keeps the pool's
+            no-state-file property. This node also moves fiki from py/v0.5.0 to py/v0.9.0, whose
+            verify_request requires `authorities` to be decided at the call site as it already
+            required max_age.
+
     Implement in Python to reuse keripy = decision:
       id: d4h7kt
       why: >

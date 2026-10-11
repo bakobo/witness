@@ -11,6 +11,7 @@ import argparse
 import re
 import os
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from . import decls as _decls
 from .errors import InvalidArguments
@@ -38,6 +39,17 @@ _DEFAULT_BASE_PORT = 5640
 _DEFAULT_POOL_TIMEOUT = 120.0
 
 
+CONTROL_DEFAULT_MAX_AGE = 60
+"""How old, in seconds, a signed control-plane read may be: the Registrar's window (@34sgjmxr)."""
+#: Read only when no --operator is given, because the image's CMD is fixed (@34sgjmxr).
+OPERATORS_ENV = "WITNESS_OPERATORS"
+#: Bounded before it is trusted: an allowlist is a handful of people, not a directory.
+_MAX_OPERATORS = 64
+#: An RFC 3986 authority is a host and an optional port; 255 is DNS's own ceiling on a name.
+_MAX_AUTHORITY = 255
+_AUTHORITY = re.compile(r"[A-Za-z0-9.\-\[\]:]+")
+
+
 @dataclass(frozen=True)
 class ControlPlaneConfig:
     """Resolved configuration for the control-plane reader process."""
@@ -54,6 +66,11 @@ class ControlPlaneConfig:
     #: wanted here, and the alternative of a tuple of pairs would buy nothing but conversions at
     #: every use. Built once by the door and never mutated after.
     attribs: dict = field(default_factory=dict)
+    #: Who may read the six signed nouns (@34sgjmxr). Empty means nobody, not everybody.
+    operators: tuple[str, ...] = ()
+    max_age: int = CONTROL_DEFAULT_MAX_AGE
+    #: The @authority values a signature may name; empty declines fiki's check (@34sgjmxr).
+    authorities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -150,6 +167,15 @@ class LandingConfig:
 
 
 @dataclass(frozen=True)
+class GetConfig:
+    """``witness get``: one signed read of a control plane (@34sgjmxr)."""
+
+    key: str
+    url: str | None
+    print_aid: bool = False
+
+
+@dataclass(frozen=True)
 class SupervisorConfig:
     """Resolved configuration for the in-image supervisor: the processes it runs, in order."""
 
@@ -226,6 +252,24 @@ def _build_parser() -> _RaisingParser:
         action="store_true",
         help="Serve without loop telemetry, for a witness started by stock `kli witness start`.",
     )
+    cp.add_argument(
+        "--operator", action="append", default=[], dest="operators",
+        help=(
+            "The non-transferable AID of an operator who may read the signed nouns. Repeatable. "
+            f"Without one, {OPERATORS_ENV} is read; with neither, those nouns refuse everyone."
+        ),
+    )
+    cp.add_argument(
+        "--max-age", type=int, default=CONTROL_DEFAULT_MAX_AGE, dest="max_age",
+        help=f"How old, in seconds, a signed request may be. Default {CONTROL_DEFAULT_MAX_AGE}.",
+    )
+    cp.add_argument(
+        "--authority", action="append", default=[], dest="authorities",
+        help=(
+            "A host:port a signed request may name as its @authority. Repeatable. Without one, "
+            "any address is accepted, since a tunnel's local end cannot be known here."
+        ),
+    )
     _add_declaration_arguments(cp)
     sup = sub.add_parser(
         "supervise", help="Run the witness runner and the control plane in one container."
@@ -277,6 +321,14 @@ def _build_parser() -> _RaisingParser:
         help="Write the default stylesheet to stdout, as a starting point for your own, and stop.",
     )
 
+    get = sub.add_parser("get", help="Sign one GET to a control plane as an operator and print "
+                         "the answer (@34sgjmxr).")
+    get.add_argument("--key", required=True,
+                     help="An unencrypted OpenSSH Ed25519 private key, as `ssh-keygen -t ed25519 "
+                          "-N ''` writes it.")
+    get.add_argument("--aid", action="store_true", dest="print_aid",
+                     help="Print the key's AID, to name with --operator, and fetch nothing.")
+    get.add_argument("url", nargs="?", default=None, help="The control-plane URL to read.")
     reg = sub.add_parser("registrar", help="Run an issuer's Registrar (@r3aonvlz).")
     reg.add_argument("--store", required=True, help="The directory the Registrar keeps state in.")
     reg.add_argument("--host", default="127.0.0.1", help="The host/interface to bind.")
@@ -476,6 +528,28 @@ def _registrar_config(ns) -> RegistrarConfig:
                            max_subscriptions=ns.max_subscriptions, delivery_timeout=timeout)
 
 
+_MAX_URL = 2048
+
+
+def _get_config(ns) -> GetConfig:
+    if ns.url is None:
+        if not ns.print_aid:
+            raise InvalidArguments("`witness get` needs the URL to read, or --aid.")
+        return GetConfig(key=ns.key, url=None, print_aid=True)
+    if len(ns.url) > _MAX_URL:
+        raise InvalidArguments(f"The URL may be at most {_MAX_URL} characters, but was "
+                               f"{len(ns.url)}.")
+    try:
+        parts = urlsplit(ns.url)
+        parts.port  # noqa: B018 - raises ValueError for a port outside 0-65535
+        usable = parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        usable = False
+    if not usable:
+        raise InvalidArguments(f"The URL must be an http or https URL, but was {ns.url[:64]!r}.")
+    return GetConfig(key=ns.key, url=ns.url, print_aid=ns.print_aid)
+
+
 def _backup_config(ns) -> BackupConfig:
     return BackupConfig(
         name=ns.name,
@@ -486,12 +560,45 @@ def _backup_config(ns) -> BackupConfig:
     )
 
 
+def _operators(flagged) -> tuple[str, ...]:
+    """The operator allowlist: the flags if any were given, else the environment (@34sgjmxr)."""
+    source, named = "--operator", list(flagged)
+    if not named:
+        source = OPERATORS_ENV
+        named = [aid.strip() for aid in os.environ.get(OPERATORS_ENV, "").split(",")]
+        named = [aid for aid in named if aid]
+    if len(named) > _MAX_OPERATORS:
+        raise InvalidArguments(
+            f"At most {_MAX_OPERATORS} operators may be named, but {source} named {len(named)}."
+        )
+    for aid in named:
+        if not _NONTRANSFERABLE_AID.fullmatch(aid):
+            raise InvalidArguments(f"{source} names {aid[:64]!r}, which is not a non-transferable "
+                                   "AID.")
+    return tuple(named)
+
+
+def _authorities(named) -> tuple[str, ...]:
+    for authority in named:
+        if not 0 < len(authority) <= _MAX_AUTHORITY or not _AUTHORITY.fullmatch(authority):
+            raise InvalidArguments(
+                f"--authority must be a host or host:port of at most {_MAX_AUTHORITY} characters, "
+                f"but was {authority[:64]!r}."
+            )
+    return tuple(named)
+
+
 def _control_plane_config(ns) -> ControlPlaneConfig:
     if not _MIN_PORT <= ns.port <= _MAX_PORT:
         raise InvalidArguments(
             f"The --port value must be between {_MIN_PORT} and {_MAX_PORT}, but was {ns.port}."
         )
+    if not ns.max_age > 0:
+        raise InvalidArguments("--max-age must be a positive number of seconds.")
     return ControlPlaneConfig(
+        operators=_operators(ns.operators),
+        max_age=ns.max_age,
+        authorities=_authorities(ns.authorities),
         telemetry_path=None if ns.no_telemetry else ns.telemetry_path,
         name=ns.name,
         host=ns.host,
@@ -578,4 +685,6 @@ def parse_args(argv):
         return ns.subcommand, _registrar_config(ns)
     if ns.subcommand == "landing":
         return ns.subcommand, _landing_config(ns)
+    if ns.subcommand == "get":
+        return ns.subcommand, _get_config(ns)
     return ns.subcommand, _control_plane_config(ns)

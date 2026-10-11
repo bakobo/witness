@@ -69,6 +69,11 @@ ACCOUNTED = {
         "door: config.parse_args. WITNESS_IMAGE is read as an argparse default, so it enters "
         "through the same argument door as everything else and is bounded by the same parser."
     ),
+    "config.py::_operators": (
+        "door: config.parse_args. WITNESS_OPERATORS is read only when no --operator is given, and "
+        "goes through the same count bound and AID check as the flag, so the environment admits "
+        "nothing the flag would refuse (@34sgjmxr)."
+    ),
     "metrics.py::configured_endpoint": (
         "exempt: the OTLP endpoint is read once at startup and handed to the OpenTelemetry SDK, "
         "which owns its validation. Bounding it here would mean this repo forming an opinion "
@@ -78,6 +83,16 @@ ACCOUNTED = {
         "door: decls.from_seed. The read is bounded to MAX_SEED_BYTES before parsing, and every "
         "failure — absent, unreadable, not UTF-8, malformed, refused by the vocabulary — returns "
         "no declarations rather than propagating."
+    ),
+    "get.py::_key": (
+        "door: get._key. The operator's key file, read at most MAX_KEY_BYTES plus one so an "
+        "oversized file is refused without being read whole, then parsed by fiki, whose refusal "
+        "is replaced by a sentence that never quotes the key. The answer get.run fetches is the "
+        "same door's other half: read at most MAX_RESPONSE_BYTES plus one, and printed rather "
+        "than trusted (@34sgjmxr). pool.fetch_json reaches the network through the same "
+        "no-redirect opener when it signs, or urlopen when it does not, chosen at run time where "
+        "this scan cannot see the call. It is a loopback GET to a pool this repo created, every "
+        "failure becomes None, and the value is displayed or compared, never used as authority."
     ),
     "landing.py::_read_bounded": (
         "door: landing._read_bounded. A branding file named by --css or --logo, read at most its "
@@ -98,12 +113,6 @@ ACCOUNTED = {
         "fixed binary and arguments it built itself, under a timeout. The bytes are parsed by "
         "format-specific callers rather than trusted here, and the blast radius is a laboratory "
         "tool that runs on an operator's own host."
-    ),
-    "pool.py::fetch_json": (
-        "exempt: a loopback GET to a control plane in a pool this repo just created, decoded "
-        "inside a try that turns any failure into None. Unreachable is an ordinary state for a "
-        "pool, so the caller decides what it means. Not a door because nothing downstream trusts "
-        "the value: it is displayed or compared, never used as authority."
     ),
     "batcher.py::_resolve": (
         "exempt: the stdout of a child interpreter this module spawns with a fixed script and "

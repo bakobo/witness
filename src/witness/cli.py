@@ -9,14 +9,15 @@ of every store while the witness keeps running (@7b34ohbo). ``pool`` stands up t
 of this image for experiments (@n2bgpdds), and is the one subcommand that runs on a host rather
 than inside the container. ``registrar`` runs an issuer's Registrar, its own process that never touches the
 witness (@46t5otqe). ``landing`` renders a static landing page from declarations on stdin, and
-touches nothing at all (@78m6fs3g).
+touches nothing at all (@78m6fs3g). ``get`` signs one read of a control plane as an operator
+(@34sgjmxr), since the signed nouns are out of curl's reach.
 """
 
 from __future__ import annotations
 
 import json
 
-from . import backup, config, landing, metrics, pool, runner, server, supervisor
+from . import backup, config, get, landing, metrics, pool, runner, server, supervisor
 from .app import RequestCounter, make_app
 from .reader import WitnessReader
 
@@ -29,6 +30,8 @@ def main(argv=None, *, stdin=None) -> int:
     subcommand, cfg = config.parse_args(argv)
     if subcommand == "landing":
         return landing.run(cfg, stdin=stdin)
+    if subcommand == "get":
+        return get.run(cfg)
     if subcommand == "backup":
         manifest = backup.back_up(cfg)
         print(json.dumps(manifest, indent=2, sort_keys=True))
@@ -49,7 +52,8 @@ def main(argv=None, *, stdin=None) -> int:
     # inside it owns the background thread that does the exporting. Returns None, and costs
     # nothing, when no OTLP collector is configured (@wea6qjmk).
     counter = RequestCounter()
-    app = make_app(reader, counter=counter)
+    app = make_app(reader, counter=counter, operators=cfg.operators, max_age=cfg.max_age,
+                   authorities=cfg.authorities)
     _metrics = metrics.configure(  # noqa: F841 - kept alive deliberately
         reader, counter=counter
     )

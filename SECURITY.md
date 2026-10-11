@@ -45,7 +45,7 @@ There is no bug bounty. We are not able to pay for reports, and we would rather 
 
 ## Known accepted risks
 
-The control plane is **unauthenticated** in this release, and confining it is the operator's job — it must be bound to loopback and reached through a reverse proxy, never published to a network. This is a recorded decision, not an oversight: the surface is read-only and serves no key material. Signed requests (RFC 9421) are the next phase.
+Five control-plane reads are **unauthenticated** by design — health, identity, version, tags and attributes, which a probe must reach and a witness publishes anyway. The other six need an RFC 9421 signature from a named operator, and refuse everyone when none is named. The port still belongs on loopback: a signed request is good for 60 seconds, there is no replay store, and the `@authority` check is off by default, so a captured request replays to a sibling witness with the same operator inside that window. `@34sgjmxr` in `this.i` records why.
 
 A flood of queries for AIDs a witness does not hold will grow its escrow and slow it down. The cost is measured and documented in `docs/escrow-load.md`. The escrow mechanism is keripy's, but how long an entry survives and how often the sweep runs are set here, so the shape of that curve is ours — report it here. The mitigation is a rate limit at your edge.
 

@@ -249,3 +249,68 @@ class TestAttribFlag:
         )
         assert cfg.tags == ("testnet",)
         assert cfg.attribs == {"pool": "lab"}
+
+
+# -- who may read the signed nouns (@34sgjmxr) ---------------------------------------------------
+
+AID_A = "B" + "a" * 43
+AID_B = "B" + "b" * 43
+_CP = ["control-plane", "--name", "w", "--port", "5621"]
+
+
+def test_the_control_plane_names_no_operator_by_default(monkeypatch):
+    monkeypatch.delenv("WITNESS_OPERATORS", raising=False)
+    _sub, cfg = config.parse_args(_CP)
+    assert (cfg.operators, cfg.max_age, cfg.authorities) == ((), 60, ())
+
+
+def test_operators_are_repeatable_flags(monkeypatch):
+    monkeypatch.delenv("WITNESS_OPERATORS", raising=False)
+    _sub, cfg = config.parse_args([*_CP, "--operator", AID_A, "--operator", AID_B])
+    assert cfg.operators == (AID_A, AID_B)
+
+
+def test_operators_come_from_the_environment_when_no_flag_names_one(monkeypatch):
+    """The image's CMD is fixed, so the environment is how a deployment reaches into it."""
+    monkeypatch.setenv("WITNESS_OPERATORS", f" {AID_A}, {AID_B} ,")
+    _sub, cfg = config.parse_args(_CP)
+    assert cfg.operators == (AID_A, AID_B)
+
+
+def test_a_flag_wins_over_the_environment_rather_than_adding_to_it(monkeypatch):
+    monkeypatch.setenv("WITNESS_OPERATORS", AID_A)
+    _sub, cfg = config.parse_args([*_CP, "--operator", AID_B])
+    assert cfg.operators == (AID_B,)
+
+
+@pytest.mark.parametrize("bad", ["EK7ZUmFebD2st48Yvtzc9LajV3Yg2mkeeDzVRL-hhrpg", "B", "nonsense"])
+def test_an_operator_that_is_not_a_non_transferable_aid_is_refused(monkeypatch, bad):
+    monkeypatch.delenv("WITNESS_OPERATORS", raising=False)
+    with pytest.raises(InvalidArguments, match="non-transferable"):
+        config.parse_args([*_CP, "--operator", bad])
+
+
+def test_a_bad_operator_in_the_environment_is_refused_and_named_as_such(monkeypatch):
+    monkeypatch.setenv("WITNESS_OPERATORS", "nonsense")
+    with pytest.raises(InvalidArguments, match="WITNESS_OPERATORS"):
+        config.parse_args(_CP)
+
+
+def test_the_operator_list_is_bounded(monkeypatch):
+    monkeypatch.setenv("WITNESS_OPERATORS", ",".join([AID_A] * 65))
+    with pytest.raises(InvalidArguments, match="At most 64"):
+        config.parse_args(_CP)
+
+
+@pytest.mark.parametrize("age", ["0", "-5"])
+def test_max_age_must_be_positive(age):
+    with pytest.raises(InvalidArguments, match="--max-age"):
+        config.parse_args([*_CP, "--max-age", age])
+
+
+def test_authorities_are_repeatable_and_bounded():
+    _sub, cfg = config.parse_args([*_CP, "--authority", "127.0.0.1:5633", "--authority", "w:1"])
+    assert cfg.authorities == ("127.0.0.1:5633", "w:1")
+    for bad in ("", "x" * 300, "has space"):
+        with pytest.raises(InvalidArguments, match="--authority"):
+            config.parse_args([*_CP, "--authority", bad])

@@ -6,9 +6,10 @@ expects. This file replaced ``test_heti_contract.py`` when @s6v3qm moved off het
 these symbols live in was ``heti.l0``, then ``heti.ephemeral``, and is now a library of its own.
 That history is the argument for keeping a tripwire rather than trusting the import.
 
-Nothing under ``src/`` imports fiki yet; the auth path is P1. These tests are therefore about the
-assumptions the auth work will start from, and their value is that they fail BEFORE that work
-begins rather than during it.
+The Registrar and the control plane both call fiki now, so these tests pin what both call sites
+assume. Their value is that a pin bump fails here, naming the assumption that moved, rather than
+somewhere downstream — which is what happened at the py/v0.9.0 bump, where ``authorities``
+became required.
 """
 
 import inspect
@@ -20,11 +21,12 @@ from fiki import Verdict, errors as fiki_errors, verify_request
 def test_verify_request_takes_the_arguments_witness_will_pass():
     """A falcon request supplies method, url and headers directly. ``max_age`` has no default in
     fiki and must be decided at the call site, which is the argument witness has to think about
-    rather than inherit — so it is asserted here as required, not merely present."""
+    rather than inherit — so it is asserted here as required, not merely present. ``authorities``
+    joined it in py/v0.9.0, and @34sgjmxr is where the control plane decides it."""
     sig = inspect.signature(verify_request)
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in sig.parameters.values())
     required = {name for name, p in sig.parameters.items() if p.default is inspect.Parameter.empty}
-    assert required == {"method", "url", "headers", "max_age"}
+    assert required == {"method", "url", "headers", "max_age", "authorities"}
     assert {"body", "expected_aid", "skew", "now"} <= set(sig.parameters)
 
 
@@ -32,7 +34,7 @@ def test_the_verdict_carries_the_aid_an_allowlist_is_checked_against():
     """@s6v3qm's authorization is an operator-AID allowlist, so ``aid`` is the field the whole
     decision turns on. ``covered`` names what the signature actually spanned, which is the other
     half: an AID proven over components that exclude the path proves less than it appears to."""
-    assert set(Verdict.__dataclass_fields__) == {"aid", "covered"}
+    assert set(Verdict.__dataclass_fields__) == {"aid", "covered", "keyid"}
 
 
 def test_the_verdict_asserts_no_freshness_so_witness_must_pass_max_age():
@@ -69,4 +71,19 @@ def test_verify_rejects_a_transferable_aid_rather_than_best_effort_checking_it()
             url="https://witness.example/v1/witness/health",
             headers=headers,
             max_age=None,
+            authorities=None,
         )
+
+
+def test_verify_refuses_a_body_its_signature_does_not_cover():
+    """The Registrar relies on this rather than checking it again (registrar/app.py ``_signer``),
+    because a second check behind fiki's could never fire and so could never be covered. That
+    makes this test the guard: if a later fiki stops refusing an uncovered body under its default
+    minimum, it fails here instead of the Registrar quietly accepting an unbound body."""
+    from fiki import Key, sign_request
+
+    url = "https://registrar.example/v1/registrar/publication"
+    headers = sign_request(key=Key.generate(), method="POST", url=url)
+    with pytest.raises(fiki_errors.FikiError):
+        verify_request(method="POST", url=url, headers=headers, body=b'{"a":1}', max_age=None,
+                       authorities=None)

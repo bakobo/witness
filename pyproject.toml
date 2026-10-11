@@ -18,8 +18,8 @@ dependencies = [
     "waitress",
     # The RFC 9421 signer and verifier @s6v3qm rides, now a runtime dependency because the
     # Registrar (@r3aonvlz) authenticates its publishers and subscribers and signs its batches with
-    # it. Pinned at the py/v0.5.0 tag rather than main: that commit is the released Python artifact.
-    "fiki @ git+https://github.com/bakobo/fiki@f1c8999bd78d9fee7661672c92a9931fae9ab6f1#subdirectory=py",
+    # it. Pinned at the py/v0.9.0 tag rather than main: that commit is the released Python artifact.
+    "fiki @ git+https://github.com/bakobo/fiki@68972632d9b119cbd6c9491c00765b516b53f9b5#subdirectory=py",
     # RFC 8941 structured fields. Arrives through fiki too, and is declared because the Registrar
     # parses the Signature headers itself to key its replay check on the signature bytes.
     "http-sfv>=0.9",

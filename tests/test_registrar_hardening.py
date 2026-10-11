@@ -255,7 +255,7 @@ def test_a_relabelled_replay_is_refused(store):
                   if name.lower() in ("signature", "signature-input") else value
                   for name, value in delete.items()}
     fiki.verify_request(method="DELETE", url=BASE + SUBSCRIPTION, headers=relabelled,
-                        max_age=60)  # fiki itself accepts the relabelled request
+                        max_age=60, authorities=None)  # fiki itself accepts the relabelled request
     again = app.simulate_delete(SUBSCRIPTION, headers=relabelled)
     assert (again.status_code, again.json["code"]) == (409,
                                                        "e.state.conflict.registrar.replay.f")

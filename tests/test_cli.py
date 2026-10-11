@@ -134,3 +134,38 @@ def test_main_dispatches_pool_and_returns_its_exit_code(monkeypatch):
 
     assert cli.main(["pool", "ls", "--name", "lab"]) == 0
     assert (seen["config"].verb, seen["config"].name) == ("ls", "lab")
+
+
+def test_the_operator_flag_reaches_the_served_app(monkeypatch):
+    """Parsed is not wired. A signed read by the named operator gets past the guard (it then
+    fails on the absent database, which is the point: it got as far as asking), and a stranger's
+    does not (@34sgjmxr)."""
+    from falcon import testing
+    from fiki import Key, sign_request
+
+    operator, stranger = Key.generate(), Key.generate()
+    captured = {}
+    monkeypatch.setattr(server_mod, "serve", lambda app, host, port: captured.update(app=app))
+    monkeypatch.delenv("WITNESS_OPERATORS", raising=False)
+    cli.main(["control-plane", "--name", "absent-db-for-cli-wiring", "--port", "5621",
+              "--operator", operator.aid, "--no-telemetry"])
+    client = testing.TestClient(captured["app"])
+    url = "http://falconframework.org/v1/witness/controller"
+
+    admitted = client.simulate_get("/v1/witness/controller",
+                                   headers=sign_request(key=operator, method="GET", url=url))
+    refused = client.simulate_get("/v1/witness/controller",
+                                  headers=sign_request(key=stranger, method="GET", url=url))
+
+    assert admitted.status_code not in (401, 403)
+    assert refused.json["code"] == "e.grant.missing.operator.f"
+
+
+def test_main_dispatches_get(monkeypatch):
+    from witness import get as get_mod
+
+    seen = {}
+    monkeypatch.setattr(get_mod, "run", lambda cfg: seen.update(cfg=cfg) or 3)
+
+    assert cli.main(["get", "--key", "k", "--aid"]) == 3
+    assert seen["cfg"].print_aid is True

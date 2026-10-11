@@ -154,6 +154,54 @@ class ControllerUnknown(WitnessError):
     status = 404
 
 
+class ControlUnauthenticated(WitnessError):
+    """A signed control-plane read arrived unsigned, stale, or with a signature that fails (@34sgjmxr)."""
+
+    code = "e.id.invalid.control.f"
+    title = "I could not verify a signature over that request, so I will not answer it."
+    status = 401
+
+
+class ControlDenied(WitnessError):
+    """The signature is genuine, but the signer is not an operator of this witness (@34sgjmxr)."""
+
+    code = "e.grant.missing.operator.f"
+    title = "That signer is not an operator of this witness."
+    status = 403
+
+
+class ControlUnreachable(WitnessError):
+    """``witness get`` could not reach the control plane it was pointed at."""
+
+    code = "e.env.control.unavailable.r"
+    title = "I could not reach that control plane."
+    status = 503
+
+
+class ControlIncomplete(WitnessError):
+    """A control plane's answer to ``witness get`` arrived cut off or with broken framing."""
+
+    code = "e.env.control.incomplete.r"
+    title = "That control plane's answer did not arrive whole."
+    status = 502
+
+
+class OperatorKeyUnusable(WitnessError):
+    """``witness get`` was given a key it cannot sign with. Never quotes the key."""
+
+    code = "e.input.format.operatorkey.f"
+    title = "That operator key is not one I can sign with."
+    status = 400
+
+
+class ResponseTooLarge(WitnessError):
+    """A control plane's answer to ``witness get`` exceeded its bound, refused unread."""
+
+    code = "e.input.range.response.f"
+    title = "That answer is larger than I will read."
+    status = 413
+
+
 class TelemetryNotConfigured(WitnessError):
     """This control plane was not told where the witness publishes telemetry.
 

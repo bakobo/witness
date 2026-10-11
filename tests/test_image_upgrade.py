@@ -23,6 +23,7 @@ import urllib.error
 import urllib.request
 import uuid
 
+import fiki
 import pytest
 
 IMAGE = os.environ.get("WITNESS_IMAGE")
@@ -46,6 +47,11 @@ needs_baseline = pytest.mark.skipif(
 
 _KERI_HOME = "/usr/local/var/keri"
 
+#: The operator every container here is started with (@34sgjmxr). An image from before the signed
+#: reads ignores both the variable and the signature, so the same calls work across a handover,
+#: which is also the upgrade an operator performs: set WITNESS_OPERATORS, then replace the image.
+OPERATOR = fiki.Key.generate()
+
 
 def _docker(*args, check=True, **kwargs):
     return subprocess.run(
@@ -63,7 +69,10 @@ def _free_port():
 
 
 def _get(port, path):
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:  # noqa: S310
+    url = f"http://127.0.0.1:{port}{path}"
+    request = urllib.request.Request(url, headers=fiki.sign_request(key=OPERATOR, method="GET",
+                                                                    url=url))
+    with urllib.request.urlopen(request, timeout=5) as resp:  # noqa: S310
         return json.loads(resp.read().decode())
 
 
@@ -90,6 +99,7 @@ def _start(volume, container, control_port, image=None):
         "run", "-d", "--name", container,
         "-v", f"{volume}:{_KERI_HOME}",
         "-p", f"127.0.0.1:{control_port}:5633",
+        "-e", f"WITNESS_OPERATORS={OPERATOR.aid}",
         image or IMAGE,
     )
     _await_ready(container, control_port)
@@ -422,7 +432,7 @@ def test_a_witness_restored_from_backup_still_witnesses(volume):
         _docker(
             "run", "-d", "--name", live,
             "-v", f"{name}:{_KERI_HOME}", "-v", f"{backup_volume}:/backup",
-            "-p", f"127.0.0.1:{port_a}:5633", IMAGE,
+            "-p", f"127.0.0.1:{port_a}:5633", "-e", f"WITNESS_OPERATORS={OPERATOR.aid}", IMAGE,
         )
         _await_ready(live, port_a)
         witness_aid, controller, witnessed = _witness_for(

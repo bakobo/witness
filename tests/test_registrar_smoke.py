@@ -78,7 +78,7 @@ def test_console_script_publishes_and_pushes_a_signed_batch(tmp_path):
         assert arrived.wait(10), "no batch arrived within the window"
         url, headers, body = received[0]
         fiki.verify_request(method="POST", url=url, headers=headers, body=body, max_age=60,
-                            expected_aid=announced["aid"])
+                            expected_aid=announced["aid"], authorities=None)
         batch = json.loads(body)
         assert (batch["number"], batch["full"]) == (1, True)
         assert batch["subscription"] == "nonce-00000000000000"

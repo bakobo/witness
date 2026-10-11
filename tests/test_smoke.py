@@ -1,5 +1,5 @@
 """Install-and-invoke oracle: start the REAL ``witness`` console script against a real witness
-DB in a subprocess and confirm it serves /healthz and /info over HTTP.
+DB in a subprocess and confirm it serves the open nouns, and the signed ones only to an operator.
 
 This is an additional end-to-end oracle (ledger #19: a suite can pass while the shipped entry
 point is unrunnable); it is deliberately not relied upon for coverage.
@@ -40,9 +40,24 @@ def witness_db(tmp_path):
     return head, pre
 
 
-def test_console_script_serves_the_versioned_control_plane(witness_db):
+def _operator_key(path):
+    """An OpenSSH Ed25519 private key file, as `ssh-keygen -t ed25519 -N ''` writes one."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from fiki import Key
+
+    private = Ed25519PrivateKey.generate()
+    path.write_bytes(private.private_bytes(serialization.Encoding.PEM,
+                                           serialization.PrivateFormat.OpenSSH,
+                                           serialization.NoEncryption()))
+    return Key.from_seed(private.private_bytes_raw()).aid
+
+
+def test_console_script_serves_the_versioned_control_plane(witness_db, tmp_path):
     head, pre = witness_db
     port = _free_port()
+    key = tmp_path / "operator"
+    operator = _operator_key(key)
     proc = subprocess.Popen(
         [
             "uv", "run", "witness", "control-plane",
@@ -53,6 +68,7 @@ def test_console_script_serves_the_versioned_control_plane(witness_db):
             "--no-telemetry",
             "--tag", "testnet",
             "--attrib", "operator=Bakobo",
+            "--operator", operator,
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -93,6 +109,18 @@ def test_console_script_serves_the_versioned_control_plane(witness_db):
             "attribs": {"operator": "Bakobo"},
             "source": "operator-config",
         }
+
+        # @34sgjmxr through the shipped binaries: the signed nouns refuse curl and answer the
+        # operator's `witness get`, so the flag, the guard and the signer all meet for real.
+        with pytest.raises(urllib.error.HTTPError) as unsigned:
+            _get_json(base + "/v1/witness/controller")
+        assert unsigned.value.code == 401
+        signed = subprocess.run(
+            ["uv", "run", "witness", "get", "--key", str(key), base + "/v1/witness/controller"],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert signed.returncode == 0, signed.stderr
+        assert "controllers" in json.loads(signed.stdout)
     finally:
         proc.terminate()
         with contextlib.suppress(subprocess.TimeoutExpired):

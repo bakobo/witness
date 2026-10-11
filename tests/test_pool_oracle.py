@@ -22,13 +22,14 @@ import json
 import os
 import socket
 import subprocess
+import urllib.error
 import urllib.request
 import uuid
 
 import pytest
 
 from witness.config import PoolConfig
-from witness.pool import LABEL, Pool
+from witness.pool import LABEL, Pool, fetch_json
 
 IMAGE = os.environ.get("WITNESS_IMAGE")
 
@@ -147,10 +148,16 @@ def test_a_pool_comes_up_resolves_and_goes_away_completely(pool):
         # this does check is that the member is served and that a witness does not spuriously
         # inherit from itself. The inheritance path is proven against a real keripy database in
         # tests/test_reader.py, where a controller can be incepted to designate the witness.
-        with urllib.request.urlopen(  # noqa: S310
-            f"{witness['control']}v1/witness/controller/{witness['aid']}", timeout=20
-        ) as answer:
-            held = json.loads(answer.read().decode())
+        # The controller nouns are signed (@34sgjmxr): refused to anyone, answered to the pool's
+        # own operator, whose seed the pool keeps on the container's label.
+        url = f"{witness['control']}v1/witness/controller/{witness['aid']}"
+        with pytest.raises(urllib.error.HTTPError) as unsigned:
+            urllib.request.urlopen(url, timeout=20)  # noqa: S310
+        assert unsigned.value.code == 401
+        (labelled,) = [held for held in Pool(PoolConfig(verb="status", name=name))._containers()
+                       if held.alias == witness["alias"]]
+        held = fetch_json(url, timeout=20, key=labelled.key)
+        assert held is not None, "the pool's own operator was refused"
         assert held["tags"]["derived"] == [], (
             "a witness has no witnesses, so its own AID inherits nothing"
         )
@@ -163,7 +170,9 @@ def test_a_broken_witness_stops_answering_and_a_healed_one_answers_again(pool):
     name, base = pool
     _run("up", name, count=2, base_port=base, timeout=180)
 
-    assert "ok" in _run("status", name)
+    report = _run("status", name)
+    assert "ok" in report
+    assert "controllers unknown" not in report, "status could not sign its controller read"
 
     _run("break", name, witness="w2")
     broken = _run("status", name)

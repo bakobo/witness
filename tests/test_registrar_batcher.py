@@ -47,7 +47,8 @@ def test_each_window_sends_one_signed_batch_to_each_subscriber(store):
                                                            "http://127.0.0.1:1/b"]
     url, body, headers = transport.sent[0]
     verdict = fiki.verify_request(method="POST", url=url, headers=headers, body=body,
-                                  max_age=None, expected_aid=store.key().aid)
+                                  max_age=None, expected_aid=store.key().aid,
+                                  authorities=None)
     assert "content-digest" in verdict.covered
     batch = json.loads(body)
     assert batch["registrar"] == store.key().aid
