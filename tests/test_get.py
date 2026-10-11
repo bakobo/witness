@@ -215,9 +215,10 @@ def test_a_truncated_answer_is_not_success(key_file):
     assert err.startswith("e.env.control.incomplete.r: ")
 
 
-@pytest.mark.parametrize("length", [b"100 ", b"1" * 5000, b"-1", b"abc"])
+@pytest.mark.parametrize("length", [b"100 ", b"1" * 5000, b"-1", b"abc", b"2\r\nContent-Length: 100"])
 def test_a_content_length_that_is_padded_long_or_not_a_number_is_not_success(key_file, length):
-    """The fix pass on #31: a padded length skipped the check, and a 5000-digit one overflowed int()."""
+    """The fix pass on #31: a padded length skipped the check, and a 5000-digit one overflowed int(),
+    and two that disagree were read as the first."""
     path, _key = key_file
     url = _serve_once(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
                       b"Content-Length: " + length + b"\r\nConnection: close\r\n\r\n{}")

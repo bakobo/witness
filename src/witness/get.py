@@ -83,10 +83,18 @@ def _bounded(response) -> bytes:
     if len(body) > MAX_RESPONSE_BYTES:
         raise ResponseTooLarge(f"The answer is over {MAX_RESPONSE_BYTES} bytes, so I stopped "
                                "reading it.")
-    declared = (getattr(response, "headers", None) or {}).get("Content-Length")
-    if declared is None:
+    headers = getattr(response, "headers", None) or {}
+    if hasattr(headers, "get_all"):
+        lengths = headers.get_all("Content-Length") or []
+    else:  # a plain mapping holds one value; a comma-joined pair then fails isdigit below
+        lengths = [v for v in (headers.get("Content-Length"),) if v is not None]
+    if not lengths:
         return body
-    declared = declared.strip()  # http.client strips it too, and then honours it
+    # http.client strips the first and honours it, so two that disagree make the framing a guess.
+    if len({length.strip() for length in lengths}) > 1:
+        raise ControlIncomplete(f"The answer carried {len(lengths)} Content-Lengths that "
+                                "disagree, so its end is ambiguous.")
+    declared = lengths[0].strip()
     if not declared.isdigit() or len(declared) > _MAX_LENGTH_DIGITS:
         raise ControlIncomplete(f"The answer's Content-Length is not a length: {declared[:40]!r}.")
     if int(declared) != len(body):

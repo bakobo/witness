@@ -181,9 +181,15 @@ class Witness:
         padded = self.operator + "=" * (-len(self.operator) % 4)
         try:
             # validate=True: the lenient decoder drops stray characters and still yields a key.
-            return fiki.Key.from_seed(base64.b64decode(padded, altchars=b"-_", validate=True))
+            seed = base64.b64decode(padded, altchars=b"-_", validate=True)
+            key = fiki.Key.from_seed(seed)
         except (ValueError, fiki.FikiError):  # binascii.Error is a ValueError
             return None
+        # A label that is not the seed's one encoding was not written by _up: stray low bits in
+        # the last character decode to the same seed, so only a round trip tells them apart.
+        if base64.urlsafe_b64encode(seed).rstrip(b"=").decode() != self.operator:
+            return None
+        return key
 
     @property
     def http_url(self) -> str:
