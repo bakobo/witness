@@ -25,6 +25,7 @@ from witness.errors import (
     PoolUnknown,
     WitnessUnknown,
 )
+from witness.hardening import RUN_FLAGS
 from witness.pool import Pool
 
 # What `docker ps -a --format ...` returns for a healthy two-witness pool, in docker's own order
@@ -139,6 +140,21 @@ class TestUp:
         for call in docker.matching("volume create") + docker.matching("run -d"):
             assert "--label bakobo.pool=lab" in call
         assert "--label bakobo.pool.witness=w2" in docker.matching("run -d")[1]
+
+    def test_every_container_the_pool_runs_is_hardened(self):
+        """@4hwwhshr: init, seed and witness alike, so the pool oracle proves the image works
+        under the flag set the deployment uses rather than under Docker's defaults."""
+        docker = FakeDocker(script={"ps -a": ""})
+        pool, _ = _pool("up", docker=docker, fetch=FakeFetch(_healthy()), count=1)
+        pool.run()
+
+        runs = [argv for argv in docker.argvs if argv[0] == "run"]
+        assert len(runs) == 3
+        width = len(RUN_FLAGS)
+        for argv in runs:
+            windows = [tuple(argv[i:i + width]) for i in range(len(argv) - width + 1)]
+            assert RUN_FLAGS in windows, f"unhardened: {argv}"
+            assert argv.index(RUN_FLAGS[0]) < argv.index("-v"), "flags precede the image"
 
     def test_ports_step_by_ten_from_the_base_and_bind_to_loopback(self):
         docker = FakeDocker(script={"ps -a": ""})

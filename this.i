@@ -847,6 +847,12 @@ Operator layer over a stock keripy witness = goal:
             verify_request requires `authorities` to be decided at the call site as it already
             required max_age.
 
+          children:
+            Production leaves authority binding off because a tunnel's address names no witness = decision:
+              nid: 0h9r92wk
+              why: >-
+                Revisited 2026-10-12, when the pool's public hostnames became known and fiki moved to py/v0.10.0, and the answer is still to leave --authority unset in production. @34sgjmxr made binding opt-in; this node asks whether a deployment shaped like Bakobo's should opt in, and finds it buys nothing. The control plane is published to 127.0.0.1 only and operators reach it over an SSH tunnel, so the @authority a caller signs is the local end it dialled, such as 127.0.0.1:5633 or localhost:15633. That value is the same for every witness in a pool, or arbitrary per operator, so it cannot tell one witness from a sibling, and telling them apart is the only thing binding would add: the threat it answers is @34sgjmxr's accepted tradeoff, a request signed for one witness replayed to a sibling that lists the same operator inside max_age. Listing the loopback spellings would only force every operator onto one local port and turn each new tunnel into a configuration change, which @34sgjmxr already rejected. Binding to the public hostname instead would discriminate, but the signer would have to dial that name and have it resolve to the tunnel's loopback end, so it needs a hosts-file or ssh_config trick on every operator machine to defend against an attacker who must already be able to capture loopback traffic on one pool host and reach loopback on another. Rejected configuring it anyway as defence in depth: a check that every legitimate caller has to work around is one the next operator disables. Revisit when the control plane is reachable at an address the server can know in advance, such as behind a reverse proxy at its own hostname; there --authority is cheap and meaningful, and should be set to that host:port.
+
     Implement in Python to reuse keripy = decision:
       id: d4h7kt
       why: >
@@ -1059,6 +1065,54 @@ Operator layer over a stock keripy witness = goal:
             versions, rather than failing in a way that reads as a broken upgrade. Rehearsing the
             migration itself remains unbuilt and remains the larger gap; this closes the smaller
             one and makes the larger one visible instead of implicit.
+
+        The image runs with a read-only root  no capabilities  no new privileges and a bounded process table = decision:
+          nid: 4hwwhshr
+          why: >
+            Every `docker run` of this image — the witness itself, `kli init`, `kli migrate`, a
+            restore's copy, a pool's seeding step — passes exactly this set, held once in
+            `witness.hardening.RUN_FLAGS` so the oracles, the pool and the docs cannot drift from
+            one another:
+                --read-only
+                --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m
+                --cap-drop ALL
+                --security-opt no-new-privileges
+                --pids-limit 128
+            WRITABLE-PATH INVENTORY, found empirically on 2026-10-12 rather than reasoned out:
+            (1) /usr/local/var/keri, the data volume — keystore, event database, credential store,
+            mailbox, config, decls seed and the telemetry segment. It MUST stay writable, and not
+            only for the writer: LMDB silently omits its lock file on a read-only filesystem and a
+            reader then loses data inside its own transaction (@a24p3kbw), so the root filesystem
+            goes read-only and this volume deliberately does not. (2) /backup, only where backups
+            are taken; `witness backup` writes there and nowhere else. (3) /tmp, as a tmpfs.
+            Without it nothing starts: hio's Ogler calls tempfile.gettempdir() at IMPORT time, so
+            `import keri` raises FileNotFoundError before any witness code runs — `kli init`
+            included. Measured usage is zero bytes, so 16m is a ceiling against misuse rather than
+            a budget, and noexec costs nothing because nothing executes from it. Nothing else is
+            written: HOME is never touched and bytecode is compiled at build time.
+            The capability set is empty because nothing needs one: the image already runs as uid
+            1001, binds only ports above 1024, and a restore's `cp -a` preserves ownership the
+            process already holds, so CAP_CHOWN is never exercised. Measured inside the running
+            container: CapEff 0, NoNewPrivs 1. no-new-privileges closes the setuid route back to
+            any of them. The pids limit is 128 against a measured peak of 14 tasks (supervisor,
+            the witness, the control plane's five waitress threads, an OTLP exporter thread, a
+            `docker exec` backup and the HEALTHCHECK's interpreter); a limit near the peak would
+            turn a burst of control-plane threads into a refused thread in the witness, which
+            fails worse than the fork bomb the limit exists to stop, so the headroom is the point.
+            PROVEN BY THE ORACLES, not asserted: tests/test_image_smoke.py, test_image_upgrade.py
+            and the pool (therefore test_pool_oracle.py) start every container with RUN_FLAGS, and
+            one smoke test reads CapEff, NoNewPrivs, pids.max and a refused write to /usr from
+            inside the running container, so a runtime that silently ignored a flag fails CI
+            instead of passing it. The baseline image in the two-version handover runs under the
+            same flags, because a rollback to the deployed digest would.
+            Rejected a custom seccomp or AppArmor profile: Docker's defaults already apply, and a
+            hand-written profile is a maintenance burden that breaks on the next keripy dependency
+            with a syscall nobody listed. Rejected --user in the run line: the image's USER 1001 is
+            already the contract, and restating it would let the two disagree. Rejected baking a
+            TMPDIR into the volume: temporary files have no business outliving the container or
+            sharing a filesystem with the keystore. Accepted tradeoff: an operator who forgets the
+            tmpfs gets a container that will not start at all, which is loud, and a `docker exec`
+            debugging session cannot install anything — which is the point.
 
     Throwaway witness pools are a verb of this repo's own CLI = decision:
       id: n2bgpdds

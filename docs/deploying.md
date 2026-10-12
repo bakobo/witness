@@ -14,8 +14,16 @@ Take the digest from the run triggered by the **release tag**, not from the earl
 
 One container, two processes, one PID namespace. A supervisor is PID 1; it starts `witness run` and `witness control-plane`, forwards `SIGTERM` to both, and applies an asymmetric failure policy — the control plane crashing restarts it and leaves the witness alone, the witness exiting takes the container down.
 
+Run it hardened (`@4hwwhshr`). Every `docker run` in this document passes the same flags, so define them once:
+
 ```
-docker run -d --name witness \
+HARDENED="--read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m --cap-drop ALL --security-opt no-new-privileges --pids-limit 128"
+```
+
+The root filesystem is read-only, every capability is dropped, setuid cannot regain one, and the process table is bounded at 128 tasks against a measured peak of 14. Three paths stay writable, and only three: the data volume at `/usr/local/var/keri`, `/backup` where backups are taken, and `/tmp` as a small tmpfs. The tmpfs is not optional — hio resolves a temporary directory when it is imported, so without it `import keri` fails and nothing starts, `kli init` included. **Never mount the data volume read-only**: LMDB then silently drops its lock file and readers lose data (see the second silent failure below). `tests/test_image_smoke.py`, `tests/test_image_upgrade.py` and the pool oracle run every container under exactly these flags, and one test reads the result from inside the running container, so CI proves the image works hardened. A test also holds this document to the flag set in `witness.hardening.RUN_FLAGS`. In a systemd unit, which has no shell, write the flags out in full.
+
+```
+docker run -d --name witness $HARDENED \
     -v witness-data:/usr/local/var/keri \
     -p 127.0.0.1:5631:5631 \
     -p 127.0.0.1:5633:5633 \
@@ -28,7 +36,7 @@ docker run -d --name witness \
 A keystore must exist in the volume before first start. `--nopasscode` leaves the witness's signing key **unencrypted at rest in the volume**, which is accepted deliberately: an encrypted keystore needs its passcode supplied at every start, so the passcode would have to live on the same host as the volume and would protect nothing against the threat that matters (host compromise). What does protect it is the volume's own access control. Do not copy the volume anywhere the host's uid boundary does not follow.
 
 ```
-docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
+docker run --rm $HARDENED -v witness-data:/usr/local/var/keri --entrypoint kli \
     ghcr.io/bakobo/witness@sha256:<digest> init --name witness --nopasscode
 ```
 
@@ -42,7 +50,7 @@ The volume must persist. It holds the keystore, the AID, the KEL and every recei
 
 ## Three things that are silent when wrong
 
-**1. Publish to loopback, and put firewall rules in `DOCKER-USER`.** Docker's published-port rules are inserted in the `DOCKER` chain and **bypass `INPUT` entirely**, so `nftables`/`iptables` rules written in `INPUT` do not apply to a published container port. They will look configured and do nothing. `-p 127.0.0.1:...` is the confinement that actually holds; any rate limiting goes in `DOCKER-USER`.
+**1. Publish to loopback, and rate-limit where public traffic actually arrives.** Docker inserts its published-port rules in the `DOCKER` chain, which hangs off `FORWARD` and **bypasses `INPUT` entirely**, so a container port published to the world is not reached by `nftables`/`iptables` rules written in `INPUT`. They will look configured and do nothing. `-p 127.0.0.1:...` is the confinement that actually holds. With every port on loopback and Caddy running as a host process in front of 5631, public traffic terminates at Caddy, a local socket, so it traverses `INPUT` and never touches the `DOCKER` chain. Per-client-IP limits therefore belong in an `nftables` table of your own hooked on `input`, matched on Caddy's public ports; rules in `DOCKER-USER` would never see a public client, and at best Caddy's own loopback hop to the container, where every client looks like 127.0.0.1. `DOCKER-USER` is the right place only if you publish a container port publicly instead, which this guide does not recommend.
 
 **2. Do not split the two processes across containers.** It looks like better isolation and it is broken. LMDB's reader-registration protocol takes an `fcntl` byte-range lock at an offset equal to the reader's own pid, which assumes one PID namespace; two containers both running their process as pid 1 collide, and the control plane fails to open the database at all. Mounting the database read-only appears to fix that and makes it far worse — LMDB silently omits its lock file on a read-only filesystem, the reader stops publishing its snapshot id, and the writer recycles pages underneath it. Measured: a reader lost all 2000 keys it had just read, inside its own transaction, with no error raised. `@a24p3kbw` has the full account; the evidence is in `.ignored/lmdb-two-container-analysis.md`.
 
@@ -125,7 +133,7 @@ With a baseline set, the deployed image creates the volume, initialises the keys
 **A keripy pin that moves forward past a migration.** keripy records a version in the database and refuses to open one that is behind the library, so the witness will not start. The control plane reports `e.self.config.migration.f` — permanent, not retryable, because no amount of waiting clears it:
 
 ```
-docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
+docker run --rm $HARDENED -v witness-data:/usr/local/var/keri --entrypoint kli \
     ghcr.io/bakobo/witness@sha256:<new-digest> migrate run --name witness
 ```
 
@@ -140,7 +148,8 @@ So: **take a backup before any upgrade that changes the keripy pin**, and treat 
 `witness backup` takes a **transactionally consistent** snapshot of every store using LMDB's own `env.copy`, from a read-only environment, **while the witness keeps running and keeps receipting**:
 
 ```
-docker run -d --name witness -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
+docker run -d --name witness $HARDENED \
+    -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
     ghcr.io/bakobo/witness@sha256:<digest>
 docker exec witness witness backup --name witness --to /backup/$(date +%F)
 ```
@@ -160,10 +169,10 @@ Restore is a directory copy, which is why the backup mirrors the layout of the k
 ```
 docker rm -f witness
 docker volume rm witness-data && docker volume create witness-data
-docker run --rm -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
+docker run --rm $HARDENED -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
     --entrypoint sh ghcr.io/bakobo/witness@sha256:<digest> \
     -c 'cp -a /backup/<date>/. /usr/local/var/keri/'
-docker run -d --name witness -v witness-data:/usr/local/var/keri ... 
+docker run -d --name witness $HARDENED -v witness-data:/usr/local/var/keri ...
 ```
 
 Exercised end to end by `tests/test_image_upgrade.py`, which backs up a running witness, **destroys the volume**, restores from the backup alone, and then checks not only that the AID and witnessed key state came back but that the restored witness accepts and receipts a **new** event — the assertion that proves the signing keys came with it.

@@ -9,7 +9,8 @@ That history is the argument for keeping a tripwire rather than trusting the imp
 The Registrar and the control plane both call fiki now, so these tests pin what both call sites
 assume. Their value is that a pin bump fails here, naming the assumption that moved, rather than
 somewhere downstream — which is what happened at the py/v0.9.0 bump, where ``authorities``
-became required.
+became required. The py/v0.10.0 bump moved nothing witness calls; its changes are stricter input
+checks (header lists, keyid shape, IP-literals) and messages that quote values safely.
 """
 
 import inspect
@@ -87,3 +88,21 @@ def test_verify_refuses_a_body_its_signature_does_not_cover():
     with pytest.raises(fiki_errors.FikiError):
         verify_request(method="POST", url=url, headers=headers, body=b'{"a":1}', max_age=None,
                        authorities=None)
+
+
+def test_the_authority_a_signature_binds_is_the_address_the_caller_dialled():
+    """@0h9r92wk leaves ``--authority`` unset in production because, over an SSH tunnel, the
+    ``@authority`` a caller signs is the tunnel's local end rather than anything naming the
+    witness. That reasoning holds only while fiki reads the authority from the URL as signed and
+    refuses one outside ``authorities``; if either stops being true, the decision is revisited
+    here rather than discovered in production."""
+    from fiki import Key, sign_request
+
+    dialled = "http://127.0.0.1:15633/v1/witness/loop"
+    headers = sign_request(key=Key.generate(), method="GET", url=dialled)
+    verdict = verify_request(method="GET", url=dialled, headers=headers, max_age=60,
+                             authorities=("127.0.0.1:15633",))
+    assert "@authority" in verdict.covered
+    with pytest.raises(fiki_errors.SignatureMismatch):
+        verify_request(method="GET", url=dialled, headers=headers, max_age=60,
+                       authorities=("witness.example:5633",))
