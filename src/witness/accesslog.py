@@ -48,22 +48,25 @@ def render(record):
     return json.dumps(record, separators=(",", ":"))
 
 
-def record_of(req, resp):
-    """The line's fields for one finished request, from what the endpoint left on the context."""
+def record_of(req, resp, status=None):
+    """The line's fields for one finished request, from what the endpoint left on the context.
+
+    ``status`` overrides the response's own, for a response falcon is about to turn into a 500.
+    """
     context = req.context
     return {
         "event.name": EVENT_NAME,
         "bakobo.request.id": getattr(context, "request_id", None),
         "http.request.method": req.method if req.method in KNOWN_METHODS else "_OTHER",
         "http.route": req.uri_template,
-        "http.response.status_code": int(str(resp.status)[:3]),
+        "http.response.status_code": status or int(str(resp.status)[:3]),
         "bakobo.control.outcome": getattr(context, "outcome", None),
         "error.type": getattr(context, "error_type", None),
         "enduser.id": getattr(context, "signer", None),
     }
 
 
-def write_line(line):
+def write_line(line):  # ~3h2y
     """Write one line to stderr as it is now, and flush, so journald sees it immediately."""
     sys.stderr.write(line + "\n")
     sys.stderr.flush()
@@ -76,7 +79,20 @@ class AccessLog:
         self._emit = emit
 
     def process_response(self, req, resp, resource, req_succeeded):
+        # falcon serialises media only after every response middleware has run, so a body that
+        # cannot be serialised turns a 200 into a 500 after a line read from resp.status would
+        # already say 200. Serialising here, first, makes the logged status the one that is sent;
+        # the result is cached on resp, so falcon does not serialise twice. The failure is
+        # re-raised so falcon renders its 500 exactly as it would have.
         try:
-            self._emit(render(record_of(req, resp)))
+            resp.render_body()
+        except Exception:
+            self._write(req, resp, status=500)
+            raise
+        self._write(req, resp)
+
+    def _write(self, req, resp, status=None):
+        try:
+            self._emit(render(record_of(req, resp, status)))
         except Exception:  # noqa: BLE001 - a log line is never worth a failed request
             pass

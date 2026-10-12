@@ -218,6 +218,17 @@ def test_an_open_read_that_fails_is_open_with_its_code(captured):
     assert (line["bakobo.control.outcome"], line["error.type"]) == ("open", DbUnavailable.code)
 
 
+def test_a_body_that_cannot_be_serialised_is_logged_as_the_500_it_becomes(captured):
+    """falcon serialises media after response middleware, so a line written from the status alone
+    would report a 200 the client never got. The log serialises first and logs what happens."""
+    response = _client(captured, reader=StubReader(health=object())).simulate_get(
+        "/v1/witness/health"
+    )
+
+    assert response.status_code == 500
+    assert captured.only()["http.response.status_code"] == 500
+
+
 def test_an_unmatched_path_logs_no_route_and_no_outcome(captured):
     _client(captured).simulate_get("/v1/witness/nothing-here")
 
