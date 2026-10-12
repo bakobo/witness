@@ -739,38 +739,41 @@ Operator layer over a stock keripy witness = goal:
             proved is a claim, and logging claims would let a forger write any name into
             the audit trail. The outcome is the guard's verdict, not the response's: an
             admitted read whose reader then fails is admitted with an error.type, and an
-            unguarded noun is open. Never logged: signatures, keys, Signature-Input, any
-            header value but the request id, the raw path (controller/{aid} would carry
-            caller text), the query string, fiki's refusal detail (it quotes the
-            caller's headers, so only the code goes in), and the client address (the
-            port binds loopback, so the peer is always the host or a tunnel end and
-            identifies nobody). Open reads get a line too: an access record that skips
-            some requests cannot answer whether anyone asked, and an enumeration of the
-            open nouns is itself signal. The cost is the healthcheck's 2880 lines a day,
-            about 0.7 MB, inside the 100 MB json-file rotation and the hosted tier. The
-            line is bounded whatever the caller sends: the request id is at most 64
-            characters from _acceptable_request_id's alphabet or a minted uuid; the
-            route is a template from a finite set or null; the method is a known verb or
-            "_OTHER", which is semconv's own rule and is load-bearing here, because
-            falcon passes a method of any length up to waitress's header bound into
-            req.method; the AID is 44 characters, because fiki derives it from a 32-byte
-            key; error codes are module literals. A test holds the worst case under 512
-            bytes. Logging cannot break or slow a request: the middleware swallows any
-            failure to build or queue the line, and a writer thread drains a bounded
-            queue to stderr, so a stalled journal fills the queue and drops lines rather
-            than blocking a waitress thread (@c7v3kp's reasoning, applied to the control
-            plane's own callers). Rejected the OTel logs SDK exporting over OTLP: it
-            would bypass the journal and so journalctl, needs a collector endpoint the
-            image runs without, and its Python logs API is not yet stable. Rejected
-            Python's logging module with a JSON formatter: keripy is imported into this
-            process and owns logging configuration there, and the line's shape is the
-            contract, so a direct writer is fewer moving parts than defending a handler
-            against someone else's dictConfig. Rejected a timestamp field: journald and
-            docker stamp every line, and a second clock can only disagree. Accepted
-            tradeoffs: lines dropped from a full queue are counted only in-process and
-            not exported, chosen over ever slowing a request at what is human-rate
-            traffic; and a request waitress refuses before falcon sees it gets no line,
-            with no Caddy in front of this port to record it instead.
+            unguarded noun is open. The outcome is null when no endpoint ran at all,
+            which is an unmatched path or a method falcon refuses itself: nothing was
+            guarded or disclosed, and calling it open would claim a decision nobody
+            made. Never logged: signatures, keys, Signature-Input, any header value but
+            the request id, the raw path (controller/{aid} would carry caller text), the
+            query string, fiki's refusal detail (it quotes the caller's headers, so only
+            the code goes in), and the client address (the port binds loopback, so the
+            peer is always the host or a tunnel end and identifies nobody). Open reads
+            get a line too: an access record that skips some requests cannot answer
+            whether anyone asked, and an enumeration of the open nouns is itself signal.
+            The cost is the healthcheck's 2880 lines a day, about 0.7 MB, inside the 100
+            MB json-file rotation and the hosted tier. The line is bounded whatever the
+            caller sends: the request id is at most 64 characters from
+            _acceptable_request_id's alphabet or a minted uuid; the route is a template
+            from a finite set or null; the method is a known verb or "_OTHER", which is
+            semconv's own rule and is load-bearing here, because falcon passes a method
+            of any length up to waitress's header bound into req.method; the AID is 44
+            characters, because fiki derives it from a 32-byte key; error codes are
+            module literals. A test holds the worst case under 512 bytes. Logging cannot
+            break or slow a request: the middleware swallows any failure to build or
+            queue the line, and a writer thread drains a bounded queue to stderr, so a
+            stalled journal fills the queue and drops lines rather than blocking a
+            waitress thread (@c7v3kp's reasoning, applied to the control plane's own
+            callers). Rejected the OTel logs SDK exporting over OTLP: it would bypass
+            the journal and so journalctl, needs a collector endpoint the image runs
+            without, and its Python logs API is not yet stable. Rejected Python's
+            logging module with a JSON formatter: keripy is imported into this process
+            and owns logging configuration there, and the line's shape is the contract,
+            so a direct writer is fewer moving parts than defending a handler against
+            someone else's dictConfig. Rejected a timestamp field: journald and docker
+            stamp every line, and a second clock can only disagree. Accepted tradeoffs:
+            lines dropped from a full queue are counted only in-process and not
+            exported, chosen over ever slowing a request at what is human-rate traffic;
+            and a request waitress refuses before falcon sees it gets no line, with no
+            Caddy in front of this port to record it instead.
 
     Authenticate with RFC 9421 message signatures via fiki = decision:
       id: s6v3qm
