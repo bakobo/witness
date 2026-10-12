@@ -989,6 +989,54 @@ Operator layer over a stock keripy witness = goal:
             migration itself remains unbuilt and remains the larger gap; this closes the smaller
             one and makes the larger one visible instead of implicit.
 
+        The image runs with a read-only root  no capabilities  no new privileges and a bounded process table = decision:
+          nid: 4hwwhshr
+          why: >
+            Every `docker run` of this image — the witness itself, `kli init`, `kli migrate`, a
+            restore's copy, a pool's seeding step — passes exactly this set, held once in
+            `witness.hardening.RUN_FLAGS` so the oracles, the pool and the docs cannot drift from
+            one another:
+                --read-only
+                --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m
+                --cap-drop ALL
+                --security-opt no-new-privileges
+                --pids-limit 128
+            WRITABLE-PATH INVENTORY, found empirically on 2026-10-12 rather than reasoned out:
+            (1) /usr/local/var/keri, the data volume — keystore, event database, credential store,
+            mailbox, config, decls seed and the telemetry segment. It MUST stay writable, and not
+            only for the writer: LMDB silently omits its lock file on a read-only filesystem and a
+            reader then loses data inside its own transaction (@a24p3kbw), so the root filesystem
+            goes read-only and this volume deliberately does not. (2) /backup, only where backups
+            are taken; `witness backup` writes there and nowhere else. (3) /tmp, as a tmpfs.
+            Without it nothing starts: hio's Ogler calls tempfile.gettempdir() at IMPORT time, so
+            `import keri` raises FileNotFoundError before any witness code runs — `kli init`
+            included. Measured usage is zero bytes, so 16m is a ceiling against misuse rather than
+            a budget, and noexec costs nothing because nothing executes from it. Nothing else is
+            written: HOME is never touched and bytecode is compiled at build time.
+            The capability set is empty because nothing needs one: the image already runs as uid
+            1001, binds only ports above 1024, and a restore's `cp -a` preserves ownership the
+            process already holds, so CAP_CHOWN is never exercised. Measured inside the running
+            container: CapEff 0, NoNewPrivs 1. no-new-privileges closes the setuid route back to
+            any of them. The pids limit is 128 against a measured peak of 14 tasks (supervisor,
+            the witness, the control plane's five waitress threads, an OTLP exporter thread, a
+            `docker exec` backup and the HEALTHCHECK's interpreter); a limit near the peak would
+            turn a burst of control-plane threads into a refused thread in the witness, which
+            fails worse than the fork bomb the limit exists to stop, so the headroom is the point.
+            PROVEN BY THE ORACLES, not asserted: tests/test_image_smoke.py, test_image_upgrade.py
+            and the pool (therefore test_pool_oracle.py) start every container with RUN_FLAGS, and
+            one smoke test reads CapEff, NoNewPrivs, pids.max and a refused write to /usr from
+            inside the running container, so a runtime that silently ignored a flag fails CI
+            instead of passing it. The baseline image in the two-version handover runs under the
+            same flags, because a rollback to the deployed digest would.
+            Rejected a custom seccomp or AppArmor profile: Docker's defaults already apply, and a
+            hand-written profile is a maintenance burden that breaks on the next keripy dependency
+            with a syscall nobody listed. Rejected --user in the run line: the image's USER 1001 is
+            already the contract, and restating it would let the two disagree. Rejected baking a
+            TMPDIR into the volume: temporary files have no business outliving the container or
+            sharing a filesystem with the keystore. Accepted tradeoff: an operator who forgets the
+            tmpfs gets a container that will not start at all, which is loud, and a `docker exec`
+            debugging session cannot install anything — which is the point.
+
     Throwaway witness pools are a verb of this repo's own CLI = decision:
       id: n2bgpdds
       why: >

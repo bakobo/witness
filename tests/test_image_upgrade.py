@@ -26,6 +26,8 @@ import uuid
 import fiki
 import pytest
 
+from witness.hardening import RUN_FLAGS
+
 IMAGE = os.environ.get("WITNESS_IMAGE")
 
 # The image this one is upgrading FROM -- in practice the digest production is running (@ktljhcyt).
@@ -96,7 +98,7 @@ def _await_ready(container, port, timeout=120.0):
 
 def _start(volume, container, control_port, image=None):
     _docker(
-        "run", "-d", "--name", container,
+        "run", "-d", "--name", container, *RUN_FLAGS,
         "-v", f"{volume}:{_KERI_HOME}",
         "-p", f"127.0.0.1:{control_port}:5633",
         "-e", f"WITNESS_OPERATORS={OPERATOR.aid}",
@@ -113,7 +115,8 @@ def _keripy_version(image):
     moves, which is when this matters.
     """
     result = _docker(
-        "run", "--rm", "--entrypoint", "python", image, "-c", "import keri; print(keri.__version__)"
+        "run", "--rm", *RUN_FLAGS, "--entrypoint", "python", image, "-c",
+        "import keri; print(keri.__version__)",
     )
     return result.stdout.strip().splitlines()[-1]
 
@@ -184,7 +187,7 @@ def _volume_for(image):
         # that volume outlived every failed setup (~63fs).
         _docker("volume", "create", name)
         _docker(
-            "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "kli", image,
+            "run", "--rm", *RUN_FLAGS, "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "kli", image,
             "init", "--name", "witness", "--nopasscode",
         )
         yield name, containers
@@ -430,7 +433,7 @@ def test_a_witness_restored_from_backup_still_witnesses(volume):
     try:
         containers.append(live)
         _docker(
-            "run", "-d", "--name", live,
+            "run", "-d", "--name", live, *RUN_FLAGS,
             "-v", f"{name}:{_KERI_HOME}", "-v", f"{backup_volume}:/backup",
             "-p", f"127.0.0.1:{port_a}:5633", "-e", f"WITNESS_OPERATORS={OPERATOR.aid}", IMAGE,
         )
@@ -455,7 +458,8 @@ def test_a_witness_restored_from_backup_still_witnesses(volume):
         # Restore is a directory copy, which is why the backup mirrors the keri layout.
         _docker("volume", "create", name)
         _docker(
-            "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "-v", f"{backup_volume}:/backup",
+            "run", "--rm", *RUN_FLAGS, "-v", f"{name}:{_KERI_HOME}",
+            "-v", f"{backup_volume}:/backup",
             "--entrypoint", "sh", IMAGE, "-c", f"cp -a /backup/snapshot/. {_KERI_HOME}/",
         )
 
@@ -495,12 +499,12 @@ def test_a_restore_that_lost_the_keystore_refuses_to_start(volume):
 
     # Exactly what a db-only restore leaves behind: history, no keys.
     _docker(
-        "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "sh", IMAGE,
+        "run", "--rm", *RUN_FLAGS, "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "sh", IMAGE,
         "-c", f"rm -rf {_KERI_HOME}/ks",
     )
 
     _docker(
-        "run", "-d", "--name", second,
+        "run", "-d", "--name", second, *RUN_FLAGS,
         "-v", f"{name}:{_KERI_HOME}",
         "-p", f"127.0.0.1:{_free_port()}:5633",
         IMAGE,
@@ -523,7 +527,7 @@ def test_a_restore_that_lost_the_keystore_refuses_to_start(volume):
     # `test -e`, not a substring of `ls`: the directory prints as `ks`, so searching that output
     # for the absolute path could never match and the assertion could never fail.
     still_gone = _docker(
-        "run", "--rm", "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "sh", IMAGE,
+        "run", "--rm", *RUN_FLAGS, "-v", f"{name}:{_KERI_HOME}", "--entrypoint", "sh", IMAGE,
         "-c", f"test ! -e {_KERI_HOME}/ks", check=False,
     )
     assert still_gone.returncode == 0, (

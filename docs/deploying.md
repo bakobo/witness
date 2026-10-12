@@ -14,8 +14,16 @@ Take the digest from the run triggered by the **release tag**, not from the earl
 
 One container, two processes, one PID namespace. A supervisor is PID 1; it starts `witness run` and `witness control-plane`, forwards `SIGTERM` to both, and applies an asymmetric failure policy — the control plane crashing restarts it and leaves the witness alone, the witness exiting takes the container down.
 
+Run it hardened (`@4hwwhshr`). Every `docker run` in this document passes the same flags, so define them once:
+
 ```
-docker run -d --name witness \
+HARDENED="--read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m --cap-drop ALL --security-opt no-new-privileges --pids-limit 128"
+```
+
+The root filesystem is read-only, every capability is dropped, setuid cannot regain one, and the process table is bounded at 128 tasks against a measured peak of 14. Three paths stay writable, and only three: the data volume at `/usr/local/var/keri`, `/backup` where backups are taken, and `/tmp` as a small tmpfs. The tmpfs is not optional — hio resolves a temporary directory when it is imported, so without it `import keri` fails and nothing starts, `kli init` included. **Never mount the data volume read-only**: LMDB then silently drops its lock file and readers lose data (see the second silent failure below). `tests/test_image_smoke.py`, `tests/test_image_upgrade.py` and the pool oracle run every container under exactly these flags, and one test reads the result from inside the running container, so CI proves the image works hardened. A test also holds this document to the flag set in `witness.hardening.RUN_FLAGS`. In a systemd unit, which has no shell, write the flags out in full.
+
+```
+docker run -d --name witness $HARDENED \
     -v witness-data:/usr/local/var/keri \
     -p 127.0.0.1:5631:5631 \
     -p 127.0.0.1:5633:5633 \
@@ -28,7 +36,7 @@ docker run -d --name witness \
 A keystore must exist in the volume before first start. `--nopasscode` leaves the witness's signing key **unencrypted at rest in the volume**, which is accepted deliberately: an encrypted keystore needs its passcode supplied at every start, so the passcode would have to live on the same host as the volume and would protect nothing against the threat that matters (host compromise). What does protect it is the volume's own access control. Do not copy the volume anywhere the host's uid boundary does not follow.
 
 ```
-docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
+docker run --rm $HARDENED -v witness-data:/usr/local/var/keri --entrypoint kli \
     ghcr.io/bakobo/witness@sha256:<digest> init --name witness --nopasscode
 ```
 
@@ -104,7 +112,7 @@ With a baseline set, the deployed image creates the volume, initialises the keys
 **A keripy pin that moves forward past a migration.** keripy records a version in the database and refuses to open one that is behind the library, so the witness will not start. The control plane reports `e.self.config.migration.f` — permanent, not retryable, because no amount of waiting clears it:
 
 ```
-docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
+docker run --rm $HARDENED -v witness-data:/usr/local/var/keri --entrypoint kli \
     ghcr.io/bakobo/witness@sha256:<new-digest> migrate run --name witness
 ```
 
@@ -119,7 +127,8 @@ So: **take a backup before any upgrade that changes the keripy pin**, and treat 
 `witness backup` takes a **transactionally consistent** snapshot of every store using LMDB's own `env.copy`, from a read-only environment, **while the witness keeps running and keeps receipting**:
 
 ```
-docker run -d --name witness -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
+docker run -d --name witness $HARDENED \
+    -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
     ghcr.io/bakobo/witness@sha256:<digest>
 docker exec witness witness backup --name witness --to /backup/$(date +%F)
 ```
@@ -139,10 +148,10 @@ Restore is a directory copy, which is why the backup mirrors the layout of the k
 ```
 docker rm -f witness
 docker volume rm witness-data && docker volume create witness-data
-docker run --rm -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
+docker run --rm $HARDENED -v witness-data:/usr/local/var/keri -v witness-backups:/backup \
     --entrypoint sh ghcr.io/bakobo/witness@sha256:<digest> \
     -c 'cp -a /backup/<date>/. /usr/local/var/keri/'
-docker run -d --name witness -v witness-data:/usr/local/var/keri ... 
+docker run -d --name witness $HARDENED -v witness-data:/usr/local/var/keri ...
 ```
 
 Exercised end to end by `tests/test_image_upgrade.py`, which backs up a running witness, **destroys the volume**, restores from the backup alone, and then checks not only that the AID and witnessed key state came back but that the restored witness accepts and receipts a **new** event — the assertion that proves the signing keys came with it.

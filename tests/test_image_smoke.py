@@ -24,6 +24,8 @@ import uuid
 import fiki
 import pytest
 
+from witness.hardening import RUN_FLAGS
+
 IMAGE = os.environ.get("WITNESS_IMAGE")
 
 pytestmark = pytest.mark.skipif(
@@ -85,7 +87,7 @@ def witness_container():
     _docker("volume", "create", volume)
     try:
         _docker(
-            "run", "--rm", "-v", f"{volume}:{_KERI_HOME}",
+            "run", "--rm", *RUN_FLAGS, "-v", f"{volume}:{_KERI_HOME}",
             "--entrypoint", "kli", IMAGE,
             "init", "--name", "witness", "--nopasscode",
         )
@@ -93,7 +95,7 @@ def witness_container():
         # deployment's policy), and Docker's published-port rules bypass the INPUT chain, so binding here is
         # the confinement rather than any host firewall rule.
         _docker(
-            "run", "-d", "--name", container,
+            "run", "-d", "--name", container, *RUN_FLAGS,
             "-v", f"{volume}:{_KERI_HOME}",
             "-p", f"127.0.0.1:{port}:5633",
             "-e", f"WITNESS_OPERATORS={OPERATOR.aid}",
@@ -214,7 +216,7 @@ def test_the_registrar_resolves_callbacks_through_the_images_own_interpreter():
     depends on the image's interpreter and its isolated standard library. A layout that breaks
     either would turn every subscription into a 503, which no host-side test can see."""
     probe = _docker(
-        "run", "--rm", "--entrypoint", "python", IMAGE, "-c",
+        "run", "--rm", *RUN_FLAGS, "--entrypoint", "python", IMAGE, "-c",
         "from witness.registrar.batcher import CallbackPolicy;"
         "print(CallbackPolicy(allow=('localhost',)).check('http://localhost:9/batch'))",
     ).stdout
@@ -234,15 +236,16 @@ def test_the_image_renders_a_landing_page_offline():
                                 "terms": "https://example.com/terms"}, "source": "seed-file"},
     })
     page = _docker(
-        "run", "--rm", "-i", "--network", "none", "--entrypoint", "witness", IMAGE, "landing",
+        "run", "--rm", "-i", *RUN_FLAGS, "--network", "none", "--entrypoint", "witness", IMAGE,
+        "landing",
         input=document,
     ).stdout
     assert "w.example.com is a KERI witness." in page
     assert "--wl-accent" in page, "the default stylesheet must ship inside the image"
     assert '<a href="https://example.com/terms">' in page
 
-    css = _docker("run", "--rm", "--network", "none", "--entrypoint", "witness", IMAGE,
-                  "landing", "--print-default-css").stdout
+    css = _docker("run", "--rm", *RUN_FLAGS, "--network", "none", "--entrypoint", "witness",
+                  IMAGE, "landing", "--print-default-css").stdout
     assert ".wl-page" in css
 
 
@@ -345,3 +348,30 @@ def test_the_container_reports_itself_healthy_to_the_orchestrator(witness_contai
             return
         time.sleep(2)
     raise AssertionError(f"container never became healthy (last: {state!r})")
+
+
+def test_the_container_runs_hardened(witness_container):
+    """@4hwwhshr. Read from INSIDE the running container rather than from `docker inspect`, so a
+    runtime that accepted a flag and did not enforce it fails here instead of passing."""
+    container, port = witness_container
+    _await_healthz(container, port)
+
+    probe = _docker(
+        "exec", container, "sh", "-c",
+        "grep -E '^(CapEff|NoNewPrivs):' /proc/1/status;"
+        "echo pids=$(cat /sys/fs/cgroup/pids.max);"
+        "touch /usr/hardening-probe 2>/dev/null && echo rootfs=writable || echo rootfs=readonly;"
+        "touch /tmp/hardening-probe && echo tmp=writable;"
+        f"touch {_KERI_HOME}/hardening-probe && echo data=writable && rm {_KERI_HOME}/hardening-probe",
+    ).stdout
+    facts = {}
+    for line in probe.splitlines():
+        key, _, value = line.replace(":", "=", 1).partition("=")
+        facts[key.strip()] = value.strip()
+
+    assert facts["CapEff"] == "0000000000000000", "every capability should be dropped"
+    assert facts["NoNewPrivs"] == "1"
+    assert facts["pids"] == "128"
+    assert facts["rootfs"] == "readonly"
+    assert facts["tmp"] == "writable", "hio needs a temp dir at import"
+    assert facts["data"] == "writable", "LMDB needs its lock file (@a24p3kbw)"
