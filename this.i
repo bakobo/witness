@@ -758,22 +758,30 @@ Operator layer over a stock keripy witness = goal:
             of any length up to waitress's header bound into req.method; the AID is 44
             characters, because fiki derives it from a 32-byte key; error codes are
             module literals. A test holds the worst case under 512 bytes. Logging cannot
-            break or slow a request: the middleware swallows any failure to build or
-            queue the line, and a writer thread drains a bounded queue to stderr, so a
-            stalled journal fills the queue and drops lines rather than blocking a
-            waitress thread (@c7v3kp's reasoning, applied to the control plane's own
-            callers). Rejected the OTel logs SDK exporting over OTLP: it would bypass
-            the journal and so journalctl, needs a collector endpoint the image runs
-            without, and its Python logs API is not yet stable. Rejected Python's
-            logging module with a JSON formatter: keripy is imported into this process
-            and owns logging configuration there, and the line's shape is the contract,
-            so a direct writer is fewer moving parts than defending a handler against
-            someone else's dictConfig. Rejected a timestamp field: journald and docker
-            stamp every line, and a second clock can only disagree. Accepted tradeoffs:
-            lines dropped from a full queue are counted only in-process and not
-            exported, chosen over ever slowing a request at what is human-rate traffic;
-            and a request waitress refuses before falcon sees it gets no line, with no
-            Caddy in front of this port to record it instead.
+            break a request: the middleware swallows any failure to build or write the
+            line, and the write is one synchronous, flushed write of a bounded line to
+            stderr. Amended 2026-10-12, before any code shipped: the first draft put a
+            bounded queue and a writer thread between the request and stderr, so that a
+            stalled journal would drop lines rather than block a waitress worker. That
+            stall could not be named concretely enough to pay for a thread. The writer
+            is the control-plane process, which @k3p7wr already separates from the
+            witness's loop, so the worst a blocked write can do is hold one
+            control-plane read, never ingest or receipting. And the path to the journal
+            runs through the container runtime and the foreground `docker run`, where
+            whether backpressure ever reaches the container's stderr was not shown. A
+            thread is real complexity to buy protection from a stall nobody has seen, so
+            the write is synchronous until one is. Rejected the OTel logs SDK exporting
+            over OTLP: it would bypass the journal and so journalctl, needs a collector
+            endpoint the image runs without, and its Python logs API is not yet stable.
+            Rejected Python's logging module with a JSON formatter: keripy is imported
+            into this process and owns logging configuration there, and the line's shape
+            is the contract, so a direct writer is fewer moving parts than defending a
+            handler against someone else's dictConfig. Rejected a timestamp field:
+            journald and docker stamp every line, and a second clock can only disagree.
+            Accepted tradeoffs: if the journal ever does back up into the container, a
+            control-plane read waits on its log line, and the fix then is the queue this
+            amendment removed; and a request waitress refuses before falcon sees it gets
+            no line, with no Caddy in front of this port to record it instead.
 
     Authenticate with RFC 9421 message signatures via fiki = decision:
       id: s6v3qm
