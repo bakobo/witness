@@ -950,6 +950,58 @@ Operator layer over a stock keripy witness = goal:
             layers shared across versions, is untended accumulation rather than per-pull cost.
             Accepted tradeoff: a GHCR token must reach the deploy path.
 
+          children:
+            Every pushed digest is signed keyless and carries provenance and an SBOM = decision:
+              nid: 4dx8zyjr
+              why: >
+                On every push path (main, v* tags) and never on a pull request, the digest the
+                image job pushed is (1) signed keyless with `cosign sign`, (2) given a SLSA build
+                provenance attestation and (3) given an SPDX SBOM attestation, both by
+                actions/attest with push-to-registry, so all three are bound to the digest and
+                stored beside it in GHCR; the attestations are also in GitHub's attestation API.
+                All three are Sigstore public-good certificates whose identity is this repo's
+                image.yml at the pushing ref, issued against GitHub's OIDC token.
+                WHY BOTH COSIGN AND ARTIFACT ATTESTATIONS. They answer different readers. The
+                deploy gate is `cosign verify` with the identity pinned to image.yml at a v* tag
+                and the issuer pinned to token.actions.githubusercontent.com: one static binary,
+                anonymous, no GitHub credential on the deploy path. `gh attestation verify` is the
+                audit path for provenance and the SBOM; it needs the gh CLI and by default reads
+                from GitHub's API as a logged-in user, which is fine for a human after an incident
+                and wrong for a host before a start. Rejected
+                `cosign attest` for provenance: it would mean hand-building the SLSA predicate in
+                shell, where actions/attest builds it from the run itself and is the vendor's own
+                code on the vendor's own runner. Rejected `docker buildx --sbom --provenance`:
+                BuildKit's attestations are unsigned, `--load` (which the oracle needs) drops them,
+                and its SBOM scanner is a docker/* image, against this workflow's convention.
+                Rejected sigstore/cosign-installer and anchore/sbom-action for the same convention:
+                each is a third-party action that downloads a binary anyway. cosign v3.1.3 and
+                syft v1.52.0 are fetched in shell and checked against a sha256 written into the
+                workflow, which is the shell form of pinning an action by commit; the cosign
+                release checksums were verified against Sigstore's own signature when the pin was
+                taken. actions/attest v4.2.2 is pinned by commit like every other action.
+                THE SIGNING JOB IS SEPARATE FROM THE BUILD JOB. `id-token: write` is the ability to
+                mint a certificate in this repo's name, and the build job runs the whole test suite
+                and therefore every dependency's code. Keeping the permission on a job that runs
+                only cosign, syft and actions/attest against an already-pushed digest means a
+                compromised test-time dependency cannot sign anything. The job never runs on
+                pull_request, so a PR never holds the permission at all.
+                THE DOCUMENTED COMMAND IS EXERCISED, NOT JUST WRITTEN. After signing, the job runs
+                `cosign verify` against the digest it just signed with the exact identity of its
+                own ref, and a unit test holds the command in docs/deploying.md to the tag-only
+                identity and the GitHub issuer, so neither half can drift alone.
+                RETENTION MUST NOT EAT THE SIGNATURES. Signatures and attestations are package
+                versions in GHCR, untagged or tagged sha256-<hex>, and the retention workflow
+                counted them as ordinary unreleased versions — so an apply run could delete a
+                released image's signature while keeping the image forever, and the deploy gate
+                would then refuse a release that is fine. Retention now leaves both kinds alone;
+                pruning them by subject is a tick, since an orphaned signature costs kilobytes.
+                Accepted tradeoffs: the trust root is GitHub's OIDC issuer plus Sigstore's public
+                Fulcio, Rekor and TUF root, so a deploy host needs outbound HTTPS to Sigstore to
+                verify, and every signing is recorded in a public transparency log (right for an
+                Apache-2.0 repo). A compromise of this workflow file on a tag still yields a valid
+                signature; the signature proves where an image came from, not that the source was
+                sound.
+
         The upgrade oracle takes over a volume the DEPLOYED image wrote = decision:
           id: ktljhcyt
           why: >
