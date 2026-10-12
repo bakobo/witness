@@ -2,6 +2,8 @@
 
 Written for the deployment that consumes this repo's image. It states the contract: what to pull, what to run, what to publish, and the three things that are easy to get wrong and silent when you do.
 
+[`deploy/`](../deploy/README.md) is a reference kit built on this contract: a hardened compose file, a Caddyfile, nftables limits and a fail2ban jail, with how to install each and how to prove it is live (`@2hnvwmg2`).
+
 ## What to pull
 
 `ghcr.io/bakobo/witness`, published from this repo's CI (`@lypmcw7f`, `@lnk24kwp`). The package is **public** and pulls anonymously — a credential is needed to push, not to pull. Every build is tagged `sha-<full-commit>`; a release tag adds its `v<major>.<minor>.<patch>`. There is deliberately **no `latest`** — a floating tag is exactly the image-to-pin drift this arrangement exists to close.

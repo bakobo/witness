@@ -1,0 +1,70 @@
+# The witness container, hardened. Reference deployment kit; see README.md beside this file.
+#
+# One container, two processes (the witness and its control plane) under the image's own
+# supervisor. Do not split them across containers: LMDB's reader protocol needs one PID namespace,
+# and docs/deploying.md explains how splitting fails silently.
+#
+# Caddy is NOT in this file. It runs as a host process in front of the witness port, which is what
+# lets the nftables limits (input hook) and the fail2ban jail (Caddy's journal) see public clients.
+#
+# Before the first `docker compose up -d`, create the keystore. `run` applies this service's
+# hardening to the one-off container too:
+#
+#     docker compose run --rm --entrypoint kli witness init --name witness --nopasscode
+#
+# tests/test_deploy_kit.py holds this file to witness.hardening.RUN_FLAGS.
+
+services:
+  witness:
+    # By digest, never by tag, and never `latest` (there is none). Verify the digest with cosign
+    # before you start it; README.md has the command.
+    image: ghcr.io/bakobo/witness@sha256:<digest>
+    # Fixed names, not compose's project-prefixed ones, so the container and both volumes are the
+    # ones docs/deploying.md's backup, restore and upgrade commands name.
+    container_name: witness
+    restart: unless-stopped
+
+    # The hardened runtime: exactly the `docker run` flags in witness.hardening.RUN_FLAGS.
+    # Read-only root; the two volumes below and the /tmp tmpfs are the only writable paths. /tmp is not
+    # optional -- hio resolves a temp directory at import, so without it nothing starts.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    pids_limit: 128
+
+    # The LMDB mapping is file-backed and shared, so size for the database rather than the
+    # interpreter, with headroom: a limit tight enough to force reclaim during a write burst
+    # throttles the witness instead of killing it. keripy's map ceiling is 100 MB.
+    mem_limit: 512m
+
+    # Loopback only, both of them. 5631 is the witness, reached by Caddy. 5633 is the control
+    # plane, reached over SSH (`ssh -L 5633:127.0.0.1:5633 host`, then `witness get`) and never
+    # proxied. Publishing either beyond loopback bypasses the nftables input rules entirely,
+    # because Docker's published ports traverse FORWARD, not INPUT.
+    ports:
+      - "127.0.0.1:5631:5631"
+      - "127.0.0.1:5633:5633"
+
+    # Never mount the data volume read-only: LMDB then omits its lock file and readers lose data
+    # silently. /backup is where `witness backup` writes, and the only other writable path; a named
+    # volume, because the image owns that directory and Docker gives a fresh named volume the
+    # same ownership, where a bind mount must be chown'd to 1001:1001 first.
+    volumes:
+      - witness-data:/usr/local/var/keri
+      - witness-backups:/backup
+
+    # Who may read the six signed control-plane nouns: comma-separated operator AIDs. Unset, those
+    # nouns refuse everyone while health and identity keep answering. `witness get --key <key>
+    # --aid` prints an operator's AID.
+    # environment:
+    #   - WITNESS_OPERATORS=<operator AID>[,<operator AID>...]
+
+volumes:
+  witness-data:
+    name: witness-data
+  witness-backups:
+    name: witness-backups
