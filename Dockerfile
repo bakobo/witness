@@ -84,8 +84,9 @@ USER 1001
 # start`'s own defaults for the first two (note its runWitness() signature has them the other way
 # round — a trap for anyone calling it directly). EXPOSE documents; it publishes nothing. Publish
 # to loopback only (-p 127.0.0.1:5631:5631) so the reverse proxy stays the sole public listener,
-# per the deployment's policy. Note that Docker's published-port rules bypass the INPUT chain, so any
-# host firewall or rate-limiting rules must be written in DOCKER-USER or they silently do nothing.
+# per the deployment's policy. Docker's rules for a port published to the world bypass the INPUT
+# chain; with the ports on loopback and the proxy on the host, public traffic reaches the proxy
+# through INPUT, which is where per-IP limits belong (docs/deploying.md has the full account).
 EXPOSE 5631 5632 5633
 
 # The supervisor is PID 1: it forwards SIGTERM to both children and enforces the asymmetric
