@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import sys
 
+import falcon
+
 EVENT_NAME = "bakobo.control.request"
 
 #: The documented field set, in the order a line carries it.
@@ -80,14 +82,18 @@ class AccessLog:
 
     def process_response(self, req, resp, resource, req_succeeded):
         # falcon serialises media only after every response middleware has run, so a body that
-        # cannot be serialised turns a 200 into a 500 after a line read from resp.status would
+        # cannot be serialised turns a 200 into an error after a line read from resp.status would
         # already say 200. Serialising here, first, makes the logged status the one that is sent;
         # the result is cached on resp, so falcon does not serialise twice. The failure is
-        # re-raised so falcon renders its 500 exactly as it would have.
+        # re-raised so falcon answers it exactly as it would have: with the error's own status
+        # when it is an HTTP error (an unrenderable media type is a 415), else a 500. make_app
+        # runs this middleware's response step first, so the request counter after it sees the
+        # status falcon settles on too.
         try:
             resp.render_body()
-        except Exception:
-            self._write(req, resp, status=500)
+        except Exception as failure:
+            status = failure.status_code if isinstance(failure, falcon.HTTPError) else 500
+            self._write(req, resp, status=status)
             raise
         self._write(req, resp)
 

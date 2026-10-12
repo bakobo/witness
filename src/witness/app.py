@@ -178,8 +178,10 @@ def make_app(reader, counter=None, *, operators=(), max_age=DEFAULT_MAX_AGE, aut
     Every request writes one JSON line to stderr (@79mupg4t); ``access_log`` replaces that
     middleware, which is how tests capture the lines.
     """
+    # falcon runs response steps in reverse, so the access log, listed last, runs first: it
+    # serialises the body before the counter counts, and both see the status that is sent.
     app = falcon.App(middleware=[
-        access_log or AccessLog(), RequestIdMiddleware(), counter or RequestCounter(),
+        RequestIdMiddleware(), counter or RequestCounter(), access_log or AccessLog(),
     ])
     # falcon serializes resp.media only for media types it has a handler for, so setting the
     # RFC 9457 content type without registering it turns every error into a 415 — the error

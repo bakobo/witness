@@ -10,6 +10,7 @@ import io
 import json
 import re
 
+import falcon
 import pytest
 from falcon import testing
 from fiki import Key, sign_request
@@ -17,7 +18,7 @@ from fiki import Key, sign_request
 from test_app import StubReader
 from witness import accesslog
 from witness.accesslog import FIELDS, MAX_LINE, AccessLog, write_line
-from witness.app import make_app
+from witness.app import RequestCounter, make_app
 from witness.errors import ControlDenied, ControlUnauthenticated, DbUnavailable
 
 HOST = "falconframework.org"
@@ -227,6 +228,36 @@ def test_a_body_that_cannot_be_serialised_is_logged_as_the_500_it_becomes(captur
 
     assert response.status_code == 500
     assert captured.only()["http.response.status_code"] == 500
+
+
+def test_the_request_counter_sees_the_500_a_failed_serialisation_becomes(captured):
+    """The log serialises before the other response middleware runs, so the metrics count the
+    status that is sent rather than the 200 the endpoint set."""
+    counter = RequestCounter()
+    app = make_app(StubReader(health=object()), counter=counter, access_log=AccessLog(captured))
+
+    testing.TestClient(app).simulate_get("/v1/witness/health")
+
+    assert counter.counts == {("/v1/witness/health", 500): 1}
+
+
+def test_a_rendering_failure_falcon_answers_with_its_own_status_is_logged_with_that_status(
+    captured,
+):
+    """An unsupported response media type is answered 415, not 500, and the line says so."""
+
+    class Odd:
+        def on_get(self, req, resp):
+            resp.content_type = "application/x-nothing-renders-this"
+            resp.media = {}
+
+    app = falcon.App(middleware=[AccessLog(captured)])
+    app.add_route("/odd", Odd())
+
+    response = testing.TestClient(app).simulate_get("/odd")
+
+    assert response.status_code == 415
+    assert captured.only()["http.response.status_code"] == 415
 
 
 def test_an_unmatched_path_logs_no_route_and_no_outcome(captured):
