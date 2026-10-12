@@ -1,0 +1,116 @@
+# Caddy in front of a KERI witness. Reference deployment kit; see README.md beside this file.
+#
+# Replace witness.example.net with the witness's public name and the email with an address ACME
+# can reach. Nothing else here is a placeholder.
+#
+# THE POINT OF THIS FILE IS THE TIMEOUTS AND THE REFUSALS, not the proxying. keripy's HTTP server
+# is single-threaded and cooperatively scheduled, so a handler that blocks stalls event ingest and
+# receipting for every controller, not just the one being served. The edge's job is that the
+# witness never talks to a slow client, never reads a body nobody bounded, and never resolves an
+# OOBI for a stranger. Caddy does none of that by default.
+#
+# Run Caddy as a host process (the distribution's package and its systemd unit), not in a
+# container: fail2ban reads this file's access log from caddy.service's journal, and the nftables
+# limits see public clients only because Caddy terminates them on the host's input path.
+#
+# There is no rate limiting here. It would need a third-party Caddy plugin built with xcaddy;
+# nftables bounds connections per source instead, and fail2ban bans sources that keep failing.
+#
+# tests/test_deploy_kit.py holds the properties below.
+
+{
+    email operator@example.net
+
+    # The admin API on a unix socket rather than localhost:2019, where any local process could
+    # rewrite this proxy with no credential. Not `admin off`: `caddy reload`, which the Debian unit
+    # uses for ExecReload, posts the new config to this address. Caddy creates the socket mode 0200
+    # for its own user. /run/caddy must exist; a systemd drop-in with RuntimeDirectory=caddy makes
+    # it (README.md). Switching an already-running Caddy to this socket needs one restart, because
+    # the reload that would carry the change has nowhere to post it.
+    admin unix//run/caddy/admin.sock
+
+    servers {
+        timeouts {
+            read_body   30s
+            read_header 30s
+            write       30s
+            idle        2m
+        }
+    }
+}
+
+witness.example.net {
+    encode zstd gzip
+
+    # Site-wide response headers. They matter to browsers only -- a KERI controller ignores them.
+    # HSTS for a year with includeSubDomains and no preload. Deferred, so they replace whatever the
+    # upstream sends rather than going out beside it; `-Server` drops both servers' names.
+    header {
+        defer
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+        -Server
+    }
+
+    # JSON to stderr, which systemd puts in caddy.service's journal. fail2ban reads it from there
+    # (fail2ban/), and it is the only record of who called: keripy logs at CRITICAL by default.
+    # Not a file: a file needs its own ownership and rotation, and a log file Caddy cannot open
+    # fails the config load in a way that reads as a config error.
+    log {
+        output stderr
+        format json
+    }
+
+    # keripy's OOBI-resolution surface, answered here and never proxied. setupWitness registers
+    # loadOobiingEnds under /ext; its one route takes an unauthenticated POST carrying a URL, which
+    # the witness then fetches -- any address it can route to, cloud metadata included -- and
+    # stores in its database. Nothing a witness operator needs calls it. Both forms, because
+    # Caddy's path matcher treats the slash as significant and /ext/* alone leaves /ext proxied.
+    # 404 rather than 403, so the refusal does not advertise itself.
+    @refused {
+        path /ext /ext/*
+    }
+    respond @refused 404
+
+    # A real limit on the request body, refused with a 413. It counts bytes read, so a chunked body
+    # is covered too. A site directive: Caddy rejects it inside reverse_proxy.
+    #
+    # EQUAL to request_buffers below, deliberately. Together they mean nothing the witness accepts
+    # is ever streamed to it, and anything larger is refused rather than streamed. A cap above the
+    # buffer reopens the band between them. A KERI event runs to hundreds of bytes, so 512KB is
+    # generous for any legitimate POST and small against the container's memory.
+    #
+    # One residue: a request with a declared Content-Length over the cap still dials the witness
+    # and delivers a truncated body before the client gets its 413, bounded by the 30s read
+    # timeout. A chunked one never reaches it.
+    request_body {
+        max_size 512KB
+    }
+
+    # The witness only. The control plane on 5633 is never proxied: it stays on loopback and is
+    # reached over SSH.
+    reverse_proxy 127.0.0.1:5631 {
+        # Buffer the whole request before the witness sees it. Without this Caddy streams, and a
+        # client trickling a body holds a handler open in a single-threaded loop.
+        request_buffers 512KB
+
+        transport http {
+            dial_timeout            5s
+            response_header_timeout 30s
+        }
+    }
+
+    # The same headers on responses Caddy's error path writes -- a 502, the body cap's 413 -- which
+    # the deferred block above does not reach.
+    handle_errors {
+        header {
+            Strict-Transport-Security "max-age=31536000; includeSubDomains"
+            X-Content-Type-Options nosniff
+            Referrer-Policy no-referrer
+            X-Frame-Options DENY
+        }
+        header -Server
+    }
+}
