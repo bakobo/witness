@@ -770,6 +770,12 @@ Operator layer over a stock keripy witness = goal:
             verify_request requires `authorities` to be decided at the call site as it already
             required max_age.
 
+          children:
+            Production leaves authority binding off because a tunnel's address names no witness = decision:
+              nid: 0h9r92wk
+              why: >-
+                Revisited 2026-10-12, when the pool's public hostnames became known and fiki moved to py/v0.10.0, and the answer is still to leave --authority unset in production. @34sgjmxr made binding opt-in; this node asks whether a deployment shaped like Bakobo's should opt in, and finds it buys nothing. The control plane is published to 127.0.0.1 only and operators reach it over an SSH tunnel, so the @authority a caller signs is the local end it dialled, such as 127.0.0.1:5633 or localhost:15633. That value is the same for every witness in a pool, or arbitrary per operator, so it cannot tell one witness from a sibling, and telling them apart is the only thing binding would add: the threat it answers is @34sgjmxr's accepted tradeoff, a request signed for one witness replayed to a sibling that lists the same operator inside max_age. Listing the loopback spellings would only force every operator onto one local port and turn each new tunnel into a configuration change, which @34sgjmxr already rejected. Binding to the public hostname instead would discriminate, but the signer would have to dial that name and have it resolve to the tunnel's loopback end, so it needs a hosts-file or ssh_config trick on every operator machine to defend against an attacker who must already be able to capture loopback traffic on one pool host and reach loopback on another. Rejected configuring it anyway as defence in depth: a check that every legitimate caller has to work around is one the next operator disables. Revisit when the control plane is reachable at an address the server can know in advance, such as behind a reverse proxy at its own hostname; there --authority is cheap and meaningful, and should be set to that host:port.
+
     Implement in Python to reuse keripy = decision:
       id: d4h7kt
       why: >
