@@ -82,7 +82,7 @@ witness.example.net {
     # buffer reopens the band between them. A KERI event runs to hundreds of bytes, so 512KB is
     # generous for any legitimate POST and small against the container's memory.
     #
-    # One residue: a request with a declared Content-Length over the cap still dials the witness
+    # One residue (~5oh3): a request with a declared Content-Length over the cap still dials the witness
     # and delivers a truncated body before the client gets its 413, bounded by the 30s read
     # timeout. A chunked one never reaches it.
     request_body {

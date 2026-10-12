@@ -109,6 +109,23 @@ def test_the_data_volume_is_mounted_writable_at_the_keri_home(service):
     assert not keri[0].endswith(":ro")
 
 
+def test_backups_have_a_writable_destination(service):
+    """`witness backup` writes to /backup and nowhere else; under a read-only root, without this
+    mount the documented backup command has nowhere to write."""
+    mounts = [str(v) for v in service["volumes"]]
+    backup = [m for m in mounts if m.split(":")[1] == "/backup"]
+    assert len(backup) == 1 and not backup[0].endswith(":ro"), mounts
+
+
+def test_the_readme_asks_for_a_caddy_that_has_request_buffers():
+    """request_buffers arrived in Caddy 2.7; Debian's own package is older and rejects the file,
+    so the README must send the reader to Caddy's repository and name the floor."""
+    text = README.read_text(encoding="utf-8")
+    assert "dl.cloudsmith.io/public/caddy/stable" in text
+    assert "2.7" in text
+    assert "`apt install caddy` from Debian" not in text
+
+
 def test_a_memory_limit_is_set(service):
     assert service["mem_limit"] == "512m"
 

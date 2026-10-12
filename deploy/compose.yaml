@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
 
     # The hardened runtime: exactly the `docker run` flags in witness.hardening.RUN_FLAGS.
-    # Read-only root; the data volume and the /tmp tmpfs are the only writable paths. /tmp is not
+    # Read-only root; the two volumes below and the /tmp tmpfs are the only writable paths. /tmp is not
     # optional -- hio resolves a temp directory at import, so without it nothing starts.
     read_only: true
     tmpfs:
@@ -46,9 +46,13 @@ services:
       - "127.0.0.1:5631:5631"
       - "127.0.0.1:5633:5633"
 
-    # Never mount this read-only: LMDB then omits its lock file and readers lose data silently.
+    # Never mount the data volume read-only: LMDB then omits its lock file and readers lose data
+    # silently. /backup is where `witness backup` writes, and the only other writable path; a named
+    # volume, because the image owns that directory and Docker gives a fresh named volume the
+    # same ownership, where a bind mount must be chown'd to 1001:1001 first.
     volumes:
       - witness-data:/usr/local/var/keri
+      - witness-backups:/backup
 
     # Who may read the six signed control-plane nouns: comma-separated operator AIDs. Unset, those
     # nouns refuse everyone while health and identity keep answering. `witness get --key <key>
@@ -58,3 +62,4 @@ services:
 
 volumes:
   witness-data:
+  witness-backups:
