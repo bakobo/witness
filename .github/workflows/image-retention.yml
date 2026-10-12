@@ -45,18 +45,25 @@ jobs:
             "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
             > versions.json
           # Keep anything tagged v*; of the remainder, keep the KEEP most recent by creation.
+          # Signatures and attestations (@4dx8zyjr) are versions too -- untagged referrers, or
+          # tagged sha256-<hex> -- and are never doomed: deleting a released image's signature
+          # would make the deploy gate refuse a release that is fine. This also spares untagged
+          # images whose sha- tag moved to a rebuild; pruning both by subject is ~7b3x.
           jq --argjson keep "${KEEP}" '
             [ .[] | {id, created_at, tags: (.metadata.container.tags // [])} ]
             | sort_by(.created_at) | reverse
+            | map(. + {accessory: ((.tags | length) == 0 or (.tags | any(startswith("sha256-"))))})
             | (map(select(.tags | any(startswith("v"))))) as $released
-            | (map(select(.tags | any(startswith("v")) | not))) as $rest
+            | (map(select(.accessory and (.tags | any(startswith("v")) | not)))) as $spared
+            | (map(select((.accessory | not) and (.tags | any(startswith("v")) | not)))) as $rest
             | {
                 released: ($released | length),
+                spared: ($spared | length),
                 kept: ($rest[:$keep] | length),
                 doomed: $rest[$keep:]
               }
           ' versions.json > plan.json
-          jq -r '"released kept forever: \(.released)\nrecent kept: \(.kept)\nover the window: \(.doomed | length)"' plan.json
+          jq -r '"released kept forever: \(.released)\nsignatures, attestations and untagged spared: \(.spared)\nrecent kept: \(.kept)\nover the window: \(.doomed | length)"' plan.json
           jq -r '.doomed[] | "  would delete \(.id) (\(.created_at)) tags=\(.tags | join(","))"' plan.json
 
       - name: Delete
