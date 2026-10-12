@@ -48,7 +48,7 @@ jobs:
           # Signatures and attestations (@4dx8zyjr) are versions too -- untagged referrers, or
           # tagged sha256-<hex> -- and are never doomed: deleting a released image's signature
           # would make the deploy gate refuse a release that is fine. This also spares untagged
-          # images whose sha- tag moved to a rebuild; pruning both by subject is a tick.
+          # images whose sha- tag moved to a rebuild; pruning both by subject is ~7b3x.
           jq --argjson keep "${KEEP}" '
             [ .[] | {id, created_at, tags: (.metadata.container.tags // [])} ]
             | sort_by(.created_at) | reverse
