@@ -2,3 +2,4 @@
 kind: todo
 created: 2026-10-12T23:39Z
 
+- 2026-10-12T23:39Z Raised by the hostile pass on bakobo/infra#107 against infra's consistency test; witness's own tests/test_deploy_kit.py has the same shape (searches the site block anywhere, and reads the input chain only). infra#107 now catches all four mutations against the kit at witness main, so the kit is guarded; this is for the public repo to guard itself.
