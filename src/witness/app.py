@@ -21,6 +21,7 @@ import uuid
 import falcon
 import fiki
 
+from .accesslog import AccessLog
 from .errors import ControlDenied, ControlUnauthenticated, WitnessError
 
 PROBLEM_JSON = "application/problem+json"
@@ -97,7 +98,13 @@ class OperatorGuard:
         self._clock = clock
 
     def check(self, req):
+        """Admit or raise, leaving the verdict on ``req.context`` for the request log (@79mupg4t).
+
+        ``signer`` is set only once fiki has verified the signature, so a refused request never
+        carries an AID it merely claimed.
+        """
         if not self._operators:
+            req.context.outcome = "denied"
             raise ControlDenied(
                 "This control plane has no operator configured, so it answers this read for "
                 "nobody. Name one with --operator or WITNESS_OPERATORS."
@@ -110,12 +117,16 @@ class OperatorGuard:
                 now=int(self._clock()), authorities=self._authorities,
             )
         except fiki.FikiError as refused:
+            req.context.outcome = "unauthenticated"
             raise ControlUnauthenticated(
                 f"The request's signature did not verify: {refused}."
             ) from None
+        req.context.signer = verdict.aid
         if verdict.aid not in self._operators:
+            req.context.outcome = "denied"
             raise ControlDenied(f"{verdict.aid} is not an operator of this witness.",
                                 args=[verdict.aid])
+        req.context.outcome = "admitted"
 
 
 class Endpoint:
@@ -132,10 +143,13 @@ class Endpoint:
 
     def on_get(self, req, resp, **params):
         try:
-            if self._guard is not None:
+            if self._guard is None:
+                req.context.outcome = "open"
+            else:
                 self._guard.check(req)
             resp.media = self._produce(**params)
         except WitnessError as exc:
+            req.context.error_type = exc.code
             resp.status = falcon.util.code_to_http_status(exc.status)
             resp.content_type = PROBLEM_JSON
             # http-errors.md's worked examples carry Content-Language, because `detail` is prose
@@ -151,7 +165,7 @@ class Endpoint:
 
 
 def make_app(reader, counter=None, *, operators=(), max_age=DEFAULT_MAX_AGE, authorities=(),
-             clock=time.time):
+             clock=time.time, access_log=None):
     """Build the falcon application wired to ``reader``.
 
     Five nouns answer anyone and six only a signing operator (@34sgjmxr). With no ``operators``
@@ -160,8 +174,13 @@ def make_app(reader, counter=None, *, operators=(), max_age=DEFAULT_MAX_AGE, aut
     The counter is passed in rather than handed back because falcon's ``App`` uses ``__slots__``
     and will not carry an attribute for us; the caller that wants the numbers is the same caller
     that wires up metric export, so it can simply own the object.
+
+    Every request writes one JSON line to stderr (@79mupg4t); ``access_log`` replaces that
+    middleware, which is how tests capture the lines.
     """
-    app = falcon.App(middleware=[RequestIdMiddleware(), counter or RequestCounter()])
+    app = falcon.App(middleware=[
+        access_log or AccessLog(), RequestIdMiddleware(), counter or RequestCounter(),
+    ])
     # falcon serializes resp.media only for media types it has a handler for, so setting the
     # RFC 9457 content type without registering it turns every error into a 415 — the error
     # about the error, which is the least useful response there is.
