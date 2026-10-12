@@ -10,6 +10,28 @@ Written for the deployment that consumes this repo's image. It states the contra
 
 Take the digest from the run triggered by the **release tag**, not from the earlier `main` push. Container builds are not bit-reproducible — apt and pip layers carry timestamps — so the tag run rebuilds the same commit into a different digest and moves `sha-<commit>` onto it. Within that one run both tags point at the same image, so the tag run's digest is the one that agrees with `v<x.y.z>`. The image is built here rather than in the deployment repository because this repo owns the keripy pin: a direct git reference in `pyproject.toml`. Building anywhere else lets the image and the pin drift apart, which is the whole problem containerizing solves.
 
+## Verify before you run a digest
+
+Every digest pushed from `main` or a `v*` tag is signed keyless with cosign, and carries a SLSA build provenance attestation and an SPDX SBOM, all bound to the digest (`@4dx8zyjr`). Pull requests are never signed. **Run this before starting any digest, and refuse to start it if it fails:**
+
+```
+cosign verify ghcr.io/bakobo/witness@sha256:<digest> \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity-regexp '^https://github\.com/bakobo/witness/\.github/workflows/image\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+```
+
+The two pins are the whole check. The issuer says the certificate was minted against a GitHub Actions OIDC token; the identity says the workflow that held that token was this repository's `image.yml`, running on a release tag. It deliberately refuses a digest signed from a `main` push, a pre-release tag such as `v1.2.3-rc1`, any other workflow, and any fork: production deploys the release-tag digest (above), so a signature from anywhere else is not one a deployment should accept. Leaving out either pin, or loosening the identity to a prefix, accepts a signature from anyone's workflow. `tests/test_supply_chain.py` holds this command to those pins. The signing job runs the same verification against every digest it signs, with its own ref as the identity, so a release whose signature does not verify fails its own build.
+
+cosign v3 needs no credential: the package pulls anonymously and the trust root is Sigstore's public-good instance, so the deploying host needs outbound HTTPS to Sigstore (the TUF root, Rekor) and to GHCR. Install cosign by a pinned checksum, as `image.yml` does, rather than from a moving package.
+
+Provenance and the SBOM are for audit rather than for the gate:
+
+```
+gh attestation verify oci://ghcr.io/bakobo/witness@sha256:<digest> --repo bakobo/witness
+gh attestation verify oci://ghcr.io/bakobo/witness@sha256:<digest> --repo bakobo/witness \
+    --predicate-type https://spdx.dev/Document/v2.3
+```
+
 ## What to run
 
 One container, two processes, one PID namespace. A supervisor is PID 1; it starts `witness run` and `witness control-plane`, forwards `SIGTERM` to both, and applies an asymmetric failure policy — the control plane crashing restarts it and leaves the witness alone, the witness exiting takes the container down.

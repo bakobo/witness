@@ -8,7 +8,9 @@ name: Image
 #
 # Deliberately uses no docker/* actions. Everything is `docker buildx` and `gh api` in shell,
 # which means fewer third-party actions to pin and audit, and no dependency on an action whose
-# runtime has been deprecated. The two actions used here carry the same SHAs as ci.yml.
+# runtime has been deprecated. checkout and setup-uv carry the same SHAs as ci.yml; the signing
+# job adds actions/attest, GitHub's own, and fetches cosign and syft in shell against a pinned
+# sha256 rather than through a third-party installer action (@4dx8zyjr).
 
 on:
   push:
@@ -25,6 +27,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.names.outputs.image }}
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       # persist-credentials:false — see the note in ci.yml. Hygiene now rather than load-bearing,
       # since the closure went fully public (@qojsxe7s).
@@ -128,6 +133,7 @@ jobs:
         run: echo "${TOKEN}" | docker login ghcr.io -u "${ACTOR}" --password-stdin
 
       - name: Push and report the digest
+        id: push
         if: github.event_name != 'pull_request'
         env:
           IMAGE: ${{ steps.names.outputs.image }}
@@ -140,6 +146,8 @@ jobs:
             docker push "${IMAGE}:${tag}"
           done
           digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${PRIMARY}")"
+          # The bare sha256:<hex>, which is what the signing job binds everything to.
+          echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"
           # Production deploys by digest, never by tag, so the digest is the output that matters.
           {
             echo "### Image published"
@@ -149,4 +157,98 @@ jobs:
             echo '```'
             echo
             echo "Tags: ${TAGS}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Signs and attests the digest the image job pushed (@4dx8zyjr). A job of its own so that
+  # `id-token: write` -- the power to mint a certificate in this repo's name -- never sits on a job
+  # that runs the test suite and therefore every dependency's code, and never on a pull request.
+  sign:
+    needs: image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ${{ needs.image.outputs.image }}
+      DIGEST: ${{ needs.image.outputs.digest }}
+    steps:
+      # Pinned by sha256 here, the shell form of pinning an action by commit. To move a pin, take
+      # the hash from the release's checksums file after verifying that file's own signature.
+      - name: Install cosign and syft
+        run: |
+          set -euo pipefail
+          bin="${RUNNER_TEMP}/bin"
+          mkdir -p "${bin}"
+          cd "${RUNNER_TEMP}"
+          curl -fsSLo cosign https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64
+          echo "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71  cosign" | sha256sum --check --strict
+          install -m 0755 cosign "${bin}/cosign"
+          curl -fsSLo syft.tar.gz https://github.com/anchore/syft/releases/download/v1.52.0/syft_1.52.0_linux_amd64.tar.gz
+          echo "caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d  syft.tar.gz" | sha256sum --check --strict
+          tar -xzf syft.tar.gz syft
+          install -m 0755 syft "${bin}/syft"
+          echo "${bin}" >> "$GITHUB_PATH"
+
+      - name: Log in to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "${TOKEN}" | docker login ghcr.io -u "${ACTOR}" --password-stdin
+
+      - name: Sign the digest
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      # The deploy gate, run here against the digest just signed, with the exact identity of this
+      # run's own ref. docs/deploying.md gives deployers the same command narrowed to v* tags, and
+      # tests/test_supply_chain.py holds that command to the identity it ought to pin.
+      - name: Verify the signature as a deployer would
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          cosign verify "${IMAGE}@${DIGEST}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/${REPOSITORY}/.github/workflows/image.yml@${REF}" \
+            > /dev/null
+
+      # Scanned from the registry by digest, so the SBOM describes exactly what was pushed rather
+      # than a local image that merely shares its tag.
+      - name: Generate the SBOM
+        run: |
+          set -euo pipefail
+          syft scan "registry:${IMAGE}@${DIGEST}" -o "spdx-json=${RUNNER_TEMP}/sbom.spdx.json"
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Report what was signed
+        run: |
+          {
+            echo "### Signed and attested"
+            echo
+            echo '```'
+            echo "${IMAGE}@${DIGEST}"
+            echo '```'
+            echo
+            echo "Verify before deploying with the \`cosign verify\` command in docs/deploying.md."
           } >> "$GITHUB_STEP_SUMMARY"
