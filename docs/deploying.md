@@ -95,6 +95,27 @@ Metrics leave over OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and are silen
 
 Do not alert on `witness.process.*` thresholds. They are for diagnosis after an alert fires, and `ops.md` §7 is explicit that CPU and memory thresholds carrying no action just train their recipient to ignore the channel.
 
+### The request log
+
+The control plane writes one JSON line to stderr for every request it answers, so `docker logs`, the unit's journal and anything shipping that journal all carry it (`this.i` `79mupg4t`). Every line has exactly these keys, null where one does not apply:
+
+| Key | Value |
+| --- | --- |
+| `event.name` | Always `bakobo.control.request`, which tells these lines from keripy's output on the same stream |
+| `bakobo.request.id` | The `Bakobo-Request-Id` the response carried, so a problem document's `request_id` finds its line |
+| `http.request.method` | A standard HTTP verb, or `_OTHER` |
+| `http.route` | The route template, such as `/v1/witness/controller/{aid}`; null for an unknown path |
+| `http.response.status_code` | The status, as an integer |
+| `bakobo.control.outcome` | `open` for an unsigned noun, else `admitted`, `unauthenticated` or `denied`; null when no endpoint ran |
+| `error.type` | The error code, such as `e.grant.missing.operator.f` |
+| `enduser.id` | The signer's AID, only when the signature verified |
+
+A refused request names a signer only when the signature was genuine and the signer is not an operator. An unverified claim to be somebody is never logged, and neither are signatures, keys, raw paths or query strings.
+
+```
+{"event.name":"bakobo.control.request","bakobo.request.id":"3f2a9c0d1e7b4a6f8c5d2e1f0a9b8c7d","http.request.method":"GET","http.route":"/v1/witness/controller/{aid}","http.response.status_code":403,"bakobo.control.outcome":"denied","error.type":"e.grant.missing.operator.f","enduser.id":"BHJrH2KGtjVszHvCLhj9oiXMnLyOllyRnR9tlsrsGLL7"}
+```
+
 ### The query-not-found escrow, specifically
 
 **Measured, not inferred** — see [`escrow-load.md`](escrow-load.md) for the curve and the harness.
