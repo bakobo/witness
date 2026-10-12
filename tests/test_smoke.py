@@ -129,6 +129,15 @@ def test_console_script_serves_the_versioned_control_plane(witness_db, tmp_path)
             proc.kill()
             proc.wait(timeout=10)
 
+    # @79mupg4t through the real process: the request log reaches the process's stderr, a refused
+    # read names nobody, and the operator's read names the operator.
+    logged = [json.loads(line) for line in proc.stdout.read().decode("utf-8", "replace").splitlines()
+              if line.startswith('{"event.name":"bakobo.control.request"')]
+    by_outcome = {(entry["http.route"], entry["bakobo.control.outcome"]): entry for entry in logged}
+    assert by_outcome[("/v1/witness/controller", "unauthenticated")]["enduser.id"] is None
+    assert by_outcome[("/v1/witness/controller", "admitted")]["enduser.id"] == operator
+    assert ("/v1/witness/health", "open") in by_outcome
+
 
 def test_console_script_renders_a_landing_page():
     """@78m6fs3g. The installed `witness landing` entry point, stdin to stdout, with the default

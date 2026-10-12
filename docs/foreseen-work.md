@@ -147,8 +147,8 @@ decisions that will get made silently if nobody names them.
   or a maximum response size.
 - **Whether one control plane serves one witness or many.** Everything recorded assumes one, but
   nothing states it, and fleet sync (tick `5gsx`) points the other way.
-- **Observability of the control plane itself** — its own logs, metrics, and failure reporting, as
-  distinct from what it reports about the witness.
+- **Observability of the control plane itself** — its own metrics and failure reporting, as
+  distinct from what it reports about the witness. Its request log is decided (`79mupg4t`).
 - **TLS and network placement.** `h5n2rk` defaults the bind to `127.0.0.1` without saying whether
   that is the deployment model or a safe default.
 
