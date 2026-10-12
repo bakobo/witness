@@ -47,6 +47,7 @@ from keri.core.signing import Salter
 from keri.help.helping import nowIso8601
 
 from . import decls, get
+from .hardening import RUN_FLAGS
 from .errors import (
     DockerUnavailable,
     InvalidArguments,
@@ -440,7 +441,8 @@ class Pool:
         if self._config.seed is not None:
             init += ["--salt", _salt(self._config.seed, alias)]
         self._docker([
-            "run", "--rm", "-v", f"{name}:{KERI_HOME}", "--entrypoint", "kli", image, *init
+            "run", "--rm", *RUN_FLAGS, "-v", f"{name}:{KERI_HOME}", "--entrypoint", "kli", image,
+            *init,
         ])
         config = {_ALIAS: {"dt": self._now(), "curls": [f"http://127.0.0.1:{http_port}/"]}}
         seed = {
@@ -451,13 +453,13 @@ class Pool:
         # launched a second `docker run` for the declarations, contradicting the node and paying
         # an image startup per witness for nothing.
         self._docker([
-            "run", "--rm", "-v", f"{name}:{KERI_HOME}", "--entrypoint", "python", image,
-            "-c", _SEED_CONFIG, _ALIAS, json.dumps(config, separators=(",", ":")),
+            "run", "--rm", *RUN_FLAGS, "-v", f"{name}:{KERI_HOME}", "--entrypoint", "python",
+            image, "-c", _SEED_CONFIG, _ALIAS, json.dumps(config, separators=(",", ":")),
             _POOL_DECL_FILE, json.dumps(seed, separators=(",", ":")),
         ])
         seed = base64.urlsafe_b64encode(operator.seed).decode().rstrip("=")
         self._docker([
-            "run", "-d", "--name", name, *labels,
+            "run", "-d", "--name", name, *labels, *RUN_FLAGS,
             "--label", f"{OPERATOR_LABEL}={seed}",
             "-e", f"WITNESS_OPERATORS={operator.aid}",
             "-v", f"{name}:{KERI_HOME}",
