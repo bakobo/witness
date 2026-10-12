@@ -706,6 +706,72 @@ Operator layer over a stock keripy witness = goal:
             is not a lemma yet, so the error envelope can land now while the path rename waits on
             minting it.
 
+        Every control-plane request writes one JSON line  with names a sibling service reuses = decision:
+          nid: 79mupg4t
+          why: >
+            Every request the control plane answers writes one JSON line to stderr. The
+            supervisor's children inherit its stdio, the unit runs `docker run` in the
+            foreground, so the line lands in witness.service's journal, which the host's
+            OTel collector already ships. Before this, keripy's ogler ran at CRITICAL
+            and Caddy's access log was the only record of callers, and the control plane
+            is not behind Caddy, so a signed read (@34sgjmxr) left no record of who made
+            it. The field set, every key on every line, null where it does not apply, so
+            a consumer reads one shape: `event.name` = "bakobo.control.request";
+            `bakobo.request.id`, the Bakobo-Request-Id the middleware already settles;
+            `http.request.method`; `http.route`, falcon's URI template;
+            `http.response.status_code`, an integer; `bakobo.control.outcome`, one of
+            open, admitted, unauthenticated, denied; `error.type`, the Bakobo error code
+            or null; `enduser.id`, the signer's AID or null. The names are OpenTelemetry
+            semantic conventions wherever one fits, because the line becomes an OTel log
+            record downstream and the metrics side already speaks semconv, and
+            `bakobo.`-namespaced for the two concepts semconv has no name for, per its
+            rule that custom attributes take a namespace. They are chosen for a sibling
+            service to copy verbatim: no Bakobo standard names log fields
+            (dev/standards/ops.md §7 stops at the transport) and imbu has not picked
+            any, so these are the first. `event.name` names the log record's EventName
+            field, which is where semconv now puts it (the attribute form is deprecated
+            in its favour), so a future OTLP exporter maps it one to one; in a journald
+            line it is what tells this record from keripy's and waitress's output on the
+            same stream. `enduser.id` is semconv's development-tier name for an
+            authenticated principal. It is set exactly when fiki verified a signature,
+            which includes a denied signer, because who is knocking is the point of the
+            record, and excludes every unauthenticated request, because an AID nobody
+            proved is a claim, and logging claims would let a forger write any name into
+            the audit trail. The outcome is the guard's verdict, not the response's: an
+            admitted read whose reader then fails is admitted with an error.type, and an
+            unguarded noun is open. Never logged: signatures, keys, Signature-Input, any
+            header value but the request id, the raw path (controller/{aid} would carry
+            caller text), the query string, fiki's refusal detail (it quotes the
+            caller's headers, so only the code goes in), and the client address (the
+            port binds loopback, so the peer is always the host or a tunnel end and
+            identifies nobody). Open reads get a line too: an access record that skips
+            some requests cannot answer whether anyone asked, and an enumeration of the
+            open nouns is itself signal. The cost is the healthcheck's 2880 lines a day,
+            about 0.7 MB, inside the 100 MB json-file rotation and the hosted tier. The
+            line is bounded whatever the caller sends: the request id is at most 64
+            characters from _acceptable_request_id's alphabet or a minted uuid; the
+            route is a template from a finite set or null; the method is a known verb or
+            "_OTHER", which is semconv's own rule and is load-bearing here, because
+            falcon passes a method of any length up to waitress's header bound into
+            req.method; the AID is 44 characters, because fiki derives it from a 32-byte
+            key; error codes are module literals. A test holds the worst case under 512
+            bytes. Logging cannot break or slow a request: the middleware swallows any
+            failure to build or queue the line, and a writer thread drains a bounded
+            queue to stderr, so a stalled journal fills the queue and drops lines rather
+            than blocking a waitress thread (@c7v3kp's reasoning, applied to the control
+            plane's own callers). Rejected the OTel logs SDK exporting over OTLP: it
+            would bypass the journal and so journalctl, needs a collector endpoint the
+            image runs without, and its Python logs API is not yet stable. Rejected
+            Python's logging module with a JSON formatter: keripy is imported into this
+            process and owns logging configuration there, and the line's shape is the
+            contract, so a direct writer is fewer moving parts than defending a handler
+            against someone else's dictConfig. Rejected a timestamp field: journald and
+            docker stamp every line, and a second clock can only disagree. Accepted
+            tradeoffs: lines dropped from a full queue are counted only in-process and
+            not exported, chosen over ever slowing a request at what is human-rate
+            traffic; and a request waitress refuses before falcon sees it gets no line,
+            with no Caddy in front of this port to record it instead.
+
     Authenticate with RFC 9421 message signatures via fiki = decision:
       id: s6v3qm
       why: >
