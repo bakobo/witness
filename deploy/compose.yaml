@@ -19,6 +19,9 @@ services:
     # By digest, never by tag, and never `latest` (there is none). Verify the digest with cosign
     # before you start it; README.md has the command.
     image: ghcr.io/bakobo/witness@sha256:<digest>
+    # Fixed names, not compose's project-prefixed ones, so the container and both volumes are the
+    # ones docs/deploying.md's backup, restore and upgrade commands name.
+    container_name: witness
     restart: unless-stopped
 
     # The hardened runtime: exactly the `docker run` flags in witness.hardening.RUN_FLAGS.
@@ -62,4 +65,6 @@ services:
 
 volumes:
   witness-data:
+    name: witness-data
   witness-backups:
+    name: witness-backups

@@ -126,6 +126,18 @@ def test_the_readme_asks_for_a_caddy_that_has_request_buffers():
     assert "`apt install caddy` from Debian" not in text
 
 
+def test_names_match_the_ones_docs_deploying_uses(service):
+    """Compose prefixes volume and container names with its project name unless told otherwise, so
+    a backup written by the kit would land in a volume the documented restore never mounts."""
+    assert service["container_name"] == "witness"
+    volumes = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["volumes"]
+    assert {key: spec["name"] for key, spec in volumes.items()} == {
+        "witness-data": "witness-data", "witness-backups": "witness-backups"}
+    deploying = (DEPLOY.parent / "docs" / "deploying.md").read_text(encoding="utf-8")
+    for name in ("witness-data:/usr/local/var/keri", "witness-backups:/backup", "--name witness"):
+        assert name in deploying
+
+
 def test_a_memory_limit_is_set(service):
     assert service["mem_limit"] == "512m"
 
