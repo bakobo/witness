@@ -1166,6 +1166,52 @@ Operator layer over a stock keripy witness = goal:
             tmpfs gets a container that will not start at all, which is loud, and a `docker exec`
             debugging session cannot install anything — which is the point.
 
+        A reference deployment kit ships in deploy/  held to the image by tests here and to the estate by a test in the deployment repository = decision:
+          nid: 2hnvwmg2
+          why: >
+            Once this repository is transferred, a stranger who deploys it gets a Dockerfile and
+            docs/deploying.md and none of the edge that actually protects a running witness: the
+            Caddy timeouts, body cap and /ext refusal, the per-source nftables limits, the fail2ban
+            jail, and the runtime flags expressed as something other than a docker run line. All of
+            that lives in the private deployment repository's Ansible, which does not travel. So
+            deploy/ carries plain, generic files a stranger can read and install: compose.yaml for
+            the witness container under exactly @4hwwhshr's flags with both ports on loopback and a
+            512m memory limit (the deployment's measured figure, and the generous side of
+            docs/deploying.md's sizing argument); a Caddyfile with ACME TLS, 30 s timeouts,
+            request_buffers and request_body max_size both 512KB, the /ext refusal, a JSON access
+            log to stderr, the site-wide security headers, the admin API on a unix socket, and
+            nothing that proxies the control plane; nftables.conf with the input-hook per-source
+            limits (64 concurrent, 25 new/s, burst 60) and SSH accepted before any of them; the
+            fail2ban filter and jail; and a README saying what each defends against, what it does
+            not, the install order, and how to prove each is live. PLAIN FILES, NOT TEMPLATES.
+            Placeholders are witness.example.net, an email and sha256:<digest>; no Jinja, because a
+            stranger should be able to read the file that runs. Caddy runs as a host process, not as
+            a compose service: the fail2ban filter matches _SYSTEMD_UNIT=caddy.service, and the
+            nftables limits sit on input because a host-process Caddy terminates public traffic
+            there, which is the arrangement docs/deploying.md's first silent failure already argues
+            for. NO VENDOR, HOSTNAME OR ESTATE in any file: imbu will copy the shape. CONSISTENCY IS
+            ENFORCED IN TWO PLACES because neither repository can see both halves alone. Here, tests
+            hold compose.yaml's flags equal to witness.hardening.RUN_FLAGS, the Caddyfile's max_size
+            equal to its request_buffers (the pair's invariant: nothing the witness accepts is
+            streamed to it), /ext refused and port 5633 never named, and the fail2ban filter's
+            patterns compiled and run against representative Caddy lines with Python's re, plus
+            fail2ban-regex itself where it is installed. fail2ban is not on PyPI, so that last test
+            skips with a reason rather than adding a system package to the dev environment. In the
+            deployment repository, a test reads this kit and holds the fail2ban files byte-identical
+            to its role's files, the nftables numbers and the Caddy cap, buffer, timeouts and
+            headers numerically or semantically equal to its variables. That direction is forced:
+            this repository is public and the deployment repository is private, so only the private
+            side can compare. The deployment's numbers stay the source, because they were measured
+            against production; the kit mirrors them. Rejected publishing the Ansible itself: it is
+            Lightsail- and estate-shaped, and a stranger would have to delete most of it. Rejected
+            prose-only guidance in docs/deploying.md: it cannot be installed, and prose drifts
+            silently where a file under test does not. Rejected Caddy in compose with a rate-limit
+            plugin, which the deployment already declined on supply-chain grounds. Accepted
+            tradeoffs: two copies of the fail2ban files exist and only the deployment's test keeps
+            them identical, so a change to either side is a two-repository change; and the kit is a
+            reference rather than a supported installer, so it states what it assumes (Debian-family
+            host, systemd, Caddy and fail2ban from the distribution) rather than detecting it.
+
     Throwaway witness pools are a verb of this repo's own CLI = decision:
       id: n2bgpdds
       why: >
