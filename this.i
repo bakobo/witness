@@ -391,6 +391,11 @@ Operator layer over a stock keripy witness = goal:
                     seven days by default and refuse a foreign or expired cursor with 409
                     e.state.conflict.cursor.f, letting the watcher restart from the beginning.
                     The page limit bounds AIDs and is capped before querying or replaying KELs.
+                    A 16 MiB raw replay budget bounds aggregate memory before JSON and response
+                    signing copy it; a larger page refuses with a permanent size error, even at
+                    limit one. This is the price of returning a complete, signed KEL in one
+                    response rather than introducing event-fragment cursors the watcher cannot
+                    yet consume.
                     Rejected an exclusive watermark because a sweep can happen after the answer
                     in the same bucket; skipping that bucket would lose those events.
 
