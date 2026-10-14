@@ -7,8 +7,9 @@ file exists to provide:
 
 - compose.yaml runs the image under exactly ``witness.hardening.RUN_FLAGS`` (@4hwwhshr), on
   loopback, by digest.
-- The Caddyfile never lets a body reach the witness that it did not buffer whole, refuses /ext,
-  and never proxies the control plane.
+- The Caddyfile never lets a body reach an upstream that it did not buffer whole, refuses /ext,
+  and proxies exactly the change feed and identity of the control plane (@9y806dye), which
+  tests/test_deploy_proxy.py then runs through a real Caddy.
 - The fail2ban filter's patterns match the Caddy access lines they are meant to and not the ones
   they are not, checked with Python's ``re`` (which is fail2ban's own engine) and, where the
   ``fail2ban-regex`` executable exists, with fail2ban itself.
@@ -194,17 +195,26 @@ def directive(text: str, name: str) -> str:
     return found[0]
 
 
-def test_the_body_cap_equals_the_buffer(caddyfile):
-    """The pair's invariant (@pkde7ojw in the deployment): nothing the witness accepts is ever
-    streamed to it, and anything larger is refused. Equal, not merely ordered."""
+def proxies(caddyfile: str) -> dict[str, str]:
+    """Each reverse_proxy's matcher-and-upstream line, mapped to its block."""
+    body = site(caddyfile)
+    heads = re.findall(r"^\s*reverse_proxy\s+([^{]+?)\s*\{", body, re.M)
+    return {head: block(body, rf"^\s*reverse_proxy\s+{re.escape(head)}\s*\{{") for head in heads}
+
+
+def test_the_body_cap_equals_every_buffer(caddyfile):
+    """The pair's invariant (@pkde7ojw in the deployment): nothing an upstream accepts is ever
+    streamed to it, and anything larger is refused. Equal, not merely ordered, for each proxy."""
     cap = parse_size(directive(block(site(caddyfile), r"^\s*request_body\s*\{"), "max_size"))
-    buffer = parse_size(directive(block(site(caddyfile), r"^\s*reverse_proxy\b"), "request_buffers"))
-    assert cap == buffer == 512 * 1000
+    buffers = {parse_size(directive(body, "request_buffers")) for body in proxies(caddyfile).values()}
+    assert len(proxies(caddyfile)) == 2
+    assert buffers == {cap} == {512 * 1000}
 
 
 def test_request_body_is_a_site_directive_not_a_proxy_one(caddyfile):
     """Caddy rejects request_body inside reverse_proxy at load time."""
-    assert "request_body" not in block(site(caddyfile), r"^\s*reverse_proxy\b")
+    for body in proxies(caddyfile).values():
+        assert "request_body" not in body
     assert re.search(r"^\s*request_body\s*\{", site(caddyfile), re.M)
 
 
@@ -212,9 +222,10 @@ def test_every_timeout_is_thirty_seconds(caddyfile):
     timeouts = block(caddyfile, r"^\s*timeouts\s*\{")
     for name in ("read_body", "read_header", "write"):
         assert directive(timeouts, name) == "30s"
-    transport = block(site(caddyfile), r"^\s*transport\s+http\s*\{")
-    assert directive(transport, "response_header_timeout") == "30s"
-    assert directive(transport, "dial_timeout") == "5s"
+    for body in proxies(caddyfile).values():
+        transport = block(body, r"^\s*transport\s+http\s*\{")
+        assert directive(transport, "response_header_timeout") == "30s"
+        assert directive(transport, "dial_timeout") == "5s"
 
 
 def test_ext_is_refused_in_both_forms(caddyfile):
@@ -225,11 +236,33 @@ def test_ext_is_refused_in_both_forms(caddyfile):
     assert re.search(r"^\s*respond\s+@refused\s+404\s*$", body, re.M)
 
 
-def test_only_the_witness_port_is_proxied_and_the_control_plane_never(caddyfile):
-    directives = code(caddyfile)
-    assert CONTROL_PORT not in directives
-    upstreams = re.findall(r"^\s*reverse_proxy\s+(\S+)", directives, re.M)
-    assert upstreams == [f"127.0.0.1:{WITNESS_PORT}"]
+WATCHER_ROUTES = {"/v1/witness/change", "/v1/witness/identity"}
+
+
+def matcher(caddyfile: str, name: str) -> str:
+    return block(site(caddyfile), rf"^\s*@{name}\s*\{{")
+
+
+def test_the_control_plane_is_proxied_only_for_the_watcher_routes(caddyfile):
+    """@9y806dye: GET on exactly the feed and identity reaches 5633; everything else goes to the
+    witness port, and the control plane's port appears nowhere else."""
+    assert list(proxies(caddyfile)) == [f"@watcher 127.0.0.1:{CONTROL_PORT}",
+                                        f"127.0.0.1:{WITNESS_PORT}"]
+    assert code(caddyfile).count(CONTROL_PORT) == 1
+    watcher = matcher(caddyfile, "watcher")
+    assert directive(watcher, "method") == "GET"
+    assert set(re.search(r"^\s*path\s+(.+)$", watcher, re.M).group(1).split()) == WATCHER_ROUTES
+
+
+def test_every_other_control_plane_path_is_refused(caddyfile):
+    """Both forms, for the slash reason /ext has; the exemption is exactly @watcher's."""
+    control = matcher(caddyfile, "control")
+    assert set(re.search(r"^\s*path\s+(.+)$", control, re.M).group(1).split()) == {
+        "/v1/witness", "/v1/witness/*"}
+    exempt = block(control, r"^\s*not\s*\{")
+    assert directive(exempt, "method") == "GET"
+    assert set(re.search(r"^\s*path\s+(.+)$", exempt, re.M).group(1).split()) == WATCHER_ROUTES
+    assert re.search(r"^\s*respond\s+@control\s+404\s*$", site(caddyfile), re.M)
 
 
 def test_the_access_log_is_json_on_stderr(caddyfile):

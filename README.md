@@ -172,7 +172,7 @@ witness get --key ~/.witness-operator http://127.0.0.1:5633/v1/witness/escrow | 
 
 A signature is good for `--max-age` seconds (default 60) and there is no replay store, because a replayed read changes nothing and discloses only what the captured request already would have. `--authority host:port`, repeatable, also refuses a signature made for some other address; it is off by default, because through an SSH tunnel the address a caller signs is the tunnel's local end, which the witness cannot know. Without it, a request signed for one witness can be replayed to a sibling that names the same operator, inside the window.
 
-Signing does not change where the port belongs. Keep it on loopback, reached by tunnel; authentication is what makes a slip survivable, not a reason to publish it.
+Signing does not change where the port belongs. Keep it on loopback, reached by tunnel; authentication is what makes a slip survivable, not a reason to publish it. The one exception is the change feed and identity, which a watcher on someone else's network cannot tunnel to: the deploy kit's Caddy proxies those two routes, GET only, and refuses the rest. A watcher signs the public URL, `https://<witness host>/v1/witness/change`, and the signature verifies behind the proxy because Caddy passes `Host` through unchanged (`@9y806dye`).
 
 ## License
 

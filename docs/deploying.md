@@ -59,6 +59,8 @@ docker run -d --name witness $HARDENED \
 
 Set `WITNESS_WATCHERS=<watcher AID>[,<watcher AID>...]` to grant the separate change feed. Leave it unset to refuse all feed reads. The runner writes accepted events and stored receipts to a separate LMDB change log under the witness volume's `change/` directory. Keep that directory across ordinary restarts: a clean runner restart preserves the log generation and its response signing key, so watchers can continue polling. An unclean exit or failed log write starts a new generation, which makes watchers begin an initial sync. The cursor's hash chain also detects a restored log whose entries diverge from what a watcher previously read. `witness backup` omits the change log; restoring that backup creates a new log and response key that watchers must pin again.
 
+A remote watcher reaches the feed at `https://<witness public host>/v1/witness/change` and its `change_key` at `https://<witness public host>/v1/witness/identity`, both proxied by Caddy on the public host; no other control-plane path is reachable from outside. It signs the request for that public URL. Leave `--authority` unset: Caddy routes on the same `Host` the signature binds, which already stops a sibling's request being replayed here, and setting it would refuse the operators' tunnelled reads ([`deploy/README.md`](../deploy/README.md) has the rest).
+
 A keystore must exist in the volume before first start. `--nopasscode` leaves the witness's signing key **unencrypted at rest in the volume**, which is accepted deliberately: an encrypted keystore needs its passcode supplied at every start, so the passcode would have to live on the same host as the volume and would protect nothing against the threat that matters (host compromise). What does protect it is the volume's own access control. Do not copy the volume anywhere the host's uid boundary does not follow.
 
 ```
@@ -70,7 +72,7 @@ docker run --rm $HARDENED -v witness-data:/usr/local/var/keri --entrypoint kli \
 | --- | --- | --- |
 | 5631 | keripy witness HTTP | Yes, through Caddy |
 | 5632 | keripy CESR-over-TCP | No — `@m4c35y` closes it, pending its own unverified caveat |
-| 5633 | Bakobo control plane | **Loopback only.** Six nouns need a signed request from an operator named by `WITNESS_OPERATORS` |
+| 5633 | Bakobo control plane | **Loopback only.** Caddy proxies `GET /v1/witness/change` and `GET /v1/witness/identity` for remote watchers (`@9y806dye`) and refuses every other path; the rest is reached over SSH. Six nouns need a signed request from an operator named by `WITNESS_OPERATORS` |
 
 The volume must persist. It holds the keystore, the AID, the KEL and every receipt; losing it loses the witness's identity, and a controller that designated it would have to rotate.
 

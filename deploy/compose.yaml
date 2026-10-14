@@ -42,8 +42,8 @@ services:
     mem_limit: 512m
 
     # Loopback only, both of them. 5631 is the witness, reached by Caddy. 5633 is the control
-    # plane, reached over SSH (`ssh -L 5633:127.0.0.1:5633 host`, then `witness get`) and never
-    # proxied. Publishing either beyond loopback bypasses the nftables input rules entirely,
+    # plane, reached over SSH (`ssh -L 5633:127.0.0.1:5633 host`, then `witness get`); Caddy proxies
+    # only its change feed and identity, for remote watchers (@9y806dye). Publishing either beyond loopback bypasses the nftables input rules entirely,
     # because Docker's published ports traverse FORWARD, not INPUT.
     ports:
       - "127.0.0.1:5631:5631"
