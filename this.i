@@ -368,8 +368,12 @@ Operator layer over a stock keripy witness = goal:
                 A separate persistent fiki signing key lives with the index, since reading the
                 witness's encrypted keystore would require its passcode in the control-plane
                 process and violate the read-only boundary; identity publishes this feed key's
-                non-transferable AID for watcher pinning. Losing or restoring the index changes
-                its generation, so an old cursor refuses rather than silently skipping changes.
+                non-transferable AID for watcher pinning. Every control-plane process start
+                mints a new generation, so even restoring a snapshot of LMDB and the index
+                together cannot silently preserve a cursor issued after that snapshot. This
+                makes ordinary restarts require a full watcher replay too; accepted because
+                without an external monotonic store there is no way to distinguish such a
+                snapshot restore from a normal restart.
                 Rejected a Merkle tree over all AID state: it adds proof machinery and persistent
                 writes to answer a question this watcher can answer with a sparse log.
               children:
