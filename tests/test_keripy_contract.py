@@ -103,6 +103,59 @@ def test_wigs_holds_the_witnesss_own_indexed_signature(witnessing_db):
     assert wigers[0].index == 0
 
 
+def test_kever_logevent_calls_fels_append_and_fons_resolves_its_ordinal(tmp_path):
+    """The first-seen hook must see an accepted event and its digest key must resolve to fn."""
+    from keri.app import habbing
+    from keri.core import Kevery, Parser
+
+    head = str(tmp_path / "hookcontract")
+    witness = habbing.Habery(
+        name="hookcontract", base="", temp=False, headDirPath=head,
+        bran="abcdefghijk1234567890",
+    )
+    controller = habbing.Habery(name="hookcontroller", temp=True, bran="0987654321kjihgfedcba")
+    try:
+        whab = witness.makeHab(name="wit", transferable=False)
+        calls = []
+        original = witness.db.fels.append
+
+        def observed(*, keys, val):
+            result = original(keys=keys, val=val)
+            calls.append((keys, val, result))
+            return result
+
+        witness.db.fels.append = observed
+        chab = controller.makeHab(name="ctl", transferable=True, wits=[whab.pre], toad=1)
+        Parser().parse(
+            ims=bytearray(chab.msgOwnInception(framed=True)),
+            kvy=Kevery(db=witness.db, lax=False, local=False), local=True,
+        )
+
+        assert calls == [(chab.pre.encode(), chab.kever.serder.saidb, 0)]
+        fn = witness.db.fons.get(keys=(chab.pre, chab.kever.serder.said))
+        assert fn is not None and fn.num == 0
+    finally:
+        controller.close()
+        witness.close()
+
+
+def test_wigs_add_and_put_report_only_newly_stored_signatures(witnessing_db):
+    """Both return contracts gate a change-log append; a repeated receipt returns False."""
+    rdb = _reopen(witnessing_db)
+    try:
+        wiger = rdb.wigs.get(keys=(witnessing_db["controller_pre"], witnessing_db["saids"][0]))[0]
+    finally:
+        rdb.close()
+    db = basing.Baser(name="wigcontract" + os.urandom(4).hex(), temp=True, reopen=True)
+    try:
+        assert db.wigs.add(keys=("Eaid", "Edigest"), val=wiger) is True
+        assert db.wigs.add(keys=("Eaid", "Edigest"), val=wiger) is False
+        assert db.wigs.put(keys=dbing.dgKey("Eaid", "Eother"), vals=[wiger]) is True
+        assert db.wigs.put(keys=dbing.dgKey("Eaid", "Eother"), vals=[wiger]) is False
+    finally:
+        db.close(clear=True)
+
+
 @pytest.mark.parametrize("accessor", ["habs", "fels", "dtss", "states", "wigs", "clonePreIter"])
 def test_a_moved_accessor_fails_closed_rather_than_reading_as_empty(witnessing_db, accessor):
     """The invariant the tests above exist to protect, kept rather than proven once.
