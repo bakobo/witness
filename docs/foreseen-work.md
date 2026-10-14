@@ -109,7 +109,7 @@ Each of these has to cross the IPC boundary rather than touch LMDB, per `k3p7wr`
 | Capability | Source | Why it breaks statelessness |
 |---|---|---|
 | Metrics over time | `b2y5nr` | LMDB holds current state, not history of our observations |
-| Changes-since-root sync index | `b2y5nr` | An index we maintain, not one keripy keeps |
+| Sparse watcher change feed | `b2y5nr`, `6y23f6w2` | Implemented: a small index beside keripy's LMDB, ending this part of the stateless v1 projection |
 | Fleet sync across witnesses | tick `5gsx` | Coordination state spanning hosts |
 | Independent, tamper-evident audit store | `b2y5nr` | Explicitly called out as absent |
 | Web console | `r3v6np`, tick `6cy6` | A UI, plus the mutating POST surface it drives |

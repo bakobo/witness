@@ -92,12 +92,12 @@ That takes a transactionally consistent snapshot of every store — including th
 
 ## The control-plane surface
 
-Every path is `/v1/witness/<noun>`, and all are `GET`. Five answer anyone; six answer only an operator who signs the request — see [Authentication](#authentication).
+Every path is `/v1/witness/<noun>`, and all are `GET`. Five answer anyone, six require an operator, and the change feed requires a separately granted watcher — see [Authentication](#authentication).
 
 | Path | What it answers | Signed? |
 | --- | --- | --- |
 | `/v1/witness/health` | Whether the witness is *working*: the database opens **and** the hio loop is not stuck inside a doer. | No |
-| `/v1/witness/identity` | The witness's own AID and alias. | No |
+| `/v1/witness/identity` | The witness's own AID and alias, plus the change feed signing key's AID for pinning. | No |
 | `/v1/witness/version` | This package and the keripy it wraps. | No |
 | `/v1/witness/loop` | Loop ticks, lag against the tock, the doer currently executing, and per-doer timings. | Yes |
 | `/v1/witness/escrow` | Depth of every escrow store, query-not-found first. | Yes |
@@ -107,6 +107,9 @@ Every path is `/v1/witness/<noun>`, and all are `GET`. Five answer anyone; six a
 | `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`, and `terms` and `registration`, which must be https URLs. | No |
 | `/v1/witness/controller` | Every controller whose key state this witness holds. | Yes |
 | `/v1/witness/controller/{aid}` | One controller's key state and the tags it inherits, or `404`. | Yes |
+| `/v1/witness/change?since=<cursor>&limit=<n>` | A page of AIDs changed since a cursor, with CESR replay. | Watcher |
+
+The change feed answers `{"generation", "next", "more", "change": [{"aid", "fn", "kel"}]}`. `kel` is base64 of keripy's genus-pinned replay from first-seen ordinal `fn`, including signatures and receipts held at answer time. Omit `since` to list every AID from ordinal zero; use `next` for the next page or polling round. Pages hold at most 1,000 AIDs (`limit` defaults to 100) and 16 MiB of raw replay bytes. A larger page gets `413 e.input.range.change.f`; lower `limit` to try a smaller page. An individual AID above 16 MiB cannot be served by this route yet (~5sqv). A cursor from another index generation or older than the seven-day retention window gets `409 e.state.conflict.cursor.f`; restart without `since`. The generation changes on every control-plane restart, including after a restore, so watchers perform a full replay then. The inclusive cursor resends the current minute so a change arriving after a page is not missed. The control-plane process sweeps each key state once a minute, and quiet minutes add no change row. A late receipt for an event older than an AID's latest event does not trigger a change.
 
 Tags are worth a paragraph, because what they do *not* say is the point. There is a `testnet` tag and deliberately no `production` tag: a witness claiming to be production makes a self-serving claim nothing verifies, whereas one claiming to be a laboratory speaks against its own interest. So an empty tag list means "nothing claimed", never "this is fine", and a reader must not treat absence as assurance. Set them with `--tag`, repeatable; an undefined bare name is refused at startup, because a misspelled `testnet` that silently fails to apply leaves the witness looking production-grade with nothing to say otherwise. A tag of your own needs a vendor prefix, as in `bakobo.pool`.
 
@@ -154,6 +157,8 @@ The code carries the meaning: it is classified by what the obstacle was rather t
 Six nouns — `loop`, `escrow`, `database`, `process`, `controller` and `controller/{aid}` — answer only a request signed with an RFC 9421 HTTP Message Signature, via [`fiki`](https://github.com/bakobo/fiki), by an operator this witness was told about. The other five stay open: a liveness probe cannot sign, a witness's identity is already public through its OOBI, and tags and attributes are what it broadcasts about itself. `@34sgjmxr` in `this.i` has the reasoning.
 
 Name operators with `--operator <AID>`, repeatable, or with `WITNESS_OPERATORS` (comma-separated), which is read only when no flag is given and is how a deployment reaches into the image's fixed command. An operator's AID is a non-transferable one, the Ed25519 key itself. **With no operator named, the six refuse everyone** with `403 e.grant.missing.operator.f`, and the five keep serving, so upgrading an image without setting it costs those reads and nothing else. A missing, stale or wrong signature is `401 e.id.invalid.control.f`.
+
+Name feed readers with `--watcher <AID>` or `WITNESS_WATCHERS` (comma-separated). An operator has no implicit watcher grant, and a watcher has no implicit operator grant. With no watcher named, the feed refuses everyone with `403 e.grant.missing.watcher.f`; the other nouns keep their existing grants. Feed responses, including refusals, carry an RFC 9421 signature bound to the request. Pin the `change_key` AID from `/v1/witness/identity` before trusting one; it is a separate, persistent non-transferable key beside the index because the control plane does not hold the passcode needed to use an encrypted witness key.
 
 `witness get` is the client, since curl cannot sign:
 

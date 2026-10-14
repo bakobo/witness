@@ -170,6 +170,46 @@ class ControlDenied(WitnessError):
     status = 403
 
 
+class WatcherDenied(WitnessError):
+    """A genuine signer has no grant to enumerate this witness's change feed."""
+
+    code = "e.grant.missing.watcher.f"
+    title = "That signer is not a watcher of this witness."
+    status = 403
+
+
+class CursorConflict(WitnessError):
+    """The requested change history is outside this index generation or retention window."""
+
+    code = "e.state.conflict.cursor.f"
+    title = "That change cursor cannot resume this feed."
+    status = 409
+
+
+class ChangeInput(WitnessError):
+    """A change-feed query cannot be parsed within its input bounds."""
+
+    code = "e.input.format.change.f"
+    title = "The change request has an invalid query."
+    status = 400
+
+
+class ChangePageTooLarge(WitnessError):
+    """The selected AIDs' complete KELs exceed the feed's response memory budget."""
+
+    code = "e.input.range.change.f"
+    title = "That change page is larger than I will send."
+    status = 413
+
+
+class ChangeUnavailable(WitnessError):
+    """The index cannot currently attest to a complete sweep."""
+
+    code = "e.env.change.unavailable.r"
+    title = "The change index is not ready."
+    status = 503
+
+
 class ControlUnreachable(WitnessError):
     """``witness get`` could not reach the control plane it was pointed at."""
 
@@ -507,4 +547,3 @@ class LandingUnsafe(WitnessError):
     code = "e.rule.landing.unsafe.f"
     title = "A landing page input would let the page fetch or run something, so it was refused."
     status = 403
-

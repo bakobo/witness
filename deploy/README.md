@@ -31,6 +31,8 @@ witness get --key ~/.witness-operator http://127.0.0.1:5633/v1/witness/health
 
 Six of its nouns answer only operators named in `WITNESS_OPERATORS`; set it in `compose.yaml` with your own AID. Unset, those six refuse everyone and health and identity still answer.
 
+The change feed has its own `WITNESS_WATCHERS` allow-list. Operators do not gain feed access unless their AID is named there too. Its response key AID is published as `change_key` by `/v1/witness/identity` and must be pinned by each watcher.
+
 ## Install, in this order
 
 The order matters in two places. Installing the `nftables` package on a host where Docker is already running can flush Docker's rules, so nftables goes first. And Caddy must be logging to the journal before fail2ban starts reading it.

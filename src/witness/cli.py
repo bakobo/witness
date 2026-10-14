@@ -16,9 +16,14 @@ touches nothing at all (@78m6fs3g). ``get`` signs one read of a control plane as
 from __future__ import annotations
 
 import json
+import hashlib
+from pathlib import Path
 
-from . import backup, config, get, landing, metrics, pool, runner, server, supervisor
+from keri.db import basing
+
+from . import backup, config, get, landing, metrics, paths, pool, runner, server, supervisor
 from .app import RequestCounter, make_app
+from .change import ChangeFeed
 from .reader import WitnessReader
 
 
@@ -48,14 +53,26 @@ def main(argv=None, *, stdin=None) -> int:
         sup.install_signal_handlers()
         return sup.run()
     reader = WitnessReader(cfg)
+    db_path = paths.resolve(basing.Baser, cfg) or paths.candidates(basing.Baser, cfg)[0]
+    home = Path(db_path)
+    for _ in range(3 if cfg.base else 2):
+        home = home.parent
+    # Hash the resolved database path: --name/--base are operator input and may contain path
+    # separators, while the index filename must stay inside the witness volume's change/ dir.
+    index_name = hashlib.sha256(str(db_path).encode()).hexdigest()[:32] + ".sqlite"
+    change_feed = ChangeFeed(home / "change" / index_name, reader)
     # Held for the process's lifetime rather than discarded: the PeriodicExportingMetricReader
     # inside it owns the background thread that does the exporting. Returns None, and costs
     # nothing, when no OTLP collector is configured (@wea6qjmk).
     counter = RequestCounter()
-    app = make_app(reader, counter=counter, operators=cfg.operators, max_age=cfg.max_age,
-                   authorities=cfg.authorities)
+    app = make_app(reader, counter=counter, operators=cfg.operators, watchers=cfg.watchers,
+                   change_feed=change_feed, max_age=cfg.max_age, authorities=cfg.authorities)
     _metrics = metrics.configure(  # noqa: F841 - kept alive deliberately
         reader, counter=counter
     )
-    server.serve(app, cfg.host, cfg.port)
+    try:
+        change_feed.start()
+        server.serve(app, cfg.host, cfg.port)
+    finally:
+        change_feed.close()
     return 0

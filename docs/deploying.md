@@ -57,6 +57,8 @@ docker run -d --name witness $HARDENED \
 
 `WITNESS_OPERATORS` names who may read the six signed control-plane nouns; `witness get --key <key> --aid` prints an operator's AID. Leave it out and those nouns refuse everyone while health and identity keep answering. [Authentication](../README.md#authentication) has the rest.
 
+Set `WITNESS_WATCHERS=<watcher AID>[,<watcher AID>...]` to grant the separate change feed. Leave it unset to refuse all feed reads. The feed's index and signing key live under the witness volume's `change/` directory; retain that directory across ordinary restarts. Each control-plane start mints a new feed generation, so a watcher performs a full listing after any restart. This also catches a restore of both LMDB and the index from the same snapshot. `witness backup` omits the derived index; its restore procedure creates a fresh volume and a fresh signing key that watchers must pin again.
+
 A keystore must exist in the volume before first start. `--nopasscode` leaves the witness's signing key **unencrypted at rest in the volume**, which is accepted deliberately: an encrypted keystore needs its passcode supplied at every start, so the passcode would have to live on the same host as the volume and would protect nothing against the threat that matters (host compromise). What does protect it is the volume's own access control. Do not copy the volume anywhere the host's uid boundary does not follow.
 
 ```
