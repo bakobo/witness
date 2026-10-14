@@ -75,6 +75,9 @@ class FakeLog:
     def close_clean(self):
         pass
 
+    def close(self):
+        pass
+
 
 CHANGE_SEAMS = {
     "open_change_log": lambda path: FakeLog(),

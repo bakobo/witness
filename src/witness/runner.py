@@ -174,19 +174,28 @@ class WitnessRunner:
             limit=0.0, tock=TOCK, real=True, doers=doers, sink=writer,
             stop_requested=lambda: stop,
         )
-        prior_handler = self._signal.signal(self._signal.SIGTERM, request_stop)
+        # SIGINT too: hio turns a KeyboardInterrupt into a normal return, which would let an
+        # interrupt landing between keripy's write and the log's append pass for a clean stop.
+        signals = (self._signal.SIGTERM, self._signal.SIGINT)
+        prior = {signum: self._signal.signal(signum, request_stop) for signum in signals}
         try:
             try:
                 doist.do()
             except StopRequested:
                 if not stop:
                     raise
-            log.close_clean()
+            # Only a stop this runner asked for ends at a pass boundary; any other return
+            # cannot vouch that every keripy write reached the log.
+            if stop:
+                log.close_clean()
+            else:
+                log.close()
         except BaseException:
             log.close()
             raise
         finally:
-            self._signal.signal(self._signal.SIGTERM, prior_handler)
+            for signum, handler in prior.items():
+                self._signal.signal(signum, handler)
         return 0
 
     def _open_telemetry(self, doers):

@@ -17,7 +17,7 @@ def _parts(keys):
     )
 
 
-def _record(log, keys, digest=None):
+def _record(log, keys, digest=None, fn=None):
     """A broken side log cannot break the keripy write that already succeeded."""
     try:
         if digest is None:
@@ -25,7 +25,7 @@ def _record(log, keys, digest=None):
         else:
             aid = keys.decode() if isinstance(keys, bytes) else keys
             digest = digest.decode() if isinstance(digest, bytes) else digest
-        log.append(aid, digest)
+        log.append(aid, digest, fn)
     except Exception:
         try:
             log.fail()
@@ -45,7 +45,7 @@ def install(db, log):
         result = original_fel(keys=keys, val=val)
         # The first accepted event returns ordinal 0, so truthiness is wrong.
         if result is not None:
-            _record(log, keys, val)
+            _record(log, keys, val, result)
         return result
 
     def wig_add(keys, val):

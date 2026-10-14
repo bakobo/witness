@@ -80,10 +80,10 @@ def setup(tmp_path):
     writer.close_clean()
 
     class Log:
-        def append(self, aid, digest):
+        def append(self, aid, digest, fn=None):
             opened = ChangeLog.open(path)
             try:
-                return opened.append(aid, digest)
+                return opened.append(aid, digest, fn)
             finally:
                 opened.close_clean()
 
@@ -151,6 +151,28 @@ def test_escrow_and_entry_bound(setup, monkeypatch):
     first = feed.page(baseline, 10)
     assert first["change"] == [] and first["more"]
     assert feed.page(first["next"], 10)["change"][0]["aid"] == "A"
+
+
+def test_a_poll_never_consumes_a_first_seen_event_keripy_is_still_writing(setup):
+    """keripy pins fons after fels.append; a poll in that gap must not step past the entry."""
+    log, feed, db, _opens = setup
+    state(db, "A")
+    baseline = feed.page(None, 10)["next"]
+    log.append("B", "B-0", 0)
+    early = feed.page(baseline, 10)
+    assert early["change"] == [] and early["more"]
+    assert early["next"] == baseline
+    state(db, "B")
+    assert [(r["aid"], r["fn"]) for r in feed.page(early["next"], 10)["change"]] == [("B", 0)]
+
+
+def test_a_receipt_on_an_unaccepted_event_is_consumed_without_a_replay(setup):
+    log, feed, db, _opens = setup
+    state(db, "A")
+    baseline = feed.page(None, 10)["next"]
+    log.append("B", "escrowed")
+    page = feed.page(baseline, 10)
+    assert page["change"] == [] and not page["more"]
 
 
 def test_foreign_and_past_cursor_conflict(setup):

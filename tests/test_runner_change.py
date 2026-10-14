@@ -31,17 +31,25 @@ class FakeLog:
 
 class FakeSignals:
     SIGTERM = signal.SIGTERM
+    SIGINT = signal.SIGINT
 
     def __init__(self):
         self.original = object()
-        self.handler = self.original
+        self.handlers = {self.SIGTERM: self.original, self.SIGINT: self.original}
         self.calls = []
 
+    @property
+    def handler(self):
+        return self.handlers[self.SIGTERM]
+
+    def restored(self):
+        return all(handler is self.original for handler in self.handlers.values())
+
     def signal(self, signum, handler):
-        assert signum == self.SIGTERM
-        self.calls.append(handler)
-        previous = self.handler
-        self.handler = handler
+        assert signum in self.handlers
+        self.calls.append((signum, handler))
+        previous = self.handlers[signum]
+        self.handlers[signum] = handler
         return previous
 
 
@@ -102,8 +110,9 @@ def test_log_opens_and_hook_installs_before_doers_and_doist(config):
         ("build", hby),
     ]
     assert events[3] == ("doist",)
-    assert log.closed_clean
-    assert signals.calls[-1] is signals.original
+    # A Doist that returns without a requested stop cannot vouch for the log.
+    assert not log.closed_clean and log.closed_unclean
+    assert signals.restored()
 
 
 def test_sigterm_waits_for_the_next_doist_pass_and_closes_clean(config):
@@ -121,7 +130,24 @@ def test_sigterm_waits_for_the_next_doist_pass_and_closes_clean(config):
     )
     assert subject.run() == 0
     assert log.closed_clean
-    assert signals.handler is signals.original
+    assert signals.restored()
+
+
+def test_sigint_is_a_boundary_stop_too_not_a_keyboard_interrupt(config):
+    signals = FakeSignals()
+
+    class InterruptedDoist(FakeDoist):
+        def do(self):
+            signals.handlers[signals.SIGINT](signals.SIGINT, None)
+            assert self.stop_requested()
+            raise runner.StopRequested()
+
+    subject, log, signals, *_ = make_runner(
+        config, doist_factory=InterruptedDoist, signals=signals
+    )
+    assert subject.run() == 0
+    assert log.closed_clean
+    assert signals.restored()
 
 
 @pytest.mark.parametrize(
@@ -137,7 +163,7 @@ def test_other_doist_exits_leave_log_unclean(config, failure):
         subject.run()
     assert not log.closed_clean
     assert log.closed_unclean
-    assert signals.handler is signals.original
+    assert signals.restored()
 
 
 def test_stop_doist_checks_flag_before_running_another_pass(monkeypatch):

@@ -18,6 +18,8 @@ ZERO_CHAIN = bytes(16)
 #: Virtual, not allocated: the file grows with use. At ~150 bytes an entry this holds tens of
 #: millions of entries; lmdb's own 10 MiB default would fill after ~60,000 and stop the feed.
 MAP_SIZE = 4 * 1024 ** 3
+#: Present while the writer can still record changes; a reader refuses without it.
+LIVE = "live"
 
 
 def change_path(config):
@@ -30,19 +32,20 @@ def change_path(config):
     return Path(home) / "change" / config.base / config.name
 
 
-def _pack(aid, digest, chain):
-    return json.dumps([aid, digest, chain.hex()], separators=(",", ":")).encode()
+def _pack(aid, digest, chain, fn):
+    return json.dumps([aid, digest, chain.hex(), fn], separators=(",", ":")).encode()
 
 
 def _unpack(value):
-    aid, digest, chain = json.loads(value)
-    return aid, digest, bytes.fromhex(chain)
+    aid, digest, chain, fn = json.loads(value)
+    return aid, digest, bytes.fromhex(chain), fn
 
 
 class ChangeLog:
     """The runner's sole writer of a globally ordered log."""
 
-    def __init__(self, env, entries, meta, generation, seed):
+    def __init__(self, env, entries, meta, generation, seed, path=None):
+        self.path = Path(path) if path is not None else None
         self.env = env
         self.entries = entries
         self.meta = meta
@@ -69,9 +72,11 @@ class ChangeLog:
                 seed = fiki.Key.generate().seed
                 txn.put(b"seed", seed, db=meta)
             txn.delete(b"clean", db=meta)
-        return cls(env, entries, meta, generation.decode(), seed)
+        (path / LIVE).touch(mode=0o600)
+        return cls(env, entries, meta, generation.decode(), seed, path)
 
-    def append(self, aid, digest):
+    def append(self, aid, digest, fn=None):
+        """Log one change. ``fn`` is given for a first-seen event and absent for a receipt."""
         if self.failed:
             raise RuntimeError("The change log is failed; it cannot accept entries.")
         if isinstance(aid, bytes):
@@ -87,7 +92,7 @@ class ChangeLog:
                 ordinal = 1
                 previous = ZERO_CHAIN
             chain = hashlib.blake2b(previous + aid.encode() + b"\x00" + digest.encode(), digest_size=16).digest()
-            txn.put(ordinal.to_bytes(8, "big"), _pack(aid, digest, chain), db=self.entries)
+            txn.put(ordinal.to_bytes(8, "big"), _pack(aid, digest, chain, fn), db=self.entries)
         return ordinal
 
     def fail(self):
@@ -103,6 +108,13 @@ class ChangeLog:
                 txn.delete(b"failed", db=self.meta)
         except lmdb.Error:
             self.failed = True
+            # Unlinking needs no free space, so a full log can still tell its readers to stop
+            # answering rather than serve quiet polls over entries it could not record.
+            if self.path is not None:
+                try:
+                    os.unlink(self.path / LIVE)
+                except OSError:
+                    pass  # already gone, or unremovable; the marker below is the other signal
             with self.env.begin(write=True) as txn:
                 txn.put(b"failed", b"1", db=self.meta)
             return
@@ -126,6 +138,8 @@ class LogReader:
     def __init__(self, path):
         if path is None or not (Path(path) / "data.mdb").is_file():
             raise FileNotFoundError("The change log has not been created yet.")
+        if not (Path(path) / LIVE).is_file():
+            raise RuntimeError("The change log's writer could not record a change.")
         self.env = lmdb.open(str(path), readonly=True, lock=True, max_dbs=2)
         self.entries = self.env.open_db(b"entries")
         self.meta = self.env.open_db(b"meta")
@@ -167,5 +181,5 @@ class LogReader:
             cursor = txn.cursor(db=self.entries)
             if cursor.set_range((ordinal + 1).to_bytes(8, "big")):
                 for key, value in cursor:
-                    aid, digest, chain = _unpack(value)
-                    yield int.from_bytes(key, "big"), aid, digest, chain
+                    aid, digest, chain, fn = _unpack(value)
+                    yield int.from_bytes(key, "big"), aid, digest, chain, fn

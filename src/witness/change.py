@@ -138,10 +138,14 @@ class ChangeFeed:
             consumed = ordinal
             consumed_chain = log.chain_at(ordinal)
             count = 0
-            for entry_ordinal, aid, digest, entry_chain in log.entries_after(ordinal):
+            for entry_ordinal, aid, digest, entry_chain, entry_fn in log.entries_after(ordinal):
                 if count >= MAX_PAGE_ENTRIES:
                     break
                 fon = rdb.fons.get(keys=(aid, digest))
+                if fon is None and entry_fn is not None:
+                    # keripy pins fons after fels.append, so this event is still being written.
+                    # Stop before it rather than consume an entry the replay cannot yet carry.
+                    break
                 if fon is not None and aid not in aid_fns and len(aid_fns) >= limit:
                     break
                 count += 1

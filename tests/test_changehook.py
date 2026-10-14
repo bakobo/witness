@@ -28,8 +28,8 @@ class Log:
         self.entries = []
         self.failures = 0
 
-    def append(self, aid, digest):
-        self.entries.append((aid, digest))
+    def append(self, aid, digest, fn=None):
+        self.entries.append((aid, digest) if fn is None else (aid, digest, fn))
 
     def fail(self):
         self.failures += 1
@@ -69,7 +69,7 @@ def test_real_kevery_event_and_old_receipt_both_reach_the_hook(tmp_path):
         log.close_clean()
         log = None
         with LogReader(tmp_path / "change") as reader:
-            assert [(aid, said) for _, aid, said, _ in reader.entries_after(0)] == [
+            assert [(aid, said) for _, aid, said, _, _ in reader.entries_after(0)] == [
                 (chab.pre, first_said), (chab.pre, second_said), (chab.pre, first_said)
             ]
     finally:
@@ -87,7 +87,7 @@ def test_first_seen_ordinal_zero_is_stored_and_returned():
     result = db.fels.append(keys=b"Eaid", val=b"Edigest")
     assert result == 0
     assert db.fels.calls == [((), {"keys": b"Eaid", "val": b"Edigest"})]
-    assert log.entries == [("Eaid", "Edigest")]
+    assert log.entries == [("Eaid", "Edigest", 0)]
 
 
 def test_fels_does_not_log_if_an_accessor_reports_no_append():
@@ -127,7 +127,7 @@ def test_failed_log_append_does_not_fail_keripy_and_marks_generation_failed():
     db = SimpleNamespace(fels=Store(1), wigs=Store(False))
 
     class BrokenLog(Log):
-        def append(self, aid, digest):
+        def append(self, aid, digest, fn=None):
             raise OSError("disk full")
 
     log = BrokenLog()
@@ -142,7 +142,7 @@ def test_failed_failure_recording_still_does_not_fail_keripy():
     db = SimpleNamespace(fels=Store(1), wigs=Store(False))
 
     class BrokenLog(Log):
-        def append(self, aid, digest):
+        def append(self, aid, digest, fn=None):
             raise OSError("disk full")
 
         def fail(self):

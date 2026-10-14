@@ -39,7 +39,7 @@ def test_clean_and_unclean_lifecycle(tmp_path):
     third.close_clean()
     with LogReader(path) as reader:
         assert reader.last()[0] == 2
-        assert [(aid, said) for _, aid, said, _ in reader.entries_after(0)] == [
+        assert [(aid, said) for _, aid, said, _, _ in reader.entries_after(0)] == [
             ("A", "A-0"), ("B", "B-0")
         ]
 
@@ -95,6 +95,44 @@ def test_a_failed_turnover_stops_writes_until_an_unclean_reopen(tmp_path):
     reopened = ChangeLog.open(path)
     assert reopened.generation != old
     reopened.close_clean()
+    with LogReader(path) as reader:
+        assert reader.generation == reopened.generation
+
+
+def test_a_log_that_cannot_record_its_own_failure_still_stops_its_readers(tmp_path):
+    """Neither the turnover nor the failed marker fits; the unlinked live file still speaks."""
+    path = tmp_path / "change"
+    log = ChangeLog.open(path)
+    log.close_clean()
+    log = ChangeLog.open(path)
+    real_env = log.env
+
+    def full(*_args, **_kwargs):
+        raise lmdb.MapFullError("full")
+
+    log.env = SimpleNamespace(begin=full, sync=real_env.sync, close=real_env.close)
+    with pytest.raises(lmdb.MapFullError):
+        log.fail()
+    assert log.failed
+    with pytest.raises(lmdb.MapFullError):
+        log.fail()  # the live file is already gone; a second failure says so again
+    with pytest.raises(RuntimeError, match="could not record"):
+        LogReader(path)
+    log.close()
+    ChangeLog.open(path).close_clean()
+    with LogReader(path):
+        pass
+
+
+def test_a_failure_on_a_log_built_without_a_path_still_stops_writes():
+    class Env:
+        def begin(self, **_kwargs):
+            raise lmdb.MapFullError("full")
+
+    log = ChangeLog(Env(), None, None, "g", b"s")
+    with pytest.raises(lmdb.MapFullError):
+        log.fail()
+    assert log.failed
 
 
 def test_the_writer_maps_far_more_than_lmdbs_default(tmp_path):
