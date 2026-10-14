@@ -30,8 +30,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
       # tests/test_deploy_proxy.py runs the deploy kit's Caddyfile through a real Caddy (@9y806dye)
-      # and fails without one wherever WITNESS_REQUIRE_CADDY is set. Pinned by version and SHA-512, the release's own checksum,
-      # and 2.11.4 because that is the version the deployment's Caddy numbers were measured on.
+      # and fails without one wherever WITNESS_REQUIRE_CADDY is set. Pinned by version and by
+      # SHA-512, the release's own checksum, and 2.11.4 because that is the version the
+      # deployment's Caddy numbers were measured on.
       - name: Install Caddy
         env:
           CADDY_VERSION: 2.11.4
