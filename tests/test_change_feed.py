@@ -166,6 +166,35 @@ def test_a_poll_never_consumes_a_first_seen_event_keripy_is_still_writing(setup)
     assert [(r["aid"], r["fn"]) for r in feed.page(early["next"], 10)["change"]] == [("B", 0)]
 
 
+def test_a_poll_refuses_while_key_state_lags_an_entrys_fons(setup):
+    """fons is pinned before keripy's key state and KEL move; the replay must reach the entry."""
+    log, feed, db, _opens = setup
+    state(db, "A")
+    baseline = feed.page(None, 10)["next"]
+    db.fon[("A", "A-1")] = SimpleNamespace(num=1)
+    log.append("A", "A-1", 1)
+    with pytest.raises(ChangeUnavailable):
+        feed.page(baseline, 10)
+    state(db, "A", 1)
+    assert [(r["aid"], r["fn"]) for r in feed.page(baseline, 10)["change"]] == [("A", 1)]
+
+
+def test_a_writer_failure_during_a_page_refuses_that_page(setup, tmp_path):
+    log, feed, db, opens = setup
+    state(db, "A")
+    baseline = feed.page(None, 10)["next"]
+    log.append("A", "A-0")
+    original = feed.reader._open
+
+    def failing_open():
+        (tmp_path / "change" / "live").unlink()
+        return original()
+
+    feed.reader._open = failing_open
+    with pytest.raises(ChangeUnavailable, match="during this request"):
+        feed.page(baseline, 10)
+
+
 def test_a_receipt_on_an_unaccepted_event_is_consumed_without_a_replay(setup):
     log, feed, db, _opens = setup
     state(db, "A")

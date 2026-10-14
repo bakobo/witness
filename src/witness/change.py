@@ -46,7 +46,9 @@ def _decode(cursor):
     return values[0], values[1], bytes.fromhex(values[2]), values[3]
 
 
-def _replay(rdb, aid_fns):
+def _replay(rdb, aid_fns, through=None):
+    """Clone each AID from its fn, refusing unless the replay reaches every fn the page named."""
+    through = through or {}
     result = []
     used = 0
     for aid, fn in aid_fns.items():
@@ -61,7 +63,8 @@ def _replay(rdb, aid_fns):
                     f"The selected AIDs need more than {MAX_PAGE_REPLAY_BYTES} replay bytes. Reduce limit."
                 )
             events.append(event)
-        if len(events) < int(state.f, 16) - fn + 1:
+        # keripy pins fons before its key state moves, so the state alone can lag an entry.
+        if len(events) < max(int(state.f, 16), through.get(aid, -1)) - fn + 1:
             raise ChangeUnavailable("The witness could not replay every indexed event. Retry after its database is repaired.")
         result.append({"aid": aid, "fn": fn, "kel": base64.b64encode(b"".join(events)).decode()})
     return result
@@ -101,12 +104,19 @@ class ChangeFeed:
             else:
                 ordinal, chain, last_aid = last_ordinal, last_chain, ""
             if last_aid is not None:
-                return self._initial(log, ordinal, chain, last_aid, limit)
-            if ordinal == last_ordinal:
-                return {"generation": log.generation,
-                        "next": _encode(log.generation, ordinal, chain, None),
-                        "more": False, "change": []}
-            return self._poll(log, ordinal, last_ordinal, limit)
+                result = self._initial(log, ordinal, chain, last_aid, limit)
+            elif ordinal == last_ordinal:
+                result = {"generation": log.generation,
+                          "next": _encode(log.generation, ordinal, chain, None),
+                          "more": False, "change": []}
+            else:
+                result = self._poll(log, ordinal, last_ordinal, limit)
+            # The writer may have failed while this page was read; a page read across that
+            # failure must not advance a cursor past an entry it could not record.
+            if not log.live():
+                raise ChangeUnavailable("The change log's writer failed during this request. "
+                                        "Retry after it reopens.")
+            return result
 
     def _initial(self, log, ordinal, chain, last_aid, limit):
         rdb = self.reader._open()
@@ -135,6 +145,7 @@ class ChangeFeed:
         rdb = self.reader._open()
         try:
             aid_fns = {}
+            through = {}
             consumed = ordinal
             consumed_chain = log.chain_at(ordinal)
             count = 0
@@ -153,7 +164,8 @@ class ChangeFeed:
                 if fon is not None:
                     fn = int(fon.num)
                     aid_fns[aid] = min(aid_fns.get(aid, fn), fn)
-            changes = _replay(rdb, aid_fns)
+                    through[aid] = max(through.get(aid, fn), fn)
+            changes = _replay(rdb, aid_fns, through)
         finally:
             rdb.close()
         return {"generation": log.generation,

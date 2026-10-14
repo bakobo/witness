@@ -114,7 +114,7 @@ class ChangeLog:
                 try:
                     os.unlink(self.path / LIVE)
                 except OSError:
-                    pass  # already gone, or unremovable; the marker below is the other signal
+                    pass  # already gone, or unremovable (~3jyt); the marker below is the other signal
             with self.env.begin(write=True) as txn:
                 txn.put(b"failed", b"1", db=self.meta)
             return
@@ -140,6 +140,7 @@ class LogReader:
             raise FileNotFoundError("The change log has not been created yet.")
         if not (Path(path) / LIVE).is_file():
             raise RuntimeError("The change log's writer could not record a change.")
+        self.path = Path(path)
         self.env = lmdb.open(str(path), readonly=True, lock=True, max_dbs=2)
         self.entries = self.env.open_db(b"entries")
         self.meta = self.env.open_db(b"meta")
@@ -161,6 +162,10 @@ class LogReader:
 
     def close(self):
         self.env.close()
+
+    def live(self):
+        """Whether the writer still vouches for this log; checked again after a page is read."""
+        return (self.path / LIVE).is_file()
 
     def last(self):
         with self.env.begin() as txn:
