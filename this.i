@@ -361,6 +361,8 @@ Operator layer over a stock keripy witness = goal:
                 as the writer (@a24p3kbw); the served hio loop remains untouched (@c7v3kp).
                 seen(aid, sn, said, fn, receipts) holds one row per AID; change(bucket, aid,
                 from_fn) holds one per changed AID per minute and no row for a quiet minute.
+                A singleton metadata table holds the generation and response signing seed, not
+                another AID-state index; it commits with the two data tables in one SQLite file.
                 Compare each KeyStateRecord's s, d, f and latest-event wig count against seen;
                 a difference lowers from_fn within its bucket. Every sweep reads one key-state
                 record per AID irrespective of watcher count; a change appears within one bucket
