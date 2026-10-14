@@ -15,7 +15,7 @@ from keri.app import habbing
 from keri.core import Kevery, Parser, messagize, receipt
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def witnessing_db(tmp_path_factory):
     """A persistent witness LMDB that has received, receipted, and first-seen-indexed the
     inception and a rotation of a separate controller AID.

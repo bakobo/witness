@@ -189,6 +189,23 @@ Operator layer over a stock keripy witness = goal:
                 a docstring would not have stopped that; a red test does. Accepted tradeoff: the
                 allowlist has to be widened deliberately, in a commit that says why, which is
                 exactly the friction being bought.
+              children:
+
+                The change-log hook is the one in-loop write = decision:
+                  nid: 52dwv9ky
+                  why: >-
+                    The change feed (@6y23f6w2) needs one write per accepted event or stored
+                    receipt, and only the served process sees those as they happen. Daniel
+                    approved this on 2026-10-14 (Q-R1NY) as a reasonable tradeoff against
+                    @c7v3kp. It widens @e3uji3mv deliberately and in one place: the hook module
+                    may hash a few dozen bytes and commit one small LMDB transaction to its own
+                    environment, and nothing else; it reads no keripy store, never branches on
+                    remote input beyond the keys keripy already accepted, and never raises into
+                    keripy. A failed write is recorded and turns over the generation instead of
+                    failing the event. The module is frozen by its own AST allowlist test, as the
+                    in-loop module is. Accepted tradeoff: an fsync per event beside the several
+                    keripy already makes; the log opens without meta-sync, because the generation
+                    rule already covers a lost final transaction.
 
             Per-doer timings wrap deeds rather than patch hio = decision:
               id: vpu373to
@@ -350,6 +367,81 @@ Operator layer over a stock keripy witness = goal:
             (rule of three). Revisit when a concrete feature needs it (metrics-over-time, or the
             future changes-since-root sync index). Accepted tradeoff: no independent or tamper-evident
             audit store yet.
+          children:
+            A change log fed at keripy's write choke points serves allow-listed watchers = decision:
+              nid: 6y23f6w2
+              why: >-
+                The watcher @5q5ywmyh needs one signed GET /v1/witness/change per witness per
+                round that answers "what changed since X" for every AID at once, and a watcher
+                starting cold must still be told everything. This is @b2y5nr's named revisit
+                trigger. LMDB offers no change notification and inotify names only the file, so
+                the index is fed where keripy writes: every first-seen event passes through
+                db.fels.append in Kever.logEvent, and every witness receipt through db.wigs.add or
+                db.wigs.put. The launcher wraps those three calls on its Baser before the Doist
+                starts (@52dwv9ky), and after a call that stored something it appends (aid, event
+                digest) under the next global ordinal of an append-only log. The log is its own
+                LMDB environment beside keripy's database, never a sub-db inside it, so keripy's
+                named-db budget and its environment are untouched; the runner is its only writer
+                and the control plane opens it read-only per request in the same PID namespace
+                (@a24p3kbw). A poll reads the entries after its cursor, resolves each digest to a
+                first-seen ordinal through keripy's own db.fons, keeps the lowest per AID, and
+                clones from there with clonePreIter. A receipt on any event, not only the latest,
+                is therefore noticed. A receipt stored for an event still in escrow has no fons
+                entry yet and is skipped; the event's own fels.append records it on acceptance.
+                Costs: one small write per accepted event or stored receipt in the served loop; a
+                quiet witness answers from one read of the last ordinal; a poll costs work
+                proportional to what changed since its cursor. There is no prune, because an
+                entry is a few dozen bytes; compaction to the newest entry per AID is a later
+                option, not v1.
+                GENERATION. The log write and keripy's write are not one transaction, so a crash
+                between them can lose an entry, and a watcher would then hold a cursor past a gap
+                it cannot see. The runner therefore begins a new generation on a new log, after
+                any start not preceded by a clean shutdown (it consumes a clean marker at start and
+                writes one only after the Doist exits normally, so SIGTERM must end the loop at a
+                pass boundary; SIGINT is routed the same way, and only a stop the runner asked for
+                counts as clean), and after any failed log write. A log too full to record even
+                its own failure unlinks a live marker, which needs no space, and a reader without
+                that marker refuses rather than serve quiet polls over lost entries. A restore of a cleanly stopped
+                store would keep its generation while watchers hold cursors beyond it, so each
+                entry also extends a hash chain over (previous chain, aid, digest) and a cursor
+                carries the chain value at its ordinal; a cursor whose chain does not match the
+                entry now at that ordinal, or whose generation is not current, refuses with 409
+                e.state.conflict.cursor.f and the watcher begins again with an initial sync.
+                Every clean restart keeps the generation, so watchers do not resync on deploys.
+                RESPONSE KEY. Answers are signed with fiki.sign_response by a non-transferable key
+                the runner mints when it creates the log and keeps in it; /identity publishes its
+                AID for watchers to pin. Reading the witness's own encrypted keystore would put its
+                passcode in the control-plane process. A new log means a new key.
+                Rejected the first draft's per-minute sweep of every key-state record and its
+                seven-day prune (Daniel, 2026-10-14): the sweep reads every AID every minute
+                whatever changed, and a prune stops a cold watcher from being told what it missed.
+                Rejected a Merkle tree over all AID state: it proves omission, which a watcher
+                defends by asking several witnesses. Rejected an upstream keripy hook for v1: it
+                is right eventually, on another maintainer's timeline.
+              children:
+                Cursor, initial sync and pages = decision:
+                  nid: 6t2v9cv0
+                  why: >-
+                    A cursor is opaque to the watcher and encodes (generation, ordinal, chain),
+                    plus, during an initial sync, the last AID sent. A request without since is an
+                    initial sync: the witness takes the log's last ordinal and chain before the
+                    copy begins, then pages through every AID's key state in key order, each
+                    with its whole KEL from fn 0; the final page's next cursor names that ordinal,
+                    so whatever changed during the copy arrives again on the first poll, which
+                    replay makes harmless. A poll with a cursor scans entries after its ordinal
+                    in order, collecting AIDs until limit would be exceeded or a bounded number
+                    of entries has been read, and ends the page at the last entry it consumed;
+                    an AID that appears again after that point is simply sent again next page.
+                    An entry for a first-seen event carries its fn; if keripy has not yet pinned
+                    that event's fons, the event is still being written and the page ends before
+                    it rather than consuming it. A receipt entry with no fons names an event not
+                    yet accepted, whose own fels entry will follow, so it is consumed.
+                    more says whether entries remain after the page. limit bounds AIDs and is
+                    capped before anything is read. A 16 MiB raw replay budget bounds a page's
+                    memory before JSON and signing copy it; a page over it refuses with a
+                    permanent size error, even at limit one, which is the price of returning a
+                    complete KEL rather than inventing event-fragment cursors the watcher cannot
+                    consume yet.
 
         Use falcon for the v1 control-plane HTTP surface = decision:
           id: r3v6np

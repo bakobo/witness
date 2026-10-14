@@ -57,6 +57,8 @@ docker run -d --name witness $HARDENED \
 
 `WITNESS_OPERATORS` names who may read the six signed control-plane nouns; `witness get --key <key> --aid` prints an operator's AID. Leave it out and those nouns refuse everyone while health and identity keep answering. [Authentication](../README.md#authentication) has the rest.
 
+Set `WITNESS_WATCHERS=<watcher AID>[,<watcher AID>...]` to grant the separate change feed. Leave it unset to refuse all feed reads. The runner writes accepted events and stored receipts to a separate LMDB change log under the witness volume's `change/` directory. Keep that directory across ordinary restarts: a clean runner restart preserves the log generation and its response signing key, so watchers can continue polling. An unclean exit or failed log write starts a new generation, which makes watchers begin an initial sync. The cursor's hash chain also detects a restored log whose entries diverge from what a watcher previously read. `witness backup` omits the change log; restoring that backup creates a new log and response key that watchers must pin again.
+
 A keystore must exist in the volume before first start. `--nopasscode` leaves the witness's signing key **unencrypted at rest in the volume**, which is accepted deliberately: an encrypted keystore needs its passcode supplied at every start, so the passcode would have to live on the same host as the volume and would protect nothing against the threat that matters (host compromise). What does protect it is the volume's own access control. Do not copy the volume anywhere the host's uid boundary does not follow.
 
 ```
@@ -169,7 +171,7 @@ So: **take a backup before any upgrade that changes the keripy pin**, and treat 
 
 ### Backing up
 
-`witness backup` takes a **transactionally consistent** snapshot of every store using LMDB's own `env.copy`, from a read-only environment, **while the witness keeps running and keeps receipting**:
+`witness backup` takes a **transactionally consistent** snapshot of every keripy store using LMDB's own `env.copy`, from a read-only environment, **while the witness keeps running and keeps receipting**. It omits the separate change log:
 
 ```
 docker run -d --name witness $HARDENED \
@@ -180,7 +182,7 @@ docker exec witness witness backup --name witness --to /backup/$(date +%F)
 
 It prints a manifest, which is also written beside the copy. The manifest records the keripy version the backup was taken with, which is what makes the one-way door above checkable in advance rather than at restore time.
 
-Two things it does that a `tar` of the volume does not. It is consistent rather than merely crash-recoverable — a tar taken while the witness runs may be missing the last transactions, and for a witness a missing receipt is a receipt a controller believes it has. And it copies **every** store: the signing keys live in the keystore, a separate LMDB from the event database, so a backup of `db` alone restores a witness that holds every event it ever receipted and cannot sign a single new one. `witness backup` refuses outright rather than writing a partial backup, because a partial backup is discovered during a restore.
+Two things it does that a `tar` of the volume does not. It is consistent rather than merely crash-recoverable — a tar taken while the witness runs may be missing the last transactions, and for a witness a missing receipt is a receipt a controller believes it has. And it copies **every keripy store**: the witness signing keys live in the keystore, a separate LMDB from the event database, so a backup of `db` alone restores a witness that holds every event it ever receipted and cannot sign a single new one. `witness backup` refuses outright rather than writing a partial backup of those stores, because a partial backup is discovered during a restore. The change log is created anew after restore; its old cursors and response key are no longer valid.
 
 One residual, stated because it is the interesting part. `env.copy` is atomic per LMDB environment and promises nothing across two, so copying three stores gives three instants and a backup taken from a running witness could in principle be internally torn. The harmful direction — a key history referencing a key the keystore does not hold, which signs perfectly and can never rotate — is closed by copying the keystore last, so it is never older than the database. And a witness's keystore is measurably static during operation, because a witness AID is non-transferable and cannot rotate. If a witness ever gains a rotating key, that trade wants revisiting: the stronger guarantee is to quiesce the stores under an exclusive lock, which costs the downtime this design exists to avoid.
 
@@ -200,6 +202,8 @@ docker run -d --name witness $HARDENED -v witness-data:/usr/local/var/keri ...
 ```
 
 Exercised end to end by `tests/test_image_upgrade.py`, which backs up a running witness, **destroys the volume**, restores from the backup alone, and then checks not only that the AID and witnessed key state came back but that the restored witness accepts and receipts a **new** event — the assertion that proves the signing keys came with it.
+
+The restored runner creates a fresh change log when it starts. Watchers must pin the new `change_key` from `/v1/witness/identity` and omit `since` to begin a full initial sync.
 
 **Where this stands, and the pin HAS moved.** As of 2026-09-21 the deployed digest carries keripy `2.0.0-dev6` while `main` carries `2.1.0-dev1`, so the next release to production crosses a migration — this is no longer the hypothetical it was when this section was written. The mechanism is verified by tests: the version check, both refusals, and the same-pin handover in **both directions between two real digests**. The migration itself is **not** exercised by anything here. The oracle declines to guess about it — when the two images carry different keripy versions it skips and names both, because a failure there would read as a broken upgrade when what happened is that it was pointed at a pin bump.
 

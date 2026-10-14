@@ -7,6 +7,7 @@ tests, so the symbols that reproduction stands on are asserted here.
 """
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from keri.app import Configer, Habery, HaberyDoer, Keeper, indirecting
@@ -56,8 +57,9 @@ class FakeDoer:
 class FakeDoist:
     instances = []
 
-    def __init__(self, *, limit, tock, real, doers, sink):
+    def __init__(self, *, limit, tock, real, doers, sink, stop_requested):
         self.limit, self.tock, self.real, self.doers, self.sink = limit, tock, real, doers, sink
+        self.stop_requested = stop_requested
         self.ran = False
         FakeDoist.instances.append(self)
 
@@ -67,6 +69,21 @@ class FakeDoist:
 
     def do(self):
         self.ran = True
+
+
+class FakeLog:
+    def close_clean(self):
+        pass
+
+    def close(self):
+        pass
+
+
+CHANGE_SEAMS = {
+    "open_change_log": lambda path: FakeLog(),
+    "install_change_hook": lambda db, log: None,
+    "change_path": lambda config: "/unused/change",
+}
 
 
 def test_run_assembles_stock_doers_and_runs_them_in_a_timed_doist(config):
@@ -80,9 +97,10 @@ def test_run_assembles_stock_doers_and_runs_them_in_a_timed_doist(config):
 
     subject = runner.WitnessRunner(
         config,
-        open_habery=lambda cfg: "the-habery",
+        open_habery=lambda cfg: SimpleNamespace(db="the-database"),
         build_doers=fake_build,
         doist_factory=FakeDoist,
+        **CHANGE_SEAMS,
     )
 
     assert subject.run() == 0
@@ -91,16 +109,17 @@ def test_run_assembles_stock_doers_and_runs_them_in_a_timed_doist(config):
     assert doist.ran is True
     assert doist.tock == runner.TOCK
     assert doist.real is True
-    assert built["hby"] == "the-habery"
+    assert built["hby"].db == "the-database"
 
 
 def test_the_telemetry_doer_is_appended_and_named_in_the_segment(config):
     FakeDoist.instances.clear()
     runner.WitnessRunner(
         config,
-        open_habery=lambda cfg: None,
+        open_habery=lambda cfg: SimpleNamespace(db=None),
         build_doers=lambda cfg, hby, **_k: [],
         doist_factory=FakeDoist,
+        **CHANGE_SEAMS,
     ).run()
 
     names = [d["name"] for d in telemetry.SegmentReader(config.telemetry_path).read()["doers"]]
@@ -119,9 +138,10 @@ def test_the_segment_gets_one_slot_per_doer_including_the_telemetry_doer(config)
 
     runner.WitnessRunner(
         config,
-        open_habery=lambda cfg: None,
+        open_habery=lambda cfg: SimpleNamespace(db=None),
         build_doers=lambda cfg, hby, **_k: [Alpha(), Beta()],
         doist_factory=FakeDoist,
+        **CHANGE_SEAMS,
     ).run()
 
     names = [d["name"] for d in telemetry.SegmentReader(config.telemetry_path).read()["doers"]]
@@ -267,9 +287,12 @@ def test_the_escrow_timeout_is_applied_before_the_witness_doers_are_built(config
     try:
         runner.WitnessRunner(
             config,
-            open_habery=lambda cfg: order.append(("habery", Kevery.TimeoutQNF)),
+            open_habery=lambda cfg: (
+                order.append(("habery", Kevery.TimeoutQNF)) or SimpleNamespace(db=None)
+            ),
             build_doers=fake_build,
             doist_factory=FakeDoist,
+            **CHANGE_SEAMS,
         ).run()
         assert order == [("habery", config.escrow_timeout), ("build", config.escrow_timeout)]
     finally:
@@ -300,9 +323,10 @@ def test_the_escrow_sweep_is_paced_after_the_doers_are_built(config, monkeypatch
 
     runner.WitnessRunner(
         config,
-        open_habery=lambda cfg: None,
+        open_habery=lambda cfg: SimpleNamespace(db=None),
         build_doers=lambda cfg, hby, **_k: [marker],
         doist_factory=FakeDoist,
+        **CHANGE_SEAMS,
     ).run()
 
     assert seen["doers"] == [marker], "pacing must see the stock doers, before ours are appended"

@@ -211,6 +211,17 @@ def test_the_signed_nouns_refuse_an_unsigned_read_in_the_image(witness_container
     assert refused.value.code == 401
 
 
+def test_the_image_has_a_live_feed_but_refuses_it_without_a_watcher_grant(witness_container):
+    """The shipped process wires the feed while the default grant still fails closed."""
+    container, port = witness_container
+    _await_healthz(container, port)
+    identity = _get(port, "/v1/witness/identity")
+    assert identity["change_key"].startswith("B")
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/witness/change", timeout=5)  # noqa: S310
+    assert refused.value.code == 403
+
+
 def test_the_registrar_resolves_callbacks_through_the_images_own_interpreter():
     """The Registrar resolves a callback host in a child of sys.executable run with -I -S, so it
     depends on the image's interpreter and its isolated standard library. A layout that breaks

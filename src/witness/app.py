@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import time
 import uuid
+import json
+from urllib.parse import parse_qsl
 
 import falcon
 import fiki
 
 from .accesslog import AccessLog
-from .errors import ControlDenied, ControlUnauthenticated, WitnessError
+from .errors import (ChangeInput, ChangeUnavailable, ControlDenied, ControlUnauthenticated, WatcherDenied,
+                     WitnessError)
 
 PROBLEM_JSON = "application/problem+json"
 _REQUEST_ID_HEADER = "Bakobo-Request-Id"
@@ -129,6 +132,91 @@ class OperatorGuard:
         req.context.outcome = "admitted"
 
 
+class WatcherGuard(OperatorGuard):
+    """Verify the same RFC 9421 profile, then require the independent watcher grant."""
+
+    def check(self, req):
+        if not self._operators:
+            req.context.outcome = "denied"
+            raise WatcherDenied("This witness has no watcher configured, so it answers the change "
+                                "feed for nobody. Name one with --watcher or WITNESS_WATCHERS.")
+        try:
+            verdict = fiki.verify_request(
+                method=req.method, url=req.url, headers=req.headers, max_age=self._max_age,
+                now=int(self._clock()), authorities=self._authorities,
+            )
+        except fiki.FikiError as refused:
+            req.context.outcome = "unauthenticated"
+            raise ControlUnauthenticated(
+                f"The request's signature did not verify: {refused}.") from None
+        req.context.signer = verdict.aid
+        if verdict.aid not in self._operators:
+            req.context.outcome = "denied"
+            raise WatcherDenied(f"{verdict.aid} is not a watcher of this witness.",
+                                args=[verdict.aid])
+        req.context.outcome = "admitted"
+
+
+class ChangeEndpoint:
+    """A signed, request-bound answer including typed refusals (@6y23f6w2)."""
+
+    def __init__(self, feed, guard, *, clock=time.time):
+        self._feed = feed
+        self._guard = guard
+        self._clock = clock
+
+    def on_get(self, req, resp):
+        try:
+            self._guard.check(req)
+            if len(req.query_string) > 2048:
+                raise ChangeInput("The change query is longer than 2048 characters.")
+            try:
+                pairs = parse_qsl(req.query_string, keep_blank_values=True, max_num_fields=3)
+            except ValueError:
+                raise ChangeInput("The change query names too many parameters.") from None
+            names = [name for name, _value in pairs]
+            if len(names) != len(set(names)) or set(names) - {"since", "limit"}:
+                raise ChangeInput("The change query must name since and limit at most once each.")
+            query = dict(pairs)
+            raw_limit = query.get("limit", "100")
+            if not raw_limit.isascii() or not raw_limit.isdecimal():
+                raise ChangeInput("The limit must be a decimal integer.")
+            result = self._feed.page(query.get("since"), int(raw_limit))
+            status = 200
+            resp.content_type = "application/json"
+        except WitnessError as exc:
+            req.context.error_type = exc.code
+            status = exc.status
+            result = exc.problem(instance=req.path,
+                                 request_id=getattr(req.context, "request_id", None))
+            resp.content_type = PROBLEM_JSON
+            resp.set_header("Content-Language", "en")
+            if exc.retryable:
+                resp.set_header("Retry-After", "5")
+        resp.status = falcon.util.code_to_http_status(status)
+        resp.data = json.dumps(result, separators=(",", ":")).encode()
+        try:
+            key = self._feed.key()
+        except ChangeUnavailable as exc:
+            # Before the writer creates the log there is no seed to sign with. Keep an
+            # already-refused request's status; a would-be success must become a typed 503.
+            if status == 200:
+                req.context.error_type = exc.code
+                resp.status = falcon.HTTP_503
+                resp.content_type = PROBLEM_JSON
+                resp.set_header("Content-Language", "en")
+                resp.set_header("Retry-After", "5")
+                resp.data = json.dumps(exc.problem(instance=req.path,
+                                                   request_id=getattr(req.context, "request_id", None)),
+                                       separators=(",", ":")).encode()
+            return
+        request = fiki.Request(method=req.method, url=req.url, headers=req.headers)
+        for name, value in fiki.sign_response(key=key, status=status,
+                                              request=request, body=resp.data,
+                                              created=int(self._clock())).items():
+            resp.set_header(name, value)
+
+
 class Endpoint:
     """One GET endpoint over a callable, with uniform typed-error rendering.
 
@@ -164,8 +252,8 @@ class Endpoint:
                 resp.set_header("Retry-After", "5")
 
 
-def make_app(reader, counter=None, *, operators=(), max_age=DEFAULT_MAX_AGE, authorities=(),
-             clock=time.time, access_log=None):
+def make_app(reader, counter=None, *, operators=(), watchers=(), change_feed=None,
+             max_age=DEFAULT_MAX_AGE, authorities=(), clock=time.time, access_log=None):
     """Build the falcon application wired to ``reader``.
 
     Five nouns answer anyone and six only a signing operator (@34sgjmxr). With no ``operators``
@@ -189,7 +277,9 @@ def make_app(reader, counter=None, *, operators=(), max_age=DEFAULT_MAX_AGE, aut
     app.resp_options.media_handlers[PROBLEM_JSON] = falcon.media.JSONHandler()
     guard = OperatorGuard(operators, max_age=max_age, authorities=authorities, clock=clock)
     app.add_route("/v1/witness/health", Endpoint(reader.health))
-    app.add_route("/v1/witness/identity", Endpoint(reader.identity))
+    identity = (reader.identity if change_feed is None else
+                lambda: dict(reader.identity(), change_key=change_feed.key().aid))
+    app.add_route("/v1/witness/identity", Endpoint(identity))
     app.add_route("/v1/witness/version", Endpoint(reader.version))
     app.add_route("/v1/witness/tags", Endpoint(reader.tags))
     app.add_route("/v1/witness/attribs", Endpoint(reader.attribs))
@@ -199,4 +289,9 @@ def make_app(reader, counter=None, *, operators=(), max_age=DEFAULT_MAX_AGE, aut
     app.add_route("/v1/witness/process", Endpoint(reader.process, guard))
     app.add_route("/v1/witness/controller", Endpoint(reader.controllers, guard))
     app.add_route("/v1/witness/controller/{aid}", Endpoint(reader.controller, guard))
+    if change_feed is not None:
+        watcher_guard = WatcherGuard(watchers, max_age=max_age, authorities=authorities,
+                                    clock=clock)
+        app.add_route("/v1/witness/change", ChangeEndpoint(change_feed, watcher_guard,
+                                                           clock=clock))
     return app

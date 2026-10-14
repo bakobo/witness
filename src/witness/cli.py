@@ -19,6 +19,8 @@ import json
 
 from . import backup, config, get, landing, metrics, pool, runner, server, supervisor
 from .app import RequestCounter, make_app
+from .change import ChangeFeed
+from .changelog import change_path
 from .reader import WitnessReader
 
 
@@ -48,12 +50,13 @@ def main(argv=None, *, stdin=None) -> int:
         sup.install_signal_handlers()
         return sup.run()
     reader = WitnessReader(cfg)
+    change_feed = ChangeFeed(lambda: change_path(cfg), reader)
     # Held for the process's lifetime rather than discarded: the PeriodicExportingMetricReader
     # inside it owns the background thread that does the exporting. Returns None, and costs
     # nothing, when no OTLP collector is configured (@wea6qjmk).
     counter = RequestCounter()
-    app = make_app(reader, counter=counter, operators=cfg.operators, max_age=cfg.max_age,
-                   authorities=cfg.authorities)
+    app = make_app(reader, counter=counter, operators=cfg.operators, watchers=cfg.watchers,
+                   change_feed=change_feed, max_age=cfg.max_age, authorities=cfg.authorities)
     _metrics = metrics.configure(  # noqa: F841 - kept alive deliberately
         reader, counter=counter
     )

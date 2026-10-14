@@ -62,6 +62,7 @@ services:
     # --aid` prints an operator's AID.
     # environment:
     #   - WITNESS_OPERATORS=<operator AID>[,<operator AID>...]
+    #   - WITNESS_WATCHERS=<watcher AID>[,<watcher AID>...]
 
 volumes:
   witness-data:

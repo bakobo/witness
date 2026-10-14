@@ -13,18 +13,36 @@ the Doist can be ours. Everything above that line is reproduced rather than rein
 from __future__ import annotations
 
 from collections import namedtuple
+import signal
 
 from keri.app import Configer, Habery, HaberyDoer, Keeper, indirecting, keeping
 from keri.core.eventing import Kevery
 from keri.cli.common import setupHby
 from keri.db import basing
 
-from . import escrows, inloop, paths, telemetry
+from . import changehook, changelog, escrows, inloop, paths, telemetry
 from .errors import KeystoreLost
 
 #: hio's own default, and what ``directing.runController`` uses. Named here because the telemetry
 #: doer measures lag against it: a pass that takes longer than a tock is a pass running behind.
 TOCK = 0.03125
+
+
+class StopRequested(SystemExit):
+    """The signal was observed at a Doist pass boundary."""
+
+
+class StopAtBoundaryDoist(inloop.TimedDoist):
+    """Exit the Doist after a SIGTERM without interrupting a keripy write."""
+
+    def __init__(self, *args, stop_requested, **kwargs):
+        self.stop_requested = stop_requested
+        super().__init__(*args, **kwargs)
+
+    def recur(self, *args, **kwargs):
+        if self.stop_requested():
+            raise StopRequested()
+        return super().recur(*args, **kwargs)
 
 
 _Probe = namedtuple("_Probe", "name base head_dir_path")
@@ -113,13 +131,21 @@ class WitnessRunner:
         open_habery=open_habery,
         build_doers=build_doers,
         create_segment=telemetry.SegmentWriter.create,
-        doist_factory=inloop.TimedDoist,
+        doist_factory=StopAtBoundaryDoist,
+        open_change_log=changelog.ChangeLog.open,
+        install_change_hook=changehook.install,
+        change_path=changelog.change_path,
+        signal_module=signal,
     ):
         self._config = config
         self._open_habery = open_habery
         self._build_doers = build_doers
         self._create_segment = create_segment
         self._doist_factory = doist_factory
+        self._open_change_log = open_change_log
+        self._install_change_hook = install_change_hook
+        self._change_path = change_path
+        self._signal = signal_module
 
     def run(self) -> int:
         # @znm5uppx. Set before setupWitness builds its Kevery, because keripy reads this off the
@@ -129,6 +155,8 @@ class WitnessRunner:
         # depth (docs/escrow-load.md).
         Kevery.TimeoutQNF = self._config.escrow_timeout
         hby = self._open_habery(self._config)
+        log = self._open_change_log(self._change_path(self._config))
+        self._install_change_hook(hby.db, log)
         doers = self._build_doers(self._config, hby)
         # @zj3h2pzh. Substituted after setupWitness has built its doers and before the Doist
         # enters, which is the only window in which WitnessStart.doers is both complete and not
@@ -136,8 +164,38 @@ class WitnessRunner:
         escrows.pace(doers, self._config.escrow_interval)
         writer, telemetry_doer = self._open_telemetry(doers)
         doers.append(telemetry_doer)
-        doist = self._doist_factory(limit=0.0, tock=TOCK, real=True, doers=doers, sink=writer)
-        doist.do()
+        stop = False
+
+        def request_stop(_signum, _frame):
+            nonlocal stop
+            stop = True
+
+        doist = self._doist_factory(
+            limit=0.0, tock=TOCK, real=True, doers=doers, sink=writer,
+            stop_requested=lambda: stop,
+        )
+        # SIGINT too: hio turns a KeyboardInterrupt into a normal return, which would let an
+        # interrupt landing between keripy's write and the log's append pass for a clean stop.
+        signals = (self._signal.SIGTERM, self._signal.SIGINT)
+        prior = {signum: self._signal.signal(signum, request_stop) for signum in signals}
+        try:
+            try:
+                doist.do()
+            except StopRequested:
+                if not stop:
+                    raise
+            # Only a stop this runner asked for ends at a pass boundary; any other return
+            # cannot vouch that every keripy write reached the log.
+            if stop:
+                log.close_clean()
+            else:
+                log.close()
+        except BaseException:
+            log.close()
+            raise
+        finally:
+            for signum, handler in prior.items():
+                self._signal.signal(signum, handler)
         return 0
 
     def _open_telemetry(self, doers):

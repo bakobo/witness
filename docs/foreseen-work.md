@@ -104,12 +104,12 @@ Each of these has to cross the IPC boundary rather than touch LMDB, per `k3p7wr`
 
 ### Beyond a stateless projection
 
-`b2y5nr` chose *not* to keep our own datastore, and named the concrete features that would reopen it:
+`b2y5nr` initially chose a stateless projection of keripy's LMDB and named the concrete features that would reopen that decision. The watcher change feed was its named revisit and now has a separate append-only log:
 
 | Capability | Source | Why it breaks statelessness |
 |---|---|---|
 | Metrics over time | `b2y5nr` | LMDB holds current state, not history of our observations |
-| Changes-since-root sync index | `b2y5nr` | An index we maintain, not one keripy keeps |
+| Sparse watcher change feed | `b2y5nr`, `6y23f6w2`, `6t2v9cv0` | Implemented: a separate append-only LMDB change log written by the runner and read by the control plane, ending this part of the stateless v1 projection |
 | Fleet sync across witnesses | tick `5gsx` | Coordination state spanning hosts |
 | Independent, tamper-evident audit store | `b2y5nr` | Explicitly called out as absent |
 | Web console | `r3v6np`, tick `6cy6` | A UI, plus the mutating POST surface it drives |

@@ -31,6 +31,8 @@ witness get --key ~/.witness-operator http://127.0.0.1:5633/v1/witness/health
 
 Six of its nouns answer only operators named in `WITNESS_OPERATORS`; set it in `compose.yaml` with your own AID. Unset, those six refuse everyone and health and identity still answer.
 
+The change feed has its own `WITNESS_WATCHERS` allow-list. Operators do not gain feed access unless their AID is named there too. The runner writes a separate LMDB change log in the data volume when it accepts an event or stores a witness receipt. Its response key AID is published as `change_key` by `/v1/witness/identity` and must be pinned by each watcher. A clean restart preserves the key and feed cursors; after a restore from `witness backup`, the runner creates a new log and key, so watchers must pin the new key and begin an initial sync without `since`.
+
 ## Install, in this order
 
 The order matters in two places. Installing the `nftables` package on a host where Docker is already running can flush Docker's rules, so nftables goes first. And Caddy must be logging to the journal before fail2ban starts reading it.

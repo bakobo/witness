@@ -12,9 +12,11 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from types import SimpleNamespace
 
 import pytest
 from keri.app import habbing
+from witness.changelog import ChangeLog, change_path
 
 
 def _free_port():
@@ -37,6 +39,8 @@ def witness_db(tmp_path):
     hab = hby.makeHab(name="wit", transferable=False)
     pre = hab.pre
     hby.close()
+    log = ChangeLog.open(change_path(SimpleNamespace(name="testwit", base="", head_dir_path=head)))
+    log.close_clean()
     return head, pre
 
 
@@ -54,10 +58,13 @@ def _operator_key(path):
 
 
 def test_console_script_serves_the_versioned_control_plane(witness_db, tmp_path):
+    from fiki import Key, Request as SignedRequest, sign_request, verify_response
+
     head, pre = witness_db
     port = _free_port()
     key = tmp_path / "operator"
     operator = _operator_key(key)
+    watcher = Key.generate()
     proc = subprocess.Popen(
         [
             "uv", "run", "witness", "control-plane",
@@ -69,6 +76,7 @@ def test_console_script_serves_the_versioned_control_plane(witness_db, tmp_path)
             "--tag", "testnet",
             "--attrib", "operator=Bakobo",
             "--operator", operator,
+            "--watcher", watcher.aid,
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -95,6 +103,20 @@ def test_console_script_serves_the_versioned_control_plane(witness_db, tmp_path)
         assert info_status == 200
         assert info["aid"] == pre
         assert info["alias"] == "wit"
+        assert info["change_key"].startswith("B")
+
+        # This crosses argv, the read-only change log, and waitress serialization.
+        feed_url = base + "/v1/witness/change?limit=2"
+        feed_headers = sign_request(key=watcher, method="GET", url=feed_url)
+        with urllib.request.urlopen(urllib.request.Request(feed_url, headers=feed_headers),
+                                    timeout=5) as feed_response:  # noqa: S310 (localhost)
+            feed_body = feed_response.read()
+            verify_response(status=200, headers=feed_response.headers, body=feed_body,
+                            request=SignedRequest("GET", feed_url, feed_headers),
+                            expected_aid=info["change_key"], max_age=60, expected_keyid=None)
+            feed = json.loads(feed_body)
+        assert feed["change"]
+        assert all(row["kel"] for row in feed["change"])
 
         # The tag has to survive the real argv -> door -> endpoint path, not just the unit one:
         # a flag the console script rejects at startup would make the container fail to come up,
@@ -155,4 +177,3 @@ def test_console_script_renders_a_landing_page():
     assert result.returncode == 0, result.stderr
     assert "w.example.com is a KERI witness." in result.stdout
     assert "--wl-accent" in result.stdout
-

@@ -264,6 +264,22 @@ def test_the_control_plane_names_no_operator_by_default(monkeypatch):
     assert (cfg.operators, cfg.max_age, cfg.authorities) == ((), 60, ())
 
 
+def test_watchers_are_a_separate_bounded_allowlist_with_flag_precedence(monkeypatch):
+    monkeypatch.delenv("WITNESS_WATCHERS", raising=False)
+    _sub, empty = config.parse_args(_CP)
+    assert empty.watchers == ()
+    monkeypatch.setenv("WITNESS_WATCHERS", AID_A)
+    _sub, from_env = config.parse_args(_CP)
+    assert from_env.watchers == (AID_A,)
+    _sub, from_flag = config.parse_args([*_CP, "--watcher", AID_B])
+    assert from_flag.watchers == (AID_B,)
+    with pytest.raises(InvalidArguments, match="non-transferable"):
+        config.parse_args([*_CP, "--watcher", "invalid"])
+    monkeypatch.setenv("WITNESS_WATCHERS", ",".join([AID_A] * 65))
+    with pytest.raises(InvalidArguments, match="At most 64 watchers"):
+        config.parse_args(_CP)
+
+
 def test_operators_are_repeatable_flags(monkeypatch):
     monkeypatch.delenv("WITNESS_OPERATORS", raising=False)
     _sub, cfg = config.parse_args([*_CP, "--operator", AID_A, "--operator", AID_B])

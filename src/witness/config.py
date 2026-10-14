@@ -43,6 +43,7 @@ CONTROL_DEFAULT_MAX_AGE = 60
 """How old, in seconds, a signed control-plane read may be: the Registrar's window (@34sgjmxr)."""
 #: Read only when no --operator is given, because the image's CMD is fixed (@34sgjmxr).
 OPERATORS_ENV = "WITNESS_OPERATORS"
+WATCHERS_ENV = "WITNESS_WATCHERS"
 #: Bounded before it is trusted: an allowlist is a handful of people, not a directory.
 _MAX_OPERATORS = 64
 #: An RFC 3986 authority is a host and an optional port; 255 is DNS's own ceiling on a name.
@@ -68,6 +69,8 @@ class ControlPlaneConfig:
     attribs: dict = field(default_factory=dict)
     #: Who may read the six signed nouns (@34sgjmxr). Empty means nobody, not everybody.
     operators: tuple[str, ...] = ()
+    #: A distinct grant to enumerate the unfiltered feed. Empty refuses everyone.
+    watchers: tuple[str, ...] = ()
     max_age: int = CONTROL_DEFAULT_MAX_AGE
     #: The @authority values a signature may name; empty declines fiki's check (@34sgjmxr).
     authorities: tuple[str, ...] = ()
@@ -258,6 +261,12 @@ def _build_parser() -> _RaisingParser:
             "The non-transferable AID of an operator who may read the signed nouns. Repeatable. "
             f"Without one, {OPERATORS_ENV} is read; with neither, those nouns refuse everyone."
         ),
+    )
+    cp.add_argument(
+        "--watcher", action="append", default=[], dest="watchers",
+        help=("The non-transferable AID of a watcher allowed to read the change feed. "
+              f"Repeatable. Without one, {WATCHERS_ENV} is read; with neither, the feed "
+              "refuses everyone."),
     )
     cp.add_argument(
         "--max-age", type=int, default=CONTROL_DEFAULT_MAX_AGE, dest="max_age",
@@ -560,22 +569,30 @@ def _backup_config(ns) -> BackupConfig:
     )
 
 
-def _operators(flagged) -> tuple[str, ...]:
-    """The operator allowlist: the flags if any were given, else the environment (@34sgjmxr)."""
-    source, named = "--operator", list(flagged)
+def _allowlist(flagged, flag, environment, role) -> tuple[str, ...]:
+    """A bounded grant list: flags take precedence over its environment variable."""
+    source, named = flag, list(flagged)
     if not named:
-        source = OPERATORS_ENV
-        named = [aid.strip() for aid in os.environ.get(OPERATORS_ENV, "").split(",")]
+        source = environment
+        named = [aid.strip() for aid in os.environ.get(environment, "").split(",")]
         named = [aid for aid in named if aid]
     if len(named) > _MAX_OPERATORS:
         raise InvalidArguments(
-            f"At most {_MAX_OPERATORS} operators may be named, but {source} named {len(named)}."
+            f"At most {_MAX_OPERATORS} {role} may be named, but {source} named {len(named)}."
         )
     for aid in named:
         if not _NONTRANSFERABLE_AID.fullmatch(aid):
             raise InvalidArguments(f"{source} names {aid[:64]!r}, which is not a non-transferable "
                                    "AID.")
     return tuple(named)
+
+
+def _operators(flagged) -> tuple[str, ...]:
+    return _allowlist(flagged, "--operator", OPERATORS_ENV, "operators")
+
+
+def _watchers(flagged) -> tuple[str, ...]:
+    return _allowlist(flagged, "--watcher", WATCHERS_ENV, "watchers")
 
 
 def _authorities(named) -> tuple[str, ...]:
@@ -597,6 +614,7 @@ def _control_plane_config(ns) -> ControlPlaneConfig:
         raise InvalidArguments("--max-age must be a positive number of seconds.")
     return ControlPlaneConfig(
         operators=_operators(ns.operators),
+        watchers=_watchers(ns.watchers),
         max_age=ns.max_age,
         authorities=_authorities(ns.authorities),
         telemetry_path=None if ns.no_telemetry else ns.telemetry_path,

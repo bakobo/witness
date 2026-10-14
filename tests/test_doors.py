@@ -69,10 +69,10 @@ ACCOUNTED = {
         "door: config.parse_args. WITNESS_IMAGE is read as an argparse default, so it enters "
         "through the same argument door as everything else and is bounded by the same parser."
     ),
-    "config.py::_operators": (
-        "door: config.parse_args. WITNESS_OPERATORS is read only when no --operator is given, and "
-        "goes through the same count bound and AID check as the flag, so the environment admits "
-        "nothing the flag would refuse (@34sgjmxr)."
+    "config.py::_allowlist": (
+        "door: config.parse_args. WITNESS_OPERATORS and WITNESS_WATCHERS are read only when "
+        "their flags are absent, and pass the same count bound and AID check as those flags, "
+        "so neither environment variable admits anything its flag would refuse."
     ),
     "metrics.py::configured_endpoint": (
         "exempt: the OTLP endpoint is read once at startup and handed to the OpenTelemetry SDK, "
