@@ -30,6 +30,8 @@ def _record(log, keys, digest=None):
         try:
             log.fail()
         except Exception:
+            # Nothing is left to record it in; the runner's unclean exit turns the generation
+            # over on the next start (@52dwv9ky). Raising here would fail keripy's write.
             pass
 
 

@@ -84,7 +84,8 @@ def test_first_seen_ordinal_zero_is_stored_and_returned():
     log = Log()
     changehook.install(db, log)
 
-    assert db.fels.append(keys=b"Eaid", val=b"Edigest") == 0
+    result = db.fels.append(keys=b"Eaid", val=b"Edigest")
+    assert result == 0
     assert db.fels.calls == [((), {"keys": b"Eaid", "val": b"Edigest"})]
     assert log.entries == [("Eaid", "Edigest")]
 
@@ -94,7 +95,8 @@ def test_fels_does_not_log_if_an_accessor_reports_no_append():
     log = Log()
     changehook.install(db, log)
 
-    assert db.fels.append(keys=b"Eaid", val=b"Edigest") is None
+    result = db.fels.append(keys=b"Eaid", val=b"Edigest")
+    assert result is None
     assert log.entries == []
 
 
@@ -131,7 +133,8 @@ def test_failed_log_append_does_not_fail_keripy_and_marks_generation_failed():
     log = BrokenLog()
     changehook.install(db, log)
 
-    assert db.fels.append(keys="Eaid", val="Edigest") == 1
+    result = db.fels.append(keys="Eaid", val="Edigest")
+    assert result == 1
     assert log.failures == 1
 
 
@@ -146,7 +149,8 @@ def test_failed_failure_recording_still_does_not_fail_keripy():
             raise OSError("still full")
 
     changehook.install(db, BrokenLog())
-    assert db.fels.append(keys="Eaid", val="Edigest") == 1
+    result = db.fels.append(keys="Eaid", val="Edigest")
+    assert result == 1
 
 
 def test_original_exception_propagates_and_does_not_write_log():

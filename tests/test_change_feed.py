@@ -10,7 +10,7 @@ from falcon import testing
 from fiki import Key, Request, sign_request, verify_response
 
 from witness.app import make_app
-from witness.change import ChangeFeed
+from witness import change
 from witness.changelog import ChangeLog
 from witness.config import ControlPlaneConfig
 from witness.errors import ChangeInput, ChangePageTooLarge, ChangeUnavailable, CursorConflict
@@ -95,7 +95,7 @@ def setup(tmp_path):
         opens.append(1)
         return db
 
-    feed = ChangeFeed(lambda: path, SimpleNamespace(_open=open_db))
+    feed = change.ChangeFeed(lambda: path, SimpleNamespace(_open=open_db))
     yield log, feed, db, opens
 
 
@@ -142,7 +142,6 @@ def test_poll_keeps_min_fn_and_resends_after_boundary(setup):
 
 
 def test_escrow_and_entry_bound(setup, monkeypatch):
-    import witness.change as change
     log, feed, db, _opens = setup
     state(db, "A")
     baseline = feed.page(None, 10)["next"]
@@ -174,7 +173,7 @@ def test_restored_log_with_a_different_entry_refuses_cursor(tmp_path):
     log = ChangeLog.open(path)
     log.append("B", "B-0")
     log.close_clean()
-    feed = ChangeFeed(lambda: path, SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    feed = change.ChangeFeed(lambda: path, SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
     from witness.changelog import LogReader
     with LogReader(path) as reader:
         ordinal, chain = reader.last()
@@ -189,7 +188,7 @@ def test_restored_log_with_a_different_entry_refuses_cursor(tmp_path):
 
 
 def test_bad_cursor_and_limit_refuse_before_read():
-    feed = ChangeFeed(lambda: pytest.fail("path resolved"), SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    feed = change.ChangeFeed(lambda: pytest.fail("path resolved"), SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
     for bad in ("", "x" * 1025, "!!!", cursor({}), cursor(["g", "1", "00" * 16, None]),
                 cursor(["g", 0, "wrong", None]), cursor(["g", -1, "00" * 16, None])):
         with pytest.raises(ChangeInput):
@@ -200,7 +199,7 @@ def test_bad_cursor_and_limit_refuse_before_read():
 
 
 def test_missing_log_is_a_retryable_503(tmp_path):
-    feed = ChangeFeed(lambda: tmp_path / "absent", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    feed = change.ChangeFeed(lambda: tmp_path / "absent", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
     with pytest.raises(ChangeUnavailable) as refused:
         feed.page(None, 1)
     assert (refused.value.status, refused.value.retryable) == (503, True)
@@ -209,13 +208,12 @@ def test_missing_log_is_a_retryable_503(tmp_path):
 
 def test_corrupt_log_open_is_a_retryable_503(monkeypatch):
     import lmdb
-    import witness.change as change
 
     def broken(_path):
         raise lmdb.Error("unreadable")
 
     monkeypatch.setattr(change, "LogReader", broken)
-    feed = ChangeFeed(lambda: "/any", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    feed = change.ChangeFeed(lambda: "/any", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
     with pytest.raises(ChangeUnavailable):
         feed.key()
 
@@ -239,7 +237,6 @@ def test_missing_key_state_refuses_replay(setup):
 
 
 def test_incomplete_replay_and_budget_refuse(setup, monkeypatch):
-    import witness.change as change
     log, feed, db, _opens = setup
     state(db, "A", 1)
     log.append("A", "A-0")
@@ -318,7 +315,7 @@ def test_retryable_log_refusal_is_signed(setup):
 
 
 def test_a_log_missing_before_any_key_exists_is_a_typed_503(tmp_path):
-    feed = ChangeFeed(lambda: tmp_path / "absent", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    feed = change.ChangeFeed(lambda: tmp_path / "absent", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
     watcher = Key.generate()
     route = "/v1/witness/change"
     headers = sign_request(key=watcher, method="GET", url=f"http://{HOST}{route}", created=NOW)
@@ -354,7 +351,7 @@ def test_real_keripy_states_seek_and_fons_replay(witnessing_db, tmp_path):
     log.close_clean()
     cfg = ControlPlaneConfig(name=witnessing_db["name"], host="127.0.0.1", port=1,
                              head_dir_path=witnessing_db["head"], telemetry_path=None)
-    feed = ChangeFeed(lambda: path, WitnessReader(cfg))
+    feed = change.ChangeFeed(lambda: path, WitnessReader(cfg))
     first = feed.page(None, 1)
     pages = [first]
     while pages[-1]["more"]:
