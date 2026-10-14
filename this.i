@@ -350,6 +350,45 @@ Operator layer over a stock keripy witness = goal:
             (rule of three). Revisit when a concrete feature needs it (metrics-over-time, or the
             future changes-since-root sync index). Accepted tradeoff: no independent or tamper-evident
             audit store yet.
+          children:
+            A sparse change feed serves allow-listed watchers = decision:
+              nid: 6y23f6w2
+              why: >-
+                The watcher @5q5ywmyh needs one signed GET /v1/witness/change per witness per
+                round, independent of the number of AIDs it follows. This is @b2y5nr's named
+                revisit trigger. The control-plane process owns a periodic read-only LMDB sweep
+                and a small SQLite index beside LMDB, in the same container and PID namespace
+                as the writer (@a24p3kbw); the served hio loop remains untouched (@c7v3kp).
+                seen(aid, sn, said, fn, receipts) holds one row per AID; change(bucket, aid,
+                from_fn) holds one per changed AID per minute and no row for a quiet minute.
+                Compare each KeyStateRecord's s, d, f and latest-event wig count against seen;
+                a difference lowers from_fn within its bucket. Every sweep reads one key-state
+                record per AID irrespective of watcher count; a change appears within one bucket
+                width, while a late receipt on an event older than the latest is not noticed.
+                A separate persistent fiki signing key lives with the index, since reading the
+                witness's encrypted keystore would require its passcode in the control-plane
+                process and violate the read-only boundary; identity publishes this feed key's
+                non-transferable AID for watcher pinning. Losing or restoring the index changes
+                its generation, so an old cursor refuses rather than silently skipping changes.
+                Rejected a Merkle tree over all AID state: it adds proof machinery and persistent
+                writes to answer a question this watcher can answer with a sparse log.
+              children:
+                Cursor and page semantics preserve inclusive overlap = decision:
+                  nid: 6t2v9cv0
+                  why: >-
+                    A cursor carries a generation, scan bucket, and, only while more is true,
+                    the last AID returned and the answer bucket fixed at the first page. A
+                    sentinel scan bucket means a full listing after no since. The range scan
+                    includes the scan bucket and groups each AID to its earliest from_fn.
+                    Keyset pagination on AID prevents a changed AID from being skipped when
+                    new rows arrive between pages; the final next cursor names the answer
+                    bucket fixed at the first page, so a partly swept bucket is resent.
+                    No since lists every AID from fn zero. Prune after
+                    seven days by default and refuse a foreign or expired cursor with 409
+                    e.state.conflict.cursor.f, letting the watcher restart from the beginning.
+                    The page limit bounds AIDs and is capped before querying or replaying KELs.
+                    Rejected an exclusive watermark because a sweep can happen after the answer
+                    in the same bucket; skipping that bucket would lose those events.
 
         Use falcon for the v1 control-plane HTTP surface = decision:
           id: r3v6np
