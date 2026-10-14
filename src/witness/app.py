@@ -24,7 +24,7 @@ import falcon
 import fiki
 
 from .accesslog import AccessLog
-from .errors import (ChangeInput, ControlDenied, ControlUnauthenticated, WatcherDenied,
+from .errors import (ChangeInput, ChangeUnavailable, ControlDenied, ControlUnauthenticated, WatcherDenied,
                      WitnessError)
 
 PROBLEM_JSON = "application/problem+json"
@@ -195,8 +195,23 @@ class ChangeEndpoint:
                 resp.set_header("Retry-After", "5")
         resp.status = falcon.util.code_to_http_status(status)
         resp.data = json.dumps(result, separators=(",", ":")).encode()
+        try:
+            key = self._feed.key()
+        except ChangeUnavailable as exc:
+            # Before the writer creates the log there is no seed to sign with. Keep an
+            # already-refused request's status; a would-be success must become a typed 503.
+            if status == 200:
+                req.context.error_type = exc.code
+                resp.status = falcon.HTTP_503
+                resp.content_type = PROBLEM_JSON
+                resp.set_header("Content-Language", "en")
+                resp.set_header("Retry-After", "5")
+                resp.data = json.dumps(exc.problem(instance=req.path,
+                                                   request_id=getattr(req.context, "request_id", None)),
+                                       separators=(",", ":")).encode()
+            return
         request = fiki.Request(method=req.method, url=req.url, headers=req.headers)
-        for name, value in fiki.sign_response(key=self._feed.key(), status=status,
+        for name, value in fiki.sign_response(key=key, status=status,
                                               request=request, body=resp.data,
                                               created=int(self._clock())).items():
             resp.set_header(name, value)

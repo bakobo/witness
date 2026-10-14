@@ -1,19 +1,19 @@
-"""The sparse feed's sweep, replay, cursor, and admission contract."""
+"""The log-backed feed's paging, replay, cursor, and admission contract."""
 
 import base64
 import json
+import shutil
 from types import SimpleNamespace
 
 import pytest
 from falcon import testing
 from fiki import Key, Request, sign_request, verify_response
-from keri import kering
 
 from witness.app import make_app
-from witness import change as change_module
 from witness.change import ChangeFeed
+from witness.changelog import ChangeLog
 from witness.config import ControlPlaneConfig
-from witness.errors import CursorConflict
+from witness.errors import ChangeInput, ChangePageTooLarge, ChangeUnavailable, CursorConflict
 from witness.reader import WitnessReader
 from test_app import StubReader
 
@@ -21,440 +21,349 @@ HOST = "falconframework.org"
 NOW = 1_800_000_000
 
 
+def cursor(values):
+    return base64.urlsafe_b64encode(json.dumps(values).encode()).decode().rstrip("=")
+
+
+class FakeCursor:
+    def __init__(self, records):
+        self.rows = sorted((aid.encode(), state) for aid, state in records.items())
+
+    def set_range(self, key):
+        self.rows = [(k, v) for k, v in self.rows if k >= key]
+        return bool(self.rows)
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
 class FakeDb:
     def __init__(self):
         self.records = {}
-        self.receipts = {}
+        self.fon = {}
         self.cloned = []
-        self.states = SimpleNamespace(getTopItemIter=self.states_iter, get=self.state_get)
-        self.wigs = SimpleNamespace(get=self.wigs_get)
+        self.states = SimpleNamespace(sdb=object(), _des=lambda value: value,
+                                      get=lambda *, keys: self.records.get(keys))
+        self.fons = SimpleNamespace(get=lambda *, keys: self.fon.get(keys))
+        self.env = SimpleNamespace(begin=lambda: self)
 
-    def states_iter(self):
-        for aid, record in self.records.items():
-            yield (aid,), record
+    def __enter__(self):
+        return self
 
-    def state_get(self, *, keys):
-        return self.records.get(keys)
+    def __exit__(self, *_):
+        pass
 
-    def wigs_get(self, *, keys):
-        return [b"receipt"] * self.receipts.get(keys, 0)
+    def cursor(self, db):
+        assert db is self.states.sdb
+        return FakeCursor(self.records)
 
     def clonePreIter(self, pre, fn, gvrsn):
-        self.cloned.append((pre, fn, gvrsn.major))
-        for ordinal in range(fn, int(self.records[pre.decode()].f, 16) + 1):
-            yield f"{pre.decode()}:{ordinal}".encode()
+        self.cloned.append((pre.decode(), fn, gvrsn.major))
+        for n in range(fn, int(self.records[pre.decode()].f, 16) + 1):
+            yield f"{pre.decode()}:{n}".encode()
 
     def close(self):
         pass
 
 
-def state(db, aid, sn=0, receipts=1):
-    said = f"said-{aid}-{sn}"
-    db.records[aid] = SimpleNamespace(s=format(sn, "x"), d=said, f=format(sn, "x"))
-    db.receipts[(aid, said)] = receipts
+def state(db, aid, fn=0):
+    db.records[aid] = SimpleNamespace(f=format(fn, "x"))
+    for n in range(fn + 1):
+        db.fon[(aid, f"{aid}-{n}")] = SimpleNamespace(num=n)
 
 
 @pytest.fixture
 def setup(tmp_path):
-    db = FakeDb()
-    time = [NOW]
-    reader = SimpleNamespace(_open=lambda: db)
-    feed = ChangeFeed(tmp_path / "change.sqlite", reader, clock=lambda: time[0])
-    yield feed, db, time
-    feed.close()
+    path = tmp_path / "change"
+    writer = ChangeLog.open(path)
+    generation = writer.generation
+    writer.close_clean()
+
+    class Log:
+        def append(self, aid, digest):
+            opened = ChangeLog.open(path)
+            try:
+                return opened.append(aid, digest)
+            finally:
+                opened.close_clean()
+
+    log = Log()
+    log.generation = generation
+    db, opens = FakeDb(), []
+
+    def open_db():
+        opens.append(1)
+        return db
+
+    feed = ChangeFeed(lambda: path, SimpleNamespace(_open=open_db))
+    yield log, feed, db, opens
 
 
-def test_sweep_detects_new_event_and_latest_receipt_and_quiet_bucket(setup):
-    feed, db, time = setup
-    state(db, "A", 0)
-    feed.sweep()
-    assert feed.page(None, 10)["change"][0]["fn"] == 0
-
-    time[0] += 60
-    state(db, "A", 1)
-    feed.sweep()
-    assert feed.page(feed.cursor_for(time[0]), 10)["change"][0]["fn"] == 1
-
-    db.receipts[("A", "said-A-1")] = 2
-    feed.sweep()
-    assert feed.page(feed.cursor_for(time[0]), 10)["change"][0]["fn"] == 1
-    before = feed.change_count()
-    time[0] += 60
-    feed.sweep()
-    assert feed.change_count() == before
-
-
-def test_a_real_keripy_replay_is_genus_pinned_and_contains_the_held_attachments(
-        witnessing_db, tmp_path):
-    cfg = ControlPlaneConfig(name=witnessing_db["name"], host="127.0.0.1", port=1,
-                             head_dir_path=witnessing_db["head"], telemetry_path=None)
-    reader = WitnessReader(cfg)
-    feed = ChangeFeed(tmp_path / "real.sqlite", reader, clock=lambda: NOW)
-    try:
-        feed.sweep()
-        rows = {row["aid"]: row for row in feed.page(None, 20)["change"]}
-        aid = witnessing_db["controller_pre"]
-        with_db = reader._open()
-        try:
-            expected = b"".join(with_db.clonePreIter(pre=aid.encode(), fn=0,
-                                                     gvrsn=kering.Versionage(2, 0)))
-        finally:
-            with_db.close()
-        assert base64.b64decode(rows[aid]["kel"]) == expected
-        assert len(expected) > 0
-    finally:
-        feed.close()
-
-
-def test_one_page_returns_all_changed_aids_from_the_right_fn(setup):
-    feed, db, time = setup
-    for aid in ("A", "B", "C"):
-        state(db, aid)
-    feed.sweep()
-    time[0] += 60
-    since = feed.cursor_for(time[0])
-    state(db, "A", 1)
-    state(db, "B", 1)
-    feed.sweep()
-    answer = feed.page(since, 10)
-    assert [(row["aid"], row["fn"]) for row in answer["change"]] == [("A", 1), ("B", 1)]
-    assert all(row["kel"] for row in answer["change"])
-    assert db.cloned[-2:] == [(b"A", 1, 2), (b"B", 1, 2)]
-
-
-def test_current_bucket_is_resent_by_the_final_cursor(setup):
-    feed, db, _time = setup
+def test_quiet_poll_never_opens_baser(setup):
+    log, feed, db, opens = setup
     state(db, "A")
-    feed.sweep()
-    first = feed.page(None, 10)
-    second = feed.page(first["next"], 10)
-    assert second["change"] == first["change"]
+    log.append("A", "A-0")
+    last = feed.page(None, 10)["next"]
+    opens.clear()
+    db.cloned.clear()
+    assert feed.page(last, 10)["change"] == []
+    assert opens == [] and db.cloned == []
 
 
-def test_an_empty_delta_neither_opens_lmdb_nor_adds_a_change_row(setup):
-    feed, db, time = setup
-    time[0] += 60
-    answer = feed.page(feed.cursor_for(time[0]), 10)
-    assert answer["change"] == []
-    assert answer["more"] is False
-    assert feed.change_count() == 0
-
-
-def test_pages_honor_limit_and_continue_a_full_listing(setup):
-    feed, db, _time = setup
-    for aid in ("A", "B", "C"):
+def test_initial_sync_pages_and_catches_changes_during_copy(setup):
+    log, feed, db, _opens = setup
+    for aid in "AC":
         state(db, aid)
-    feed.sweep()
-    first = feed.page(None, 2)
-    second = feed.page(first["next"], 2)
-    assert first["more"] is True
-    assert second["more"] is False
-    assert [row["aid"] for row in first["change"] + second["change"]] == ["A", "B", "C"]
-
-
-def test_a_change_arriving_between_pages_is_seen_and_the_first_bucket_is_rechecked(setup):
-    feed, db, time = setup
-    for aid in ("A", "C"):
-        state(db, aid)
-    feed.sweep()
+    log.append("A", "A-0")
     first = feed.page(None, 1)
     state(db, "B")
     state(db, "A", 1)
-    feed.sweep()
+    log.append("A", "A-1")
     second = feed.page(first["next"], 1)
     third = feed.page(second["next"], 1)
-    assert [row["aid"] for row in first["change"] + second["change"] + third["change"]] \
-        == ["A", "B", "C"]
-    # The final cursor is fixed to the first answer's bucket, so A's later change is resent.
-    assert feed.page(third["next"], 10)["change"][0]["aid"] == "A"
+    assert [r["aid"] for page in (first, second, third) for r in page["change"]] == ["A", "B", "C"]
+    assert not third["more"]
+    assert [(r["aid"], r["fn"]) for r in feed.page(third["next"], 10)["change"]] == [("A", 1)]
 
 
-def test_foreign_and_expired_cursors_refuse(setup, tmp_path):
-    feed, db, time = setup
+def test_poll_keeps_min_fn_and_resends_after_boundary(setup):
+    log, feed, db, _opens = setup
+    for aid in "AB":
+        state(db, aid, 2)
+    baseline = feed.page(None, 10)["next"]
+    for aid, n in (("A", 2), ("A", 1), ("B", 2), ("A", 2)):
+        log.append(aid, f"{aid}-{n}")
+    first = feed.page(baseline, 1)
+    second = feed.page(first["next"], 1)
+    third = feed.page(second["next"], 1)
+    assert [(r["aid"], r["fn"]) for r in first["change"]] == [("A", 1)]
+    assert [(r["aid"], r["fn"]) for r in second["change"]] == [("B", 2)]
+    assert [(r["aid"], r["fn"]) for r in third["change"]] == [("A", 2)]
+
+
+def test_escrow_and_entry_bound(setup, monkeypatch):
+    import witness.change as change
+    log, feed, db, _opens = setup
     state(db, "A")
-    feed.sweep()
-    cursor = feed.page(None, 10)["next"]
-    other = ChangeFeed(tmp_path / "other.sqlite", SimpleNamespace(_open=lambda: db),
-                       clock=lambda: time[0])
-    try:
+    baseline = feed.page(None, 10)["next"]
+    log.append("X", "escrow")
+    log.append("A", "A-0")
+    monkeypatch.setattr(change, "MAX_PAGE_ENTRIES", 1)
+    first = feed.page(baseline, 10)
+    assert first["change"] == [] and first["more"]
+    assert feed.page(first["next"], 10)["change"][0]["aid"] == "A"
+
+
+def test_foreign_and_past_cursor_conflict(setup):
+    log, feed, db, _opens = setup
+    state(db, "A")
+    log.append("A", "A-0")
+    for bad in (cursor(["foreign", 0, "00" * 16, None]),
+                cursor([log.generation, 99, "00" * 16, None]),
+                cursor([log.generation, 1, "ff" * 16, None])):
         with pytest.raises(CursorConflict):
-            other.page(cursor, 10)
-    finally:
-        other.close()
-    time[0] += 8 * 86400
-    feed.sweep()
+            feed.page(bad, 10)
+
+
+def test_restored_log_with_a_different_entry_refuses_cursor(tmp_path):
+    path = tmp_path / "change"
+    log = ChangeLog.open(path)
+    log.append("A", "A-0")
+    log.close_clean()
+    shutil.copytree(path, tmp_path / "snapshot")
+    log = ChangeLog.open(path)
+    log.append("B", "B-0")
+    log.close_clean()
+    feed = ChangeFeed(lambda: path, SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    from witness.changelog import LogReader
+    with LogReader(path) as reader:
+        ordinal, chain = reader.last()
+        stale = cursor([reader.generation, ordinal, chain.hex(), None])
+    shutil.rmtree(path)
+    shutil.copytree(tmp_path / "snapshot", path)
+    log = ChangeLog.open(path)
+    log.append("C", "C-0")
+    log.close_clean()
     with pytest.raises(CursorConflict):
-        feed.page(cursor, 10)
+        feed.page(stale, 10)
 
 
-def test_rollback_and_a_removed_aid_each_start_a_new_generation(setup):
-    feed, db, time = setup
-    state(db, "A", 2)
-    state(db, "B")
-    feed.sweep()
-    first = feed.page(None, 10)["next"]
-    time[0] += 60
+def test_bad_cursor_and_limit_refuse_before_read():
+    feed = ChangeFeed(lambda: pytest.fail("path resolved"), SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    for bad in ("", "x" * 1025, "!!!", cursor({}), cursor(["g", "1", "00" * 16, None]),
+                cursor(["g", 0, "wrong", None]), cursor(["g", -1, "00" * 16, None])):
+        with pytest.raises(ChangeInput):
+            feed.page(bad, 1)
+    for limit in (0, 1001, "1", True):
+        with pytest.raises(ChangeInput):
+            feed.page(None, limit)
+
+
+def test_missing_log_is_a_retryable_503(tmp_path):
+    feed = ChangeFeed(lambda: tmp_path / "absent", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    with pytest.raises(ChangeUnavailable) as refused:
+        feed.page(None, 1)
+    assert (refused.value.status, refused.value.retryable) == (503, True)
+    assert not (tmp_path / "absent").exists()
+
+
+def test_corrupt_log_open_is_a_retryable_503(monkeypatch):
+    import lmdb
+    import witness.change as change
+
+    def broken(_path):
+        raise lmdb.Error("unreadable")
+
+    monkeypatch.setattr(change, "LogReader", broken)
+    feed = ChangeFeed(lambda: "/any", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    with pytest.raises(ChangeUnavailable):
+        feed.key()
+
+
+def test_empty_initial_sync_has_a_poll_cursor(setup):
+    _log, feed, _db, _opens = setup
+    first = feed.page(None, 1)
+    assert first["change"] == [] and not first["more"]
+    assert feed.page(first["next"], 1)["change"] == []
+
+
+def test_missing_key_state_refuses_replay(setup):
+    log, feed, db, _opens = setup
+    state(db, "A")
+    log.append("A", "A-0")
+    first = feed.page(None, 1)
+    del db.records["A"]
+    with pytest.raises(ChangeUnavailable):
+        feed.page(cursor([log.generation, 0, "00" * 16, None]), 1)
+    assert first["change"]
+
+
+def test_incomplete_replay_and_budget_refuse(setup, monkeypatch):
+    import witness.change as change
+    log, feed, db, _opens = setup
     state(db, "A", 1)
-    feed.sweep()
-    with pytest.raises(CursorConflict):
-        feed.page(first, 10)
-    second = feed.page(None, 10)["next"]
-    del db.records["B"]
-    feed.sweep()
-    with pytest.raises(CursorConflict):
-        feed.page(second, 10)
-
-
-def test_lost_latest_receipt_starts_a_new_generation(setup):
-    feed, db, _time = setup
-    state(db, "A", receipts=2)
-    feed.sweep()
-    cursor = feed.page(None, 10)["next"]
-    db.receipts[("A", "said-A-0")] = 1
-    feed.sweep()
-    with pytest.raises(CursorConflict):
-        feed.page(cursor, 10)
-
-
-def test_a_new_head_with_fewer_receipts_does_not_reset_generation(setup):
-    feed, db, time = setup
-    state(db, "A", receipts=2)
-    feed.sweep()
-    first_generation = feed.generation
-    time[0] += 60
-    state(db, "A", sn=1, receipts=1)
-    feed.sweep()
-    assert feed.generation == first_generation
-    assert feed.page(feed.cursor_for(time[0]), 10)["change"][0]["fn"] == 1
-
-
-def test_index_and_signing_identity_survive_a_control_plane_restart(tmp_path):
-    db = FakeDb()
-    state(db, "A")
-    path = tmp_path / "change.sqlite"
-    reader = SimpleNamespace(_open=lambda: db)
-    first = ChangeFeed(path, reader, clock=lambda: NOW)
-    first.sweep()
-    key_aid = first.key().aid
-    cursor = first.page(None, 10)["next"]
-    first.close()
-    second = ChangeFeed(path, reader, clock=lambda: NOW)
-    try:
-        assert second.key().aid == key_aid
-        with pytest.raises(CursorConflict):
-            second.page(cursor, 10)
-        assert second.page(None, 10)["change"][0]["aid"] == "A"
-    finally:
-        second.close()
-
-
-def test_a_disappearing_aid_never_earns_a_200_with_an_empty_replay(setup):
-    feed, db, _time = setup
-    state(db, "A")
-    feed.sweep()
-
-    def vanished(*_args, **_kwargs):
-        return iter(())
-
-    db.clonePreIter = vanished
-    with pytest.raises(Exception) as refused:
+    log.append("A", "A-0")
+    db.clonePreIter = lambda **kwargs: iter((b"one",))
+    with pytest.raises(ChangeUnavailable):
         feed.page(None, 10)
-    assert refused.value.status == 503
-
-
-@pytest.mark.parametrize("mutation", ["remove", "lower_sn", "lower_fn", "different_said"])
-def test_a_state_changed_behind_the_index_refuses_before_advancing_cursor(setup, mutation):
-    feed, db, _time = setup
-    state(db, "A", sn=2)
-    feed.sweep()
-    if mutation == "remove":
-        del db.records["A"]
-    elif mutation == "lower_sn":
-        db.records["A"].s = "1"
-    elif mutation == "lower_fn":
-        db.records["A"].f = "1"
-    else:
-        db.records["A"].d = "another-said"
-    with pytest.raises(Exception) as refused:
-        feed.page(None, 10)
-    assert refused.value.status == 503
-
-
-def test_a_partial_keripy_replay_refuses_instead_of_claiming_the_page_is_complete(setup):
-    feed, db, _time = setup
-    state(db, "A", sn=2)
-    feed.sweep()
-    db.clonePreIter = lambda **_kwargs: iter((b"only one event",))
-    with pytest.raises(Exception) as refused:
-        feed.page(None, 10)
-    assert refused.value.status == 503
-
-
-def test_replay_budget_bounds_a_page_even_when_aid_limit_is_valid(setup, monkeypatch):
-    feed, db, _time = setup
-    for aid in ("A", "B"):
-        state(db, aid)
-    feed.sweep()
-    monkeypatch.setattr(change_module, "MAX_PAGE_REPLAY_BYTES", 3)
-    with pytest.raises(Exception) as refused:
-        feed.page(None, 2)
-    assert refused.value.status == 413
-
-
-def test_sweep_worker_refuses_pages_after_failure_and_recovers(setup):
-    feed, db, _time = setup
-    state(db, "A")
-    first = [True, True, False]
-
-    class Stop:
-        def wait(self, _seconds):
-            return not first.pop(0)
-
-    stop = feed._stop
-    feed._stop = Stop()
-    real_sweep = feed.sweep
-    calls = [0]
-
-    def sometimes_fails():
-        calls[0] += 1
-        if calls[0] == 1:
-            raise RuntimeError("database unavailable")
-        real_sweep()
-
-    feed.sweep = sometimes_fails
-    feed._run()
-    feed._stop = stop
-    assert calls[0] == 2
-    assert feed.page(None, 10)["change"][0]["aid"] == "A"
-
-
-def test_a_failed_initial_sweep_keeps_the_control_plane_alive_and_refuses_feed(tmp_path):
-    reader = SimpleNamespace(_open=lambda: (_ for _ in ()).throw(RuntimeError("no DB")))
-    feed = ChangeFeed(tmp_path / "change.sqlite", reader, clock=lambda: NOW)
-    try:
-        feed.start()
-        with pytest.raises(Exception) as refused:
-            feed.page(None, 10)
-        assert refused.value.status == 503
-    finally:
-        feed.close()
-
-
-def test_an_unreadable_index_refuses_with_a_typed_retryable_error(setup):
-    feed, _db, _time = setup
-    feed._db.close()
-    with pytest.raises(Exception) as refused:
-        feed.page(None, 10)
-    assert (refused.value.status, refused.value.code) == (503, "e.env.change.unavailable.r")
-
-
-def test_a_generation_change_during_replay_refuses_the_page(setup):
-    feed, db, _time = setup
-    state(db, "A")
-    feed.sweep()
-    original = db.clonePreIter
-
-    def replaced_during_replay(*args, **kwargs):
-        feed.generation = "replacement"
-        yield from original(*args, **kwargs)
-
-    db.clonePreIter = replaced_during_replay
-    with pytest.raises(CursorConflict):
+    monkeypatch.setattr(change, "MAX_PAGE_REPLAY_BYTES", 2)
+    with pytest.raises(ChangePageTooLarge):
         feed.page(None, 10)
 
 
-def test_bad_cursor_shapes_and_limits_refuse_without_querying(setup):
-    feed, _db, time = setup
-    bad_values = ["", "x" * 1025, "!!!", "é", base64.urlsafe_b64encode(b"no-json").decode(),
-                  base64.urlsafe_b64encode(b"{}").decode()]
-    for bad in bad_values:
-        with pytest.raises(Exception) as refused:
-            feed.page(bad, 1)
-        assert refused.value.status == 400
-    for values in ([feed.generation, "1", None, None],
-                   [feed.generation, time[0] // 60, "A", None],
-                   [feed.generation, time[0] // 60, None, 1],
-                   [feed.generation, -2, None, None],
-                   [feed.generation, time[0] // 60 + 1, None, None]):
-        bad = base64.urlsafe_b64encode(json.dumps(values).encode()).decode().rstrip("=")
-        with pytest.raises(Exception) as refused:
-            feed.page(bad, 1)
-        assert refused.value.status == 400
-    for bad_limit in (0, 1001, "1", True):
-        with pytest.raises(Exception) as refused:
-            feed.page(None, bad_limit)
-        assert refused.value.status == 400
-
-
-def test_feed_requires_watcher_role_and_signs_the_bound_response(setup):
-    feed, db, _time = setup
+def test_auth_and_signed_conflict(setup):
+    log, feed, db, _opens = setup
     state(db, "A")
-    feed.sweep()
-    watcher = Key.generate()
-    operator = Key.generate()
+    log.append("A", "A-0")
+    watcher, operator = Key.generate(), Key.generate()
     route = "/v1/witness/change?limit=1"
     signed = sign_request(key=watcher, method="GET", url=f"http://{HOST}{route}", created=NOW)
     kwargs = dict(change_feed=feed, operators=(operator.aid,), clock=lambda: NOW)
     client = testing.TestClient(make_app(StubReader(), watchers=(watcher.aid,), **kwargs))
     assert client.simulate_get(route).status_code == 401
-    operator_headers = sign_request(key=operator, method="GET", url=f"http://{HOST}{route}",
-                                    created=NOW)
-    assert client.simulate_get(route, headers=operator_headers).status_code == 403
-    assert testing.TestClient(make_app(StubReader(), watchers=(), **kwargs)).simulate_get(
-        route, headers=signed).status_code == 403
+    op = sign_request(key=operator, method="GET", url=f"http://{HOST}{route}", created=NOW)
+    assert client.simulate_get(route, headers=op).json["code"] == "e.grant.missing.watcher.f"
+    no_watchers = testing.TestClient(make_app(StubReader(), watchers=(), **kwargs))
+    assert no_watchers.simulate_get(route, headers=signed).status_code == 403
+    assert no_watchers.simulate_get("/v1/witness/health").status_code == 200
+    assert no_watchers.simulate_get("/v1/witness/identity").json["change_key"] == feed.key().aid
     response = client.simulate_get(route, headers=signed)
     assert response.status_code == 200
-    assert len(response.json["change"]) == 1
     verify_response(status=200, headers=response.headers, body=response.content,
                     request=Request("GET", f"http://{HOST}{route}", signed),
                     expected_aid=feed.key().aid, max_age=60, now=NOW, expected_keyid=None)
-
-
-def test_feed_signs_a_retryable_refusal_with_retry_after(setup):
-    feed, _db, _time = setup
-    feed._failed = True
-    watcher = Key.generate()
-    route = "/v1/witness/change"
-    signed = sign_request(key=watcher, method="GET", url=f"http://{HOST}{route}", created=NOW)
-    client = testing.TestClient(make_app(StubReader(), change_feed=feed,
-                                         watchers=(watcher.aid,), clock=lambda: NOW))
-    response = client.simulate_get(route, headers=signed)
-    assert (response.status_code, response.json["code"]) == (503, "e.env.change.unavailable.r")
-    assert response.headers["retry-after"] == "5"
-    verify_response(status=503, headers=response.headers, body=response.content,
-                    request=Request("GET", f"http://{HOST}{route}", signed),
+    bad_route = f"/v1/witness/change?since={cursor(['foreign', 0, '00' * 16, None])}"
+    bad_headers = sign_request(key=watcher, method="GET", url=f"http://{HOST}{bad_route}", created=NOW)
+    refused = client.simulate_get(bad_route, headers=bad_headers)
+    assert (refused.status_code, refused.json["code"]) == (409, "e.state.conflict.cursor.f")
+    verify_response(status=409, headers=refused.headers, body=refused.content,
+                    request=Request("GET", f"http://{HOST}{bad_route}", bad_headers),
                     expected_aid=feed.key().aid, max_age=60, now=NOW, expected_keyid=None)
 
 
-def test_expired_cursor_is_a_signed_409_problem_document(setup):
-    feed, db, time = setup
-    state(db, "A")
-    feed.sweep()
-    cursor = feed.page(None, 10)["next"]
-    time[0] += 8 * 86400
-    feed.sweep()
-    watcher = Key.generate()
-    route = f"/v1/witness/change?since={cursor}"
-    signed = sign_request(key=watcher, method="GET", url=f"http://{HOST}{route}", created=NOW)
-    client = testing.TestClient(make_app(StubReader(), change_feed=feed,
-                                         watchers=(watcher.aid,), clock=lambda: NOW))
-    response = client.simulate_get(route, headers=signed)
-    assert (response.status_code, response.json["code"]) == (409, "e.state.conflict.cursor.f")
-    assert response.headers["content-type"].startswith("application/problem+json")
-    verify_response(status=409, headers=response.headers, body=response.content,
-                    request=Request("GET", f"http://{HOST}{route}", signed),
-                    expected_aid=feed.key().aid, max_age=60, now=NOW, expected_keyid=None)
-
-
-@pytest.mark.parametrize("query", ["limit=0", "limit=-1", "limit=999999", "limit=abc",
-                                    "since=!!!", "since=" + "a" * 1025,
-                                    "since=" + "a" * 2050,
-                                    "limit=1&limit=2", "extra=1", "x=1&y=2&z=3&v=4"])
-def test_query_values_are_bounded_before_use(setup, query):
-    feed, _db, _time = setup
+@pytest.mark.parametrize("query", ["limit=0", "limit=-1", "limit=1001", "limit=abc",
+                                    "limit=1&limit=2", "since=!!!", "since=" + "a" * 1025,
+                                    "since=" + "a" * 2050, "extra=1", "x=1&y=2&z=3&v=4"])
+def test_http_query_values_are_bounded_before_read(setup, query):
+    _log, feed, _db, opens = setup
     watcher = Key.generate()
     route = f"/v1/witness/change?{query}"
     headers = sign_request(key=watcher, method="GET", url=f"http://{HOST}{route}", created=NOW)
     client = testing.TestClient(make_app(StubReader(), change_feed=feed,
                                          watchers=(watcher.aid,), clock=lambda: NOW))
     assert client.simulate_get(route, headers=headers).status_code == 400
+    assert opens == []
+
+
+def test_retryable_log_refusal_is_signed(setup):
+    log, feed, _db, _opens = setup
+    key_aid = feed.key().aid
+    # A failed writer leaves its failed marker for the reader; the key remains available in memory.
+    path = feed.path_fn()
+    opened = ChangeLog.open(path)
+    with opened.env.begin(write=True) as txn:
+        txn.put(b"failed", b"1", db=opened.meta)
+    opened.close()
+    watcher = Key.generate()
+    route = "/v1/witness/change"
+    headers = sign_request(key=watcher, method="GET", url=f"http://{HOST}{route}", created=NOW)
+    client = testing.TestClient(make_app(StubReader(), change_feed=feed,
+                                         watchers=(watcher.aid,), clock=lambda: NOW))
+    refused = client.simulate_get(route, headers=headers)
+    assert (refused.status_code, refused.json["code"]) == (503, "e.env.change.unavailable.r")
+    assert refused.headers["retry-after"] == "5"
+    verify_response(status=503, headers=refused.headers, body=refused.content,
+                    request=Request("GET", f"http://{HOST}{route}", headers),
+                    expected_aid=key_aid, max_age=60, now=NOW, expected_keyid=None)
+
+
+def test_a_log_missing_before_any_key_exists_is_a_typed_503(tmp_path):
+    feed = ChangeFeed(lambda: tmp_path / "absent", SimpleNamespace(_open=lambda: pytest.fail("Baser opened")))
+    watcher = Key.generate()
+    route = "/v1/witness/change"
+    headers = sign_request(key=watcher, method="GET", url=f"http://{HOST}{route}", created=NOW)
+    client = testing.TestClient(make_app(StubReader(), change_feed=feed,
+                                         watchers=(watcher.aid,), clock=lambda: NOW))
+    refused = client.simulate_get(route, headers=headers)
+    assert (refused.status_code, refused.json["code"]) == (503, "e.env.change.unavailable.r")
+    ungranted = testing.TestClient(make_app(StubReader(), change_feed=feed,
+                                            watchers=(), clock=lambda: NOW))
+    denied = ungranted.simulate_get(route, headers=headers)
+    assert (denied.status_code, denied.json["code"]) == (403, "e.grant.missing.watcher.f")
+
+
+def test_log_disappearing_after_page_is_a_typed_503():
+    watcher = Key.generate()
+    route = "/v1/witness/change"
+    headers = sign_request(key=watcher, method="GET", url=f"http://{HOST}{route}", created=NOW)
+
+    def missing_key():
+        raise ChangeUnavailable("The change log disappeared before I could sign the page.")
+
+    feed = SimpleNamespace(page=lambda _since, _limit: {"change": [], "more": False},
+                           key=missing_key)
+    client = testing.TestClient(make_app(StubReader(), change_feed=feed,
+                                         watchers=(watcher.aid,), clock=lambda: NOW))
+    refused = client.simulate_get(route, headers=headers)
+    assert (refused.status_code, refused.json["code"]) == (503, "e.env.change.unavailable.r")
+
+
+def test_real_keripy_states_seek_and_fons_replay(witnessing_db, tmp_path):
+    path = tmp_path / "change"
+    log = ChangeLog.open(path)
+    log.close_clean()
+    cfg = ControlPlaneConfig(name=witnessing_db["name"], host="127.0.0.1", port=1,
+                             head_dir_path=witnessing_db["head"], telemetry_path=None)
+    feed = ChangeFeed(lambda: path, WitnessReader(cfg))
+    first = feed.page(None, 1)
+    pages = [first]
+    while pages[-1]["more"]:
+        pages.append(feed.page(pages[-1]["next"], 1))
+    assert all(len(page["change"]) == 1 for page in pages)
+    log = ChangeLog.open(path)
+    log.append(witnessing_db["controller_pre"], witnessing_db["saids"][1])
+    log.close_clean()
+    poll = feed.page(pages[-1]["next"], 10)
+    row = next(r for r in poll["change"] if r["aid"] == witnessing_db["controller_pre"])
+    assert row["fn"] == 1
+    assert base64.b64decode(row["kel"])

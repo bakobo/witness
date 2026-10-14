@@ -179,7 +179,7 @@ class WatcherDenied(WitnessError):
 
 
 class CursorConflict(WitnessError):
-    """The requested change history is outside this index generation or retention window."""
+    """The cursor names another generation or a different chain at its ordinal."""
 
     code = "e.state.conflict.cursor.f"
     title = "That change cursor cannot resume this feed."
@@ -203,10 +203,10 @@ class ChangePageTooLarge(WitnessError):
 
 
 class ChangeUnavailable(WitnessError):
-    """The index cannot currently attest to a complete sweep."""
+    """The log or witness database cannot currently attest to a complete change page."""
 
     code = "e.env.change.unavailable.r"
-    title = "The change index is not ready."
+    title = "The change feed is not ready."
     status = 503
 
 
