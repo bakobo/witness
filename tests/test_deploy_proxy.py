@@ -12,9 +12,10 @@ on free ports. Each substitution must happen exactly once, so a kit that changed
 rather than letting a stale rewrite test something else.
 
 Like the smoke tests, this runs shipped processes and is not counted toward coverage. It needs a
-``caddy`` binary: ``CADDY`` names one, else PATH is searched. Without one it skips locally and
-fails under CI, which installs a pinned Caddy, because a guard that skips where it is meant to run
-is not a guard.
+``caddy`` binary: ``CADDY`` names one, else PATH is searched. Without one it skips, except where
+``WITNESS_REQUIRE_CADDY`` is set, as ci.yml sets it beside the pinned Caddy it installs, because a
+guard that skips where it is meant to run is not a guard. image.yml runs the suite too and does not
+set it: this file guards the kit, not the image, and ci.yml already runs it on every PR.
 """
 
 from __future__ import annotations
@@ -44,8 +45,8 @@ CADDY = os.environ.get("CADDY") or shutil.which("caddy")
 HOST = "witness.example.net"
 
 if CADDY is None:  # pragma: no cover - depends on the machine
-    if os.environ.get("CI"):
-        raise RuntimeError("CI must install caddy for tests/test_deploy_proxy.py; see ci.yml.")
+    if os.environ.get("WITNESS_REQUIRE_CADDY"):
+        raise RuntimeError("WITNESS_REQUIRE_CADDY is set but no caddy was found; see ci.yml.")
     pytest.skip("no caddy binary: set CADDY or put caddy on PATH.", allow_module_level=True)
 
 

@@ -30,7 +30,7 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
       # tests/test_deploy_proxy.py runs the deploy kit's Caddyfile through a real Caddy (@9y806dye)
-      # and fails under CI without one. Pinned by version and SHA-512, the release's own checksum,
+      # and fails without one wherever WITNESS_REQUIRE_CADDY is set. Pinned by version and SHA-512, the release's own checksum,
       # and 2.11.4 because that is the version the deployment's Caddy numbers were measured on.
       - name: Install Caddy
         env:
@@ -43,5 +43,6 @@ jobs:
           echo "$CADDY_SHA512  $RUNNER_TEMP/$tarball" | sha512sum -c -
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" caddy
           echo "CADDY=$RUNNER_TEMP/caddy" >> "$GITHUB_ENV"
+          echo "WITNESS_REQUIRE_CADDY=1" >> "$GITHUB_ENV"
       - name: Run tests (100% branch coverage gate)
         run: uv run pytest
