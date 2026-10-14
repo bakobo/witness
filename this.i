@@ -398,7 +398,10 @@ Operator layer over a stock keripy witness = goal:
                 it cannot see. The runner therefore begins a new generation on a new log, after
                 any start not preceded by a clean shutdown (it consumes a clean marker at start and
                 writes one only after the Doist exits normally, so SIGTERM must end the loop at a
-                pass boundary), and after any failed log write. A restore of a cleanly stopped
+                pass boundary; SIGINT is routed the same way, and only a stop the runner asked for
+                counts as clean), and after any failed log write. A log too full to record even
+                its own failure unlinks a live marker, which needs no space, and a reader without
+                that marker refuses rather than serve quiet polls over lost entries. A restore of a cleanly stopped
                 store would keep its generation while watchers hold cursors beyond it, so each
                 entry also extends a hash chain over (previous chain, aid, digest) and a cursor
                 carries the chain value at its ordinal; a cursor whose chain does not match the
@@ -429,6 +432,10 @@ Operator layer over a stock keripy witness = goal:
                     in order, collecting AIDs until limit would be exceeded or a bounded number
                     of entries has been read, and ends the page at the last entry it consumed;
                     an AID that appears again after that point is simply sent again next page.
+                    An entry for a first-seen event carries its fn; if keripy has not yet pinned
+                    that event's fons, the event is still being written and the page ends before
+                    it rather than consuming it. A receipt entry with no fons names an event not
+                    yet accepted, whose own fels entry will follow, so it is consumed.
                     more says whether entries remain after the page. limit bounds AIDs and is
                     capped before anything is read. A 16 MiB raw replay budget bounds a page's
                     memory before JSON and signing copy it; a page over it refuses with a
