@@ -74,6 +74,27 @@ witness.example.net {
     }
     respond @refused 404
 
+    # The control plane's two remote-watcher routes, and nothing else of it (@9y806dye). A watcher
+    # inside some enterprise polls GET /v1/witness/change and reads the change_key it pins from GET
+    # /v1/witness/identity. The feed carries its own WITNESS_WATCHERS allow-list and RFC 9421
+    # signatures both ways; identity is open by design. Exact paths, GET only: everything else under
+    # /v1/witness -- the six signed operator nouns, controller/{aid}, health, version, tags,
+    # attribs, a HEAD, a trailing slash -- is answered 404 here, as /ext is, and stays reachable
+    # only over SSH. Both forms again, because /v1/witness/* alone leaves /v1/witness proxied to the
+    # witness port.
+    @watcher {
+        method GET
+        path /v1/witness/change /v1/witness/identity
+    }
+    @control {
+        path /v1/witness /v1/witness/*
+        not {
+            method GET
+            path /v1/witness/change /v1/witness/identity
+        }
+    }
+    respond @control 404
+
     # A real limit on the request body, refused with a 413. It counts bytes read, so a chunked body
     # is covered too. A site directive: Caddy rejects it inside reverse_proxy.
     #
@@ -89,8 +110,24 @@ witness.example.net {
         max_size 512KB
     }
 
-    # The witness only. The control plane on 5633 is never proxied: it stays on loopback and is
-    # reached over SSH.
+    # The control plane, for the two @watcher routes only. Caddy passes the client's Host through
+    # unchanged, which is what lets the watcher's signature verify: the control plane rebuilds
+    # @authority from Host, and @path and @query arrive as the watcher signed them.
+    #
+    # A feed page is at most 16 MiB of replay before JSON and base64 grow it. Caddy streams the
+    # answer and sets no size limit on it, so the bound is the 30s write timeout above: a watcher
+    # reading slower than about 1 MB/s asks for a smaller limit. request_buffers matches the witness
+    # proxy's, so no upstream is ever streamed a body.
+    reverse_proxy @watcher 127.0.0.1:5633 {
+        request_buffers 512KB
+
+        transport http {
+            dial_timeout            5s
+            response_header_timeout 30s
+        }
+    }
+
+    # The witness, for everything not answered above.
     reverse_proxy 127.0.0.1:5631 {
         # Buffer the whole request before the witness sees it. Without this Caddy streams, and a
         # client trickling a body holds a handler open in a single-threaded loop.
