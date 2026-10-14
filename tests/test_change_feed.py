@@ -6,6 +6,7 @@ import shutil
 from types import SimpleNamespace
 
 import pytest
+from keri import kering
 from falcon import testing
 from fiki import Key, Request, sign_request, verify_response
 
@@ -45,6 +46,9 @@ class FakeDb:
         self.states = SimpleNamespace(sdb=object(), _des=lambda value: value,
                                       get=lambda *, keys: self.records.get(keys))
         self.fons = SimpleNamespace(get=lambda *, keys: self.fon.get(keys))
+        self.fels = SimpleNamespace(getAllItemIter=self.fels_iter)
+        self.missing = set()
+        self.unclonable = set()
         self.env = SimpleNamespace(begin=lambda: self)
 
     def __enter__(self):
@@ -57,10 +61,17 @@ class FakeDb:
         assert db is self.states.sdb
         return FakeCursor(self.records)
 
-    def clonePreIter(self, pre, fn, gvrsn):
+    def fels_iter(self, *, keys, on):
+        aid = keys.decode()
+        for n in range(on, int(self.records[aid].f, 16) + 1):
+            if n not in self.missing:
+                yield (aid,), n, f"{aid}-{n}".encode()
+
+    def cloneEvtMsg(self, *, pre, fn, dig, gvrsn):
+        if fn in self.unclonable:
+            raise kering.MissingEntryError("no sigs")
         self.cloned.append((pre.decode(), fn, gvrsn.major))
-        for n in range(fn, int(self.records[pre.decode()].f, 16) + 1):
-            yield f"{pre.decode()}:{n}".encode()
+        return f"{pre.decode()}:{fn}".encode()
 
     def close(self):
         pass
@@ -287,13 +298,30 @@ def test_missing_key_state_refuses_replay(setup):
     assert first["change"]
 
 
+def test_a_gap_in_first_seen_order_refuses_even_when_later_events_fill_the_count(setup):
+    log, feed, db, _opens = setup
+    state(db, "A", 3)
+    db.missing = {2}
+    with pytest.raises(ChangeUnavailable, match="gap"):
+        feed.page(None, 10)
+
+
+def test_a_replay_short_of_the_key_state_refuses(setup):
+    log, feed, db, _opens = setup
+    state(db, "A", 2)
+    db.missing = {2}
+    with pytest.raises(ChangeUnavailable, match="every indexed event"):
+        feed.page(None, 10)
+
+
 def test_incomplete_replay_and_budget_refuse(setup, monkeypatch):
     log, feed, db, _opens = setup
     state(db, "A", 1)
     log.append("A", "A-0")
-    db.clonePreIter = lambda **kwargs: iter((b"one",))
-    with pytest.raises(ChangeUnavailable):
+    db.unclonable = {1}
+    with pytest.raises(ChangeUnavailable, match="replay an indexed event"):
         feed.page(None, 10)
+    db.unclonable = set()
     monkeypatch.setattr(change, "MAX_PAGE_REPLAY_BYTES", 2)
     with pytest.raises(ChangePageTooLarge):
         feed.page(None, 10)

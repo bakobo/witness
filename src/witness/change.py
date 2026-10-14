@@ -55,16 +55,29 @@ def _replay(rdb, aid_fns, through=None):
         state = rdb.states.get(keys=aid)
         if state is None:
             raise ChangeUnavailable("The witness has no key state for a change entry. Retry after its database is repaired.")
+        # clonePreIter's own loop, unrolled: it silently skips an event it cannot clone, and a
+        # later event would then hide the gap from a count. Every fn must be present, in order.
         events = []
-        for event in rdb.clonePreIter(pre=aid.encode(), fn=fn, gvrsn=_GENUS):
+        expected = fn
+        pre = aid.encode()
+        for _keys, event_fn, dig in rdb.fels.getAllItemIter(keys=pre, on=fn):
+            if event_fn != expected:
+                raise ChangeUnavailable("The witness's first-seen log has a gap in a replayed "
+                                        "KEL. Retry after its database is repaired.")
+            try:
+                event = rdb.cloneEvtMsg(pre=pre, fn=event_fn, dig=dig, gvrsn=_GENUS)
+            except (kering.MissingEntryError, kering.SerializeError):
+                raise ChangeUnavailable("The witness could not replay an indexed event. Retry "
+                                        "after keripy finishes writing it.") from None
             used += len(event)
             if used > MAX_PAGE_REPLAY_BYTES:
                 raise ChangePageTooLarge(
                     f"The selected AIDs need more than {MAX_PAGE_REPLAY_BYTES} replay bytes. Reduce limit."
                 )
             events.append(event)
+            expected += 1
         # keripy pins fons before its key state moves, so the state alone can lag an entry.
-        if len(events) < max(int(state.f, 16), through.get(aid, -1)) - fn + 1:
+        if expected <= max(int(state.f, 16), through.get(aid, -1)):
             raise ChangeUnavailable("The witness could not replay every indexed event. Retry after its database is repaired.")
         result.append({"aid": aid, "fn": fn, "kel": base64.b64encode(b"".join(events)).decode()})
     return result
