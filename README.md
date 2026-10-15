@@ -4,175 +4,62 @@
 
 # witness
 
-Bakobo's operator layer over a stock [keripy](https://github.com/WebOfTrust/keripy) witness — it makes a running witness observable **without forking keripy**.
+Bakobo's operator layer over a stock [keripy](https://github.com/WebOfTrust/keripy) witness — it makes a running witness observable and deployable on the public internet **without forking keripy**.
 
-A deployment is one container running two processes. `witness run` is the launcher: it imports keripy as a library, runs keripy's own witness doers unchanged, adds one small doer that publishes loop telemetry, and records accepted events and stored receipts in a separate change log. `witness control-plane` is a separate process that opens the witness's LMDB strictly read-only and serves an HTTP surface over it. The two are co-located, and that is load-bearing rather than convenient — see [`docs/deploying.md`](docs/deploying.md).
+A deployment is one container running two processes. `witness run` imports keripy as a library, runs keripy's own witness doers unchanged, and adds loop telemetry and a change log of accepted events and receipts. `witness control-plane` opens the witness's database strictly read-only and serves an HTTP surface over it: health, escrow depth, key state, and a signed change feed for watchers.
 
-The design and its rationale live in `this.i` (the intent tree, the source of truth) and `docs/`.
-
-## Requirements
-
-- Python ≥ 3.14 (keripy's floor)
-- [`uv`](https://docs.astral.sh/uv/)
-
-Every dependency is public and pinned by commit, so `uv sync` resolves anonymously and needs no credential of any kind.
+To see one running, Bakobo has a [trial witness](https://wit1.try.bakobo.com/) open for evaluation, and publishes its production pool at [`bakobo.com/.well-known`](https://bakobo.com/.well-known/index.html) — see [`docs/discovery.md`](docs/discovery.md).
 
 ## From a fresh clone to passing tests
+
+You need Python ≥ 3.14 (keripy's floor) and [`uv`](https://docs.astral.sh/uv/). Every dependency is public and pinned by commit, so `uv sync` resolves anonymously and needs no credential of any kind.
 
 ```sh
 uv sync
 uv run pytest
 ```
 
-The suite runs under a **100% branch-coverage gate**. It includes an install-and-invoke smoke test that starts the real `witness` console script against a temporary witness database. A separate image oracle runs the built container end to end and is skipped unless you point it at an image:
+The suite runs under a **100% branch-coverage gate**. It includes a smoke test that starts the real `witness` console script against a temporary witness database, and `tests/test_doors.py`, a census that fails if any boundary read in `src/witness` bypasses a named input door.
+
+Some tests run shipped artifacts rather than imported code, and skip unless pointed at one: the image oracles need `WITNESS_IMAGE`, the deploy-kit proxy test needs a `caddy` binary, and the load oracle in [`docs/escrow-load.md`](docs/escrow-load.md) needs `WITNESS_LOAD`.
+
+## Working with Docker
+
+Build the image and run the oracles against it:
 
 ```sh
 docker build -t witness:dev .
-WITNESS_IMAGE=witness:dev uv run pytest tests/test_image_smoke.py
+WITNESS_IMAGE=witness:dev uv run pytest tests/test_image_smoke.py tests/test_image_upgrade.py --no-cov
 ```
 
-`tests/test_doors.py` is the door census that `dev/standards/input-handling.md` asks for: an AST scan that fails if any boundary read in `src/witness` is neither inside a named door nor exempted with a written reason. It carries a `LAST_REVIEWED` date, because the scan catches a new call site by itself but only a person re-reading the exemptions catches one whose reason stopped being true.
-
-There is also a load oracle that measures what a flood of unanswerable queries costs the witness — slow, gated behind `WITNESS_LOAD`, and documented with its measured curve in [`docs/escrow-load.md`](docs/escrow-load.md).
-
-## Running it
-
-The image is the supported deployment. It runs a supervisor as PID 1 which starts both processes and enforces an asymmetric failure policy: the control plane crashing restarts it and leaves the witness alone, while the witness exiting takes the container down so the orchestrator restarts the whole thing.
+Published images are at `ghcr.io/bakobo/witness`, pull anonymously, and carry no `latest` tag. Deploy by digest, after verifying its signature. To run one, create a keystore in a volume and start it under the hardened flags:
 
 ```sh
+HARDENED="--read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m --cap-drop ALL --security-opt no-new-privileges --pids-limit 128"
 docker volume create witness-data
-docker run --rm -v witness-data:/usr/local/var/keri --entrypoint kli \
-    ghcr.io/bakobo/witness:<tag> init --name witness --nopasscode
-docker run -d --name witness \
+docker run --rm $HARDENED -v witness-data:/usr/local/var/keri --entrypoint kli \
+    witness:dev init --name witness --nopasscode
+docker run -d --name witness $HARDENED \
     -v witness-data:/usr/local/var/keri \
-    -p 127.0.0.1:5631:5631 \
-    -p 127.0.0.1:5633:5633 \
-    ghcr.io/bakobo/witness:<tag>
+    -p 127.0.0.1:5631:5631 -p 127.0.0.1:5633:5633 \
+    witness:dev
+curl -s http://127.0.0.1:5633/v1/witness/health
 ```
 
-Both processes can also be run directly:
+PID 1 is a supervisor: the control plane crashing restarts it and leaves the witness alone, while the witness exiting takes the container down so the orchestrator restarts the whole thing.
 
-```sh
-witness run --name witness --alias witness --http 5631 --tcp 5632
-witness control-plane --name witness --host 127.0.0.1 --port 5633
-```
+For a local set of several witnesses to experiment with, `uv run witness pool up --name lab --count 3` stands them up and `witness pool down` removes them; see [`docs/pools.md`](docs/pools.md).
 
-Add `--no-telemetry` to the control plane when the witness was started by stock `kli witness start`, which publishes none.
+## Running it for real
 
-## Experimenting: a throwaway pool of witnesses
+The operator's guide starts at [`docs/README.md`](docs/README.md). In brief:
 
-`witness pool` stands up N containers of this image, each with its own volume, keystore and published ports, and takes them all away again. It runs on a host with Docker rather than inside the image, and it is for experiments — `toad` behaviour, a witness going away, a credential ceremony against witnesses that genuinely receipt:
+- [`docs/deploying.md`](docs/deploying.md) — verifying a digest, running it, alerting, upgrading, backup and restore.
+- [`deploy/`](deploy/README.md) — a reference kit for the edge a public witness needs: Caddy, nftables, fail2ban.
+- [`docs/hardening.md`](docs/hardening.md) — what has been hardened, what proves it, and what it does not cover.
+- [`docs/control-plane.md`](docs/control-plane.md) — the HTTP surface, authentication, metrics and errors.
 
-```sh
-export WITNESS_IMAGE=witness:dev
-uv run witness pool up --name lab --count 3
-uv run witness pool status --name lab
-uv run witness pool manifest --name lab --format heti   # the standing witness set, for a lockbox
-uv run witness pool break --name lab --witness w2       # and `heal` to put it back
-uv run witness pool down --name lab                     # removes every container and volume
-```
-
-Pooled witnesses declare themselves `testnet` and `bakobo.pool`, with a `pool` attribute naming the set, so their AIDs are no longer indistinguishable from production ones. The pool serves witnesses and describes them; it never incepts anything, so designating it is the job of whatever holds keys, such as `kli` or heti's lockbox. Full documentation, including the reproducible-`--seed` caveat and what a pool is *not* good for, is in [`docs/pools.md`](docs/pools.md).
-
-And a witness can be backed up without being stopped:
-
-```sh
-witness backup --name witness --to /backup/2026-09-04
-```
-
-That takes a transactionally consistent snapshot of every keripy store — including the keystore, where the witness signing keys live — using LMDB's own `env.copy` from a read-only environment. The separate change log is omitted; a restore creates a new feed generation and response key. See [`docs/deploying.md`](docs/deploying.md) for the restore procedure, which is a directory copy.
-
-## An issuer's Registrar
-
-`witness registrar` is a separate process that publishes an issuer's TEL heads to verifiers' Observers in signed batches, so a verifier can check revocation without ever asking the issuer. It never touches the witness. See [`docs/registrar.md`](docs/registrar.md).
-
-## A landing page
-
-`witness landing` renders a static page to serve at a witness's `/`, from what its control plane says about itself, with an operator's own CSS and logo. It runs offline and is never served by the witness. See [`docs/landing.md`](docs/landing.md).
-
-## The control-plane surface
-
-Every path is `/v1/witness/<noun>`, and all are `GET`. Five answer anyone, six require an operator, and the change feed requires a separately granted watcher — see [Authentication](#authentication).
-
-| Path | What it answers | Signed? |
-| --- | --- | --- |
-| `/v1/witness/health` | Whether the witness is *working*: the database opens **and** the hio loop is not stuck inside a doer. | No |
-| `/v1/witness/identity` | The witness's own AID and alias, plus the change feed signing key's AID for pinning. | No |
-| `/v1/witness/version` | This package and the keripy it wraps. | No |
-| `/v1/witness/loop` | Loop ticks, lag against the tock, the doer currently executing, and per-doer timings. | Yes |
-| `/v1/witness/escrow` | Depth of every escrow store, query-not-found first. | Yes |
-| `/v1/witness/database` | Size against keripy's fixed 100 MB map ceiling, and the registered reader count. | Yes |
-| `/v1/witness/process` | CPU, memory, threads and descriptors for the witness process. | Yes |
-| `/v1/witness/tags` | What this witness claims about itself — `testnet`, and any vendor-prefixed tag its operator set. | No |
-| `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`, and `terms` and `registration`, which must be https URLs. | No |
-| `/v1/witness/controller` | Every controller whose key state this witness holds. | Yes |
-| `/v1/witness/controller/{aid}` | One controller's key state and the tags it inherits, or `404`. | Yes |
-| `/v1/witness/change?since=<cursor>&limit=<n>` | A page of AIDs changed since a cursor, with CESR replay. | Watcher |
-
-The change feed answers `{"generation", "next", "more", "change": [{"aid", "fn", "kel"}]}`. `kel` is base64 of keripy's genus-pinned replay from first-seen ordinal `fn`, including signatures and receipts held at answer time. Omit `since` to begin an initial sync of every AID from `fn` zero; use `next` to continue the sync and then poll. The first page records the log position before copying any KEL, so changes made during the copy appear again in the first poll. Pages hold at most 1,000 AIDs (`limit` defaults to 100) and 16 MiB of raw replay bytes. A larger page gets `413 e.input.range.change.f`; lower `limit` to try a smaller page. An individual AID above 16 MiB cannot be served by this route yet (~5sqv).
-
-The runner appends one entry to a separate LMDB change log for each accepted event or stored witness receipt. A receipt on an older event therefore triggers a change. The control plane reads the log on demand; a quiet poll needs only the last log position. A cursor records a generation, an ordinal, and that ordinal's hash-chain value. A cursor from another generation, past the end of the log, or with a mismatched chain gets `409 e.state.conflict.cursor.f`; restart without `since`. A clean runner restart keeps the generation. An unclean exit or failed log write changes it, while the chain detects a restored log whose entries have diverged. The log is not pruned, so a watcher can resume from an old cursor while its generation and chain still match.
-
-Tags are worth a paragraph, because what they do *not* say is the point. There is a `testnet` tag and deliberately no `production` tag: a witness claiming to be production makes a self-serving claim nothing verifies, whereas one claiming to be a laboratory speaks against its own interest. So an empty tag list means "nothing claimed", never "this is fine", and a reader must not treat absence as assurance. Set them with `--tag`, repeatable; an undefined bare name is refused at startup, because a misspelled `testnet` that silently fails to apply leaves the witness looking production-grade with nothing to say otherwise. A tag of your own needs a vendor prefix, as in `bakobo.pool`.
-
-Attributes are the other half, and the split matters. A tag is a predicate a consumer *decides* on; an attribute is a key and value a consumer *displays*. That is why they are two nouns rather than one document, and why only tags are inherited. Union is well defined for names — any witness tagged `testnet` taints the AID — and undefined for pairs, since three witnesses reporting three different regions have no natural merge. An attribute also lacks the one property that makes `testnet` credible: `testnet` is a claim against the witness's own interest, whereas a self-reported operator name is worth exactly what a self-reported `production` would have been. So act on tags, show attributes to a human, and trust neither further than that.
-
-Set them with `--attrib key=value`, repeatable. Keys obey the same rule as tag names, so a key is as interoperable as a tag. Values are printable ASCII, non-empty, at most 256 characters — deliberately not Unicode, because this is a string a person reads off a screen, which makes a Cyrillic homograph or a bidi override a spoofing surface rather than an internationalization win.
-
-Both endpoints report a `source`, naming which of three places the answer came from. A witness that has published a signed declaration reports `signed-reply` and serves what it published. Failing that, `--tag` and `--attrib` give `operator-config`. Failing that, a JSON seed file in the volume gives `seed-file` — that is how `witness pool` marks its witnesses, since it will not override the image's command to pass them as arguments. Signed wins, because a third party can verify it and cannot verify a local flag, and letting a flag mask what the witness has already said on the wire would hide the disagreement rather than resolve it. Both endpoints keep answering when the witness database cannot be opened, since "is this the laboratory box?" is a question operators ask precisely when something is broken.
-
-The full reasoning, including the two carriers that were measured and rejected before this one, is in [`docs/decls.md`](docs/decls.md).
-
-An AID inherits tags from its witnesses — and, if it is delegated, from every level of its delegation chain, since a delegate's authority is rooted in its delegator. `controller/{aid}` reports that under `tags`: `derived` is the union, `from` lists the witnesses this control plane can speak for, `unresolved` lists the ones it cannot, and `unfollowed` names delegators whose key state this witness does not hold. The last two are different problems — an unresolved witness is somebody to go and ask, where an unfollowed delegator means there may be witness sets nobody here has seen. That last member is not an omission. This control plane never calls out to peer witnesses — it reads one LMDB and nothing else — so a co-witness's tags are genuinely unknown to it, and saying so beats guessing. A caller who wants the whole picture asks each witness itself. The rule for combining them is monotone: one `testnet` witness is enough, no quorum of untagged ones excuses it, and a consumer that has once seen a witness tagged `testnet` should never clear that marking.
-
-Health is worth a sentence. A witness whose loop has wedged still has a perfectly openable database, so a probe that only opens the database stays green through the failure that has actually happened. This one reports `degraded` and names the doer, but only once that doer has held the loop past five seconds: a sample catching the loop mid-doer is normal, and treating it as a wedge would make the probe a random alarm.
-
-## Metrics
-
-The control plane exports OpenTelemetry metrics over OTLP when a collector endpoint is configured, and does nothing at all when one is not:
-
-```sh
-OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318 witness control-plane ...
-```
-
-Series cover witness liveness, loop lag and per-doer maxima, escrow depth per store, database usage, process vitals, and control-plane request counts by route template and status. There is no scrape endpoint, deliberately: `bakobo/dev`'s `ops.md` §7 puts the OpenTelemetry SDK in code Bakobo writes and OTLP on the wire.
-
-## Errors
-
-Failures are RFC 9457 problem documents with media type `application/problem+json`:
-
-```json
-{
-  "code": "e.env.witnessdb.unavailable.r",
-  "type": "https://errors.bakobo.com/e.env.witnessdb.unavailable.r",
-  "title": "I could not open the witness database.",
-  "detail": "The witness database was not found at the configured location; the witness may not be running yet.",
-  "instance": "/v1/witness/identity",
-  "request_id": "…"
-}
-```
-
-The code carries the meaning: it is classified by what the obstacle was rather than by which component raised it, and the trailing token is the disposition — `.r` means retrying could help, `.f` means it will not. The HTTP status follows from the code's prefix, so two endpoints can never disagree about the same condition.
-
-## Authentication
-
-Six nouns — `loop`, `escrow`, `database`, `process`, `controller` and `controller/{aid}` — answer only a request signed with an RFC 9421 HTTP Message Signature, via [`fiki`](https://github.com/bakobo/fiki), by an operator this witness was told about. The other five stay open: a liveness probe cannot sign, a witness's identity is already public through its OOBI, and tags and attributes are what it broadcasts about itself. `@34sgjmxr` in `this.i` has the reasoning.
-
-Name operators with `--operator <AID>`, repeatable, or with `WITNESS_OPERATORS` (comma-separated), which is read only when no flag is given and is how a deployment reaches into the image's fixed command. An operator's AID is a non-transferable one, the Ed25519 key itself. **With no operator named, the six refuse everyone** with `403 e.grant.missing.operator.f`, and the five keep serving, so upgrading an image without setting it costs those reads and nothing else. A missing, stale or wrong signature is `401 e.id.invalid.control.f`.
-
-Name feed readers with `--watcher <AID>` or `WITNESS_WATCHERS` (comma-separated). An operator has no implicit watcher grant, and a watcher has no implicit operator grant. With no watcher named, the feed refuses everyone with `403 e.grant.missing.watcher.f`; the other nouns keep their existing grants. Feed responses, including refusals, carry an RFC 9421 signature bound to the request. Pin the `change_key` AID from `/v1/witness/identity` before trusting one; it is a separate, persistent non-transferable key stored in the change log because the control plane does not hold the passcode needed to use an encrypted witness key. A new log creates a new key that watchers must pin again.
-
-`witness get` is the client, since curl cannot sign:
-
-```sh
-ssh-keygen -t ed25519 -N '' -f ~/.witness-operator      # a key used for nothing else
-witness get --key ~/.witness-operator --aid             # the AID to give --operator
-witness get --key ~/.witness-operator http://127.0.0.1:5633/v1/witness/escrow | jq .total
-```
-
-A signature is good for `--max-age` seconds (default 60) and there is no replay store, because a replayed read changes nothing and discloses only what the captured request already would have. `--authority host:port`, repeatable, also refuses a signature made for some other address; it is off by default, because through an SSH tunnel the address a caller signs is the tunnel's local end, which the witness cannot know. Without it, a request signed for one witness can be replayed to a sibling that names the same operator, inside the window.
-
-Signing does not change where the port belongs. Keep it on loopback, reached by tunnel; authentication is what makes a slip survivable, not a reason to publish it. The one exception is the change feed and identity, which a watcher on someone else's network cannot tunnel to: the deploy kit's Caddy proxies those two routes, GET only, and refuses the rest. A watcher signs the public URL, `https://<witness host>/v1/witness/change`, and the signature verifies behind the proxy because Caddy passes `Host` through unchanged (`@9y806dye`).
+The design and its rationale live in [`this.i`](this.i), the intent tree that is this repo's source of truth.
 
 ## License
 

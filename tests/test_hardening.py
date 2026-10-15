@@ -11,9 +11,14 @@ import re
 import shlex
 from pathlib import Path
 
+import pytest
+
 from witness.hardening import RUN_FLAGS
 
-DEPLOYING = Path(__file__).resolve().parent.parent / "docs" / "deploying.md"
+ROOT = Path(__file__).resolve().parent.parent
+DEPLOYING = ROOT / "docs" / "deploying.md"
+#: Every document that tells an operator to type `docker run`, each held to the constant.
+RUN_DOCS = [DEPLOYING, ROOT / "README.md"]
 
 
 def _pairs(flags):
@@ -60,17 +65,19 @@ def _commands(markdown):
 def _documented_flags(markdown):
     """The value the docs assign to HARDENED, split as the shell would split `$HARDENED`."""
     found = [c for c in _commands(markdown) if c.startswith("HARDENED=")]
-    assert len(found) == 1, "deploying.md should define HARDENED exactly once"
+    assert len(found) == 1, "a document that runs the image should define HARDENED exactly once"
     return tuple(shlex.split(shlex.split(found[0])[0].partition("=")[2]))
 
 
-def test_the_documented_flag_set_is_the_constant():
-    assert _documented_flags(DEPLOYING.read_text(encoding="utf-8")) == RUN_FLAGS
+@pytest.mark.parametrize("doc", RUN_DOCS, ids=lambda p: p.name)
+def test_the_documented_flag_set_is_the_constant(doc):
+    assert _documented_flags(doc.read_text(encoding="utf-8")) == RUN_FLAGS
 
 
-def test_every_documented_docker_run_carries_the_flag_set():
-    runs = [c for c in _commands(DEPLOYING.read_text(encoding="utf-8")) if "docker run" in c]
-    assert runs, "deploying.md should show how to run the image"
+@pytest.mark.parametrize("doc", RUN_DOCS, ids=lambda p: p.name)
+def test_every_documented_docker_run_carries_the_flag_set(doc):
+    runs = [c for c in _commands(doc.read_text(encoding="utf-8")) if "docker run" in c]
+    assert runs, f"{doc.name} should show how to run the image"
     unhardened = [c for c in runs if "$HARDENED" not in c]
     assert not unhardened, f"these documented runs omit $HARDENED: {unhardened}"
 

@@ -34,7 +34,7 @@ curl -s http://127.0.0.1:5642/v1/witness/health | jq .ticks
 witness get --key ~/.witness-operator http://127.0.0.1:5652/v1/witness/escrow | jq .depths.query_not_found
 ```
 
-The second line works against a pool only if that key is the pool's operator, which it is not by default; see [Authentication](../README.md#authentication) for `witness get`.
+The second line works against a pool only if that key is the pool's operator, which it is not by default; see [Authentication](control-plane.md#authentication) for `witness get`.
 
 `witness pool status --name lab` asks all of them at once:
 

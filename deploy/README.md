@@ -22,7 +22,7 @@ The kit is a reference, not an installer. It assumes a Debian-family host with s
 
 **`fail2ban/`: sources that keep failing.** Ten counted 4xx responses from one TCP peer within ten minutes bans that peer for an hour on TCP and UDP 80 and 443, doubling per repeat up to a day. KERI's `/oobi`, `/receipts` and `/query` are exempt, because a controller polling for something the witness does not hold yet gets exactly those 4xx, and so are 404s on `/favicon.ico` and `/robots.txt`. 5xx never counts. **fail2ban needs Caddy as the TCP edge**: it bans the address Caddy logs as `remote_ip`, which is the packet's source only while nothing sits in front of Caddy. Put a load balancer or CDN in front and every ban lands on the proxy's address. The witness never reads `X-Forwarded-For`, and neither does this filter. The ban is port-scoped, so SSH cannot be banned for anyone. It does not see abuse that succeeds: a flood of 200s is nftables' and the witness's problem.
 
-**The control plane is exposed for watchers and nothing else.** Port 5633 stays on loopback. Operators reach it over SSH and sign each request with `witness get` ([authentication](../README.md#authentication)):
+**The control plane is exposed for watchers and nothing else.** Port 5633 stays on loopback. Operators reach it over SSH and sign each request with `witness get` ([authentication](../docs/control-plane.md#authentication)):
 
 ```
 ssh -N -L 5633:127.0.0.1:5633 <you>@witness.example.net &
