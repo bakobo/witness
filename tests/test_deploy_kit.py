@@ -167,17 +167,35 @@ def code(text: str) -> str:
     return "\n".join(re.sub(r"#.*", "", line).rstrip() for line in text.splitlines())
 
 
+def depth_change(line: str) -> int:
+    """How far `line` moves the brace depth, not counting braces inside a quoted token, which
+    Caddy reads as text (`vars x "}"`)."""
+    bare = re.sub(r'"(?:[^"\\]|\\.)*"', '""', line)
+    return bare.count("{") - bare.count("}")
+
+
 def block(text: str, opener: str) -> str:
     """Everything inside the brace block whose opening line matches `opener`, counted by depth."""
     lines = code(text).splitlines()
     start = next(i for i, line in enumerate(lines) if re.search(opener, line))
     depth, out = 1, []
     for line in lines[start + 1:]:
-        depth += line.count("{") - line.count("}")
+        depth += depth_change(line)
         if depth == 0:
             return "\n".join(out)
         out.append(line)
     raise AssertionError(f"the block opened by {lines[start]!r} never closes")
+
+
+def top_level(text: str) -> list[str]:
+    """The lines of `text` at brace depth zero, so a directive nested in some other block (a
+    handle, a route, a matcher) cannot stand in for one that applies to the whole site."""
+    depth, out = 0, []
+    for line in code(text).splitlines():
+        if depth == 0 and line.strip():
+            out.append(line.strip())
+        depth += depth_change(line)
+    return out
 
 
 @pytest.fixture(scope="module")
@@ -215,7 +233,7 @@ def test_request_body_is_a_site_directive_not_a_proxy_one(caddyfile):
     """Caddy rejects request_body inside reverse_proxy at load time."""
     for body in proxies(caddyfile).values():
         assert "request_body" not in body
-    assert re.search(r"^\s*request_body\s*\{", site(caddyfile), re.M)
+    assert "request_body {" in top_level(site(caddyfile)), "nested, it caps only what reaches it"
 
 
 def test_every_timeout_is_thirty_seconds(caddyfile):
@@ -233,7 +251,17 @@ def test_ext_is_refused_in_both_forms(caddyfile):
     body = site(caddyfile)
     matcher = block(body, r"^\s*@refused\s*\{")
     assert set(re.search(r"^\s*path\s+(.+)$", matcher, re.M).group(1).split()) == {"/ext", "/ext/*"}
-    assert re.search(r"^\s*respond\s+@refused\s+404\s*$", body, re.M)
+    # At the site's top level, both: a matcher or a respond inside a handle covers only that
+    # handle's requests, and leaves /ext proxied for the rest.
+    assert {"@refused {", "respond @refused 404"} <= set(top_level(body))
+
+
+def test_a_quoted_brace_does_not_move_the_depth():
+    """A brace in a quoted value would otherwise close the handle early, and the refusal inside it
+    would read as site-wide (codex's full pass on this change)."""
+    nested = 'handle /safe {\n    vars x "}"\n    respond @refused 404\n}\n'
+    assert "respond @refused 404" not in top_level(nested)
+    assert "respond @refused 404" in block(nested, r"^handle")
 
 
 WATCHER_ROUTES = {"/v1/witness/change", "/v1/witness/identity"}
@@ -346,6 +374,15 @@ def test_the_table_is_replaced_atomically_and_never_the_whole_ruleset(nft):
     assert "flush ruleset" not in nft
     preamble = nft.index("table inet witness {}")
     assert preamble < nft.index("delete table inet witness") < nft.index("table inet witness {\n")
+
+
+def test_the_file_holds_one_table_with_only_the_input_chain(nft):
+    """A second table or chain is rules the tests above never read: a chain hooked elsewhere, or
+    another table's, could drop or accept what the input chain is meant to decide."""
+    assert top_level(nft) == ["table inet witness {}", "delete table inet witness",
+                              "table inet witness {"]
+    table = block(nft, r"^table inet witness \{$")
+    assert re.findall(r"^\s*chain\s+(\S+)", table, re.M) == ["input"]
 
 
 # --------------------------------------------------------------------------------------------
