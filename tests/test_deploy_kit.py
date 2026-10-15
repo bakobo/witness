@@ -167,13 +167,20 @@ def code(text: str) -> str:
     return "\n".join(re.sub(r"#.*", "", line).rstrip() for line in text.splitlines())
 
 
+def depth_change(line: str) -> int:
+    """How far `line` moves the brace depth, not counting braces inside a quoted token, which
+    Caddy reads as text (`vars x "}"`)."""
+    bare = re.sub(r'"(?:[^"\\]|\\.)*"', '""', line)
+    return bare.count("{") - bare.count("}")
+
+
 def block(text: str, opener: str) -> str:
     """Everything inside the brace block whose opening line matches `opener`, counted by depth."""
     lines = code(text).splitlines()
     start = next(i for i, line in enumerate(lines) if re.search(opener, line))
     depth, out = 1, []
     for line in lines[start + 1:]:
-        depth += line.count("{") - line.count("}")
+        depth += depth_change(line)
         if depth == 0:
             return "\n".join(out)
         out.append(line)
@@ -187,7 +194,7 @@ def top_level(text: str) -> list[str]:
     for line in code(text).splitlines():
         if depth == 0 and line.strip():
             out.append(line.strip())
-        depth += line.count("{") - line.count("}")
+        depth += depth_change(line)
     return out
 
 
@@ -247,6 +254,14 @@ def test_ext_is_refused_in_both_forms(caddyfile):
     # At the site's top level, both: a matcher or a respond inside a handle covers only that
     # handle's requests, and leaves /ext proxied for the rest.
     assert {"@refused {", "respond @refused 404"} <= set(top_level(body))
+
+
+def test_a_quoted_brace_does_not_move_the_depth():
+    """A brace in a quoted value would otherwise close the handle early, and the refusal inside it
+    would read as site-wide (codex's full pass on this change)."""
+    nested = 'handle /safe {\n    vars x "}"\n    respond @refused 404\n}\n'
+    assert "respond @refused 404" not in top_level(nested)
+    assert "respond @refused 404" in block(nested, r"^handle")
 
 
 WATCHER_ROUTES = {"/v1/witness/change", "/v1/witness/identity"}
