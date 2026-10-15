@@ -55,7 +55,7 @@ docker run -d --name witness $HARDENED \
     ghcr.io/bakobo/witness@sha256:<digest>
 ```
 
-`WITNESS_OPERATORS` names who may read the six signed control-plane nouns; `witness get --key <key> --aid` prints an operator's AID. Leave it out and those nouns refuse everyone while health and identity keep answering. [Authentication](../README.md#authentication) has the rest.
+`WITNESS_OPERATORS` names who may read the six signed control-plane nouns; `witness get --key <key> --aid` prints an operator's AID. Leave it out and those nouns refuse everyone while health and identity keep answering. [Authentication](control-plane.md#authentication) has the rest.
 
 Set `WITNESS_WATCHERS=<watcher AID>[,<watcher AID>...]` to grant the separate change feed. Leave it unset to refuse all feed reads. The runner writes accepted events and stored receipts to a separate LMDB change log under the witness volume's `change/` directory. Keep that directory across ordinary restarts: a clean runner restart preserves the log generation and its response signing key, so watchers can continue polling. An unclean exit or failed log write starts a new generation, which makes watchers begin an initial sync. The cursor's hash chain also detects a restored log whose entries diverge from what a watcher previously read. `witness backup` omits the change log; restoring that backup creates a new log and response key that watchers must pin again.
 
