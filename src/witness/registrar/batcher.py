@@ -292,8 +292,8 @@ def encode(batch, *, registrar: str, window_end: float) -> bytes:
         "number": batch.number,
         "full": batch.full,
         "window_end": datetime.fromtimestamp(window_end, timezone.utc).isoformat(),
-        "heads": [{**head, "chain": base64.b64encode(head["chain"]).decode(),
-                   "kel": base64.b64encode(head["kel"]).decode()} for head in batch.heads],
+        "heads": [{**head, "chain": base64.b64encode(head["chain"]).decode()}
+                  for head in batch.heads],
     }, sort_keys=True).encode()
 
 
