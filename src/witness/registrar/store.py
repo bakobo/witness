@@ -93,12 +93,15 @@ class RegistrarStore:
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('change', 0)")
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('seed', ?)",
                              (fiki.Key.generate().seed,))
-            held_kel = "kel" in {row[1] for row in self._db.execute("PRAGMA table_info(heads)")}
-            if held_kel:
+            if "kel" in {row[1] for row in self._db.execute("PRAGMA table_info(heads)")}:
                 # Every head used to carry its issuer's whole KEL, which nothing reads (@23vjzsf0).
                 self._db.execute("ALTER TABLE heads DROP COLUMN kel")
-        if held_kel:
-            self._db.execute("VACUUM")  # once, to give back what the dropped KEL held
+        # Judged by what the file holds free, not by whether a column was just dropped, so a
+        # compaction that failed after the drop committed is retried at the next open.
+        free, = self._db.execute("PRAGMA freelist_count").fetchone()
+        pages, = self._db.execute("PRAGMA page_count").fetchone()
+        if 2 * free >= pages:
+            self._db.execute("VACUUM")
 
     @contextmanager
     def _tx(self):
