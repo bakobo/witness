@@ -1461,8 +1461,8 @@ Operator layer over a stock keripy witness = goal:
         The Registrar trusts its publisher and judges nothing cryptographically = decision:
           id: 5m2m4ozz
           why: >
-            The Registrar accepts TEL snapshots (a registry's whole chain from rip to head, plus the
-            issuer KEL that anchors it) only from publishers it is configured with, each
+            The Registrar accepts TEL snapshots (a registry's whole chain from rip to head, and, until
+            @23vjzsf0, the issuer KEL that anchors it) only from publishers it is configured with, each
             authenticating by RFC 9421 via fiki (@s6v3qm); an unauthenticated POST is
             refused. It keeps a snapshot only if its chain extends the head already held, byte for
             byte, so a late or forked snapshot is refused with a named code and never replaces a
@@ -1473,6 +1473,11 @@ Operator layer over a stock keripy witness = goal:
             could only add a way for two readings of one chain to disagree. Accepted tradeoff: a
             Registrar will
             relay a well-formed chain its issuer should not have published; the Observer refuses it.
+          children:
+            A publication no longer carries the issuer KEL, and the Registrar keeps and sends none = decision:
+              nid: 23vjzsf0
+              why: >-
+                Decided with Daniel Hardman 2026-10-25 (imbu Q-XMRN, imbu this.i @7qgv63f5). Every head the Registrar held carried its issuer's whole KEL, about 840 bytes more per anchoring interaction event, so with one registry per credential a head was 1.7 KB at the first credential and 1.0 MB at the 1200th, and one Registrar held 582 MB after 1200 credentials (keri-bench docs/baseline-2026-10.md, at imbu utah/next 963dfec). Nobody reads that KEL: this node's parent already leaves the Registrar judging nothing, and heti's Observer verifies each chain against a KEL it gathers itself and never uses the one relayed (heti @4fgkgc3t). So a publication names registry, issuer, digest and chain; a kel field is still accepted, so that an imbu built before @7qgv63f5 keeps publishing while the two are deployed in order, but it is discarded without being decoded or stored, beyond the request's existing size bound. The heads table drops its kel column when the store opens, which compacts the file once because an existing store may hold hundreds of megabytes of it, and batch heads carry registry, issuer, digest and chain only, which heti's batch parser already accepts because it reads only registry and chain. Any other unknown field is still refused. Deploy order is this Registrar first, then the imbu that stops sending kel, because the Registrar before this change refuses a publication that does not name kel. Rejected: keeping one KEL per issuer and relaying deltas, which stores a document no reader uses and adds a fork case when a recovery rotation supersedes interaction events already held. Rejected: refusing kel at once, which breaks every deployed imbu on the day this ships. Tradeoff: an Observer that some day wants the KEL from the Registrar needs a feed designed for it; a later release may refuse kel once no imbu sends it.
 
         Observers subscribe once  and the Registrar pushes batches on a clock = decision:
           id: ed3dkgl5

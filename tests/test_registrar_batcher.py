@@ -37,7 +37,7 @@ def _batch(sent):
 
 
 def test_each_window_sends_one_signed_batch_to_each_subscriber(store):
-    store.publish(registry="r1", issuer="EIssuer", digest="d1", chain=b"rip", kel=b"kel")
+    store.publish(registry="r1", issuer="EIssuer", digest="d1", chain=b"rip")
     store.subscribe("EObserverA", "http://127.0.0.1:1/a", "nonce-of-observer-a0")
     store.subscribe("EObserverB", "http://127.0.0.1:1/b", "nonce-of-observer-b0")
     transport = Recorder()
@@ -59,7 +59,7 @@ def test_each_window_sends_one_signed_batch_to_each_subscriber(store):
         (1, True, "1970-01-01T00:16:40+00:00")
     head, = batch["heads"]
     assert base64.b64decode(head["chain"]) == b"rip"
-    assert set(head) == {"registry", "issuer", "digest", "chain", "kel"}
+    assert set(head) == {"registry", "issuer", "digest", "chain"}  # no KEL (@23vjzsf0)
 
 
 def test_a_quiet_window_still_sends_an_empty_batch(store):

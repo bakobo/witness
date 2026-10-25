@@ -42,8 +42,7 @@ def _signed(client, key, method, path, document=None, *, raw=None, sign=True, cr
 
 def _snapshot(data=b"rip+iss", **changes):
     return {"registry": "EReg" + "r" * 40, "issuer": "EIss" + "i" * 40,
-            "digest": "d" * 64, "chain": base64.b64encode(data).decode(),
-            "kel": base64.b64encode(b"kel").decode(), **changes}
+            "digest": "d" * 64, "chain": base64.b64encode(data).decode(), **changes}
 
 
 def test_a_configured_publisher_publishes_and_a_repeat_is_reacknowledged(client, publisher):
@@ -52,6 +51,15 @@ def test_a_configured_publisher_publishes_and_a_repeat_is_reacknowledged(client,
     assert (answer.status_code, answer.json) == (200, {"digest": "d" * 64})
     assert store.head("EReg" + "r" * 40)["chain"] == b"rip+iss"
     assert _signed(app, publisher, "POST", PUBLICATION, _snapshot()).status_code == 200
+
+
+@pytest.mark.parametrize("kel", [base64.b64encode(b"kel").decode(), "", None, "not base64!"])
+def test_a_kel_from_an_older_publisher_is_accepted_and_discarded_unread(client, publisher, kel):
+    """An imbu built before @23vjzsf0 still sends one, and must keep publishing meanwhile."""
+    app, store = client
+    answer = _signed(app, publisher, "POST", PUBLICATION, _snapshot(kel=kel))
+    assert (answer.status_code, answer.json) == (200, {"digest": "d" * 64})
+    assert "kel" not in store.head("EReg" + "r" * 40)
 
 
 def test_a_stale_or_forked_publication_is_a_named_conflict(client, publisher):
@@ -94,7 +102,7 @@ def test_a_signature_that_does_not_cover_the_body_is_refused(client, publisher):
 
 @pytest.mark.parametrize("bad", [
     {"registry": 7}, {"issuer": ""}, {"digest": "x" * 200}, {"chain": "not base64!"},
-    {"kel": None}, {"surprise": 1},
+    {"surprise": 1},
 ])
 def test_a_malformed_publication_is_refused_before_it_is_stored(client, publisher, bad):
     app, store = client

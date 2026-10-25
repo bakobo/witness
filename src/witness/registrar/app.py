@@ -41,7 +41,9 @@ MAX_ADMISSIONS = 16
 SKEW = DEFAULT_SKEW
 """The clock skew fiki tolerates, passed to it explicitly, so the replay window below and the
 verifier's acceptance window are one number rather than two copies that can drift."""
-_SNAPSHOT = ("registry", "issuer", "digest", "chain", "kel")
+_SNAPSHOT = ("registry", "issuer", "digest", "chain")
+_DISCARDED = frozenset({"kel"})
+"""Sent by an imbu built before @23vjzsf0, and dropped unread so that one keeps publishing."""
 
 
 def _body(req) -> bytes:
@@ -99,22 +101,20 @@ def _object(body: bytes) -> dict:
 
 
 def _snapshot(document: dict) -> dict:
-    if set(document) != set(_SNAPSHOT):
+    if not set(_SNAPSHOT) <= set(document) <= set(_SNAPSHOT) | _DISCARDED:
         raise RegistrarInput(f"A publication names exactly {', '.join(_SNAPSHOT)}.")
     for name in ("registry", "issuer", "digest"):
         value = document[name]
         if not isinstance(value, str) or not 0 < len(value) <= MAX_NAME:
             raise RegistrarInput(f"{name} must be 1 to {MAX_NAME} characters of text.",
                                  args=[name])
-    decoded = {}
-    for name in ("chain", "kel"):
-        try:
-            decoded[name] = base64.b64decode(document[name], validate=True)
-        except (TypeError, binascii.Error):
-            raise RegistrarInput(f"{name} must be base64 text.", args=[name]) from None
-        if not decoded[name]:  # an empty chain would be a prefix of every later one
-            raise RegistrarInput(f"{name} must not be empty.", args=[name])
-    return {**{name: document[name] for name in ("registry", "issuer", "digest")}, **decoded}
+    try:
+        chain = base64.b64decode(document["chain"], validate=True)
+    except (TypeError, binascii.Error):
+        raise RegistrarInput("chain must be base64 text.", args=["chain"]) from None
+    if not chain:  # an empty chain would be a prefix of every later one
+        raise RegistrarInput("chain must not be empty.", args=["chain"])
+    return {**{name: document[name] for name in ("registry", "issuer", "digest")}, "chain": chain}
 
 
 def _is_http_url(text: str) -> bool:

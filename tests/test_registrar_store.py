@@ -1,14 +1,15 @@
 """The Registrar's store: extend-only heads, subscriptions and batch numbering, across restarts."""
 
+import sqlite3
+
 import pytest
 
 from witness.errors import RegistrarFork, RegistrarStale
 from witness.registrar.store import RegistrarStore
 
 
-def _publish(store, registry, chain, *, issuer="EIssuer", kel=b"kel"):
-    return store.publish(registry=registry, issuer=issuer, digest=chain.hex(),
-                         chain=chain, kel=kel)
+def _publish(store, registry, chain, *, issuer="EIssuer"):
+    return store.publish(registry=registry, issuer=issuer, digest=chain.hex(), chain=chain)
 
 
 @pytest.fixture
@@ -30,6 +31,42 @@ def test_a_head_is_kept_only_while_each_snapshot_extends_it(store):
     assert fork.value.code == "e.state.conflict.registrar.fork.f"
     assert store.head("r1")["chain"] == b"rip+iss"
     assert store.head("unknown") is None
+
+
+def test_a_head_keeps_no_issuer_kel(store):
+    """No reader uses the KEL a publication used to carry (@23vjzsf0)."""
+    _publish(store, "r1", b"rip")
+    assert store.head("r1") == {"registry": "r1", "issuer": "EIssuer", "digest": b"rip".hex(),
+                                "chain": b"rip"}
+
+
+def test_opening_a_store_drops_the_kel_its_heads_held_and_gives_the_space_back(tmp_path):
+    """Every head used to carry its issuer's whole KEL, so one Registrar held 582 MB of it after
+    1200 credentials (@23vjzsf0). Opening drops the column and compacts the file once."""
+    path = tmp_path / "registrar.sqlite3"
+    kel = b"k" * (256 * 1024)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE heads (registry TEXT PRIMARY KEY, issuer TEXT NOT NULL, "
+                   "digest TEXT NOT NULL, chain BLOB NOT NULL, kel BLOB NOT NULL, "
+                   "changed INTEGER NOT NULL)")
+        db.execute("CREATE TABLE meta (name TEXT PRIMARY KEY, value BLOB NOT NULL)")
+        db.execute("INSERT INTO meta VALUES ('change', 16)")
+        for index in range(16):
+            db.execute("INSERT INTO heads VALUES (?, 'EIssuer', ?, ?, ?, ?)",
+                       (f"r{index}", f"d{index}", f"rip-{index}".encode(), kel, index + 1))
+    assert path.stat().st_size > 16 * len(kel)
+    store = RegistrarStore(path)
+    try:
+        assert store.head("r3") == {"registry": "r3", "issuer": "EIssuer", "digest": "d3",
+                                    "chain": b"rip-3"}
+        assert _publish(store, "r3", b"rip-3+iss") == b"rip-3+iss".hex()
+    finally:
+        store.close()
+    with sqlite3.connect(path) as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(heads)")}
+    assert columns == {"registry", "issuer", "digest", "chain", "changed"}
+    assert path.stat().st_size < len(kel)
+    RegistrarStore(path).close()  # nothing left to migrate
 
 
 def test_a_subscription_starts_full_then_carries_only_changes(store):

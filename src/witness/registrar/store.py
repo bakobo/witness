@@ -41,7 +41,7 @@ class Batch:
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS heads (registry TEXT PRIMARY KEY, issuer TEXT NOT NULL, "
-    "digest TEXT NOT NULL, chain BLOB NOT NULL, kel BLOB NOT NULL, changed INTEGER NOT NULL)",
+    "digest TEXT NOT NULL, chain BLOB NOT NULL, changed INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS subscribers (aid TEXT PRIMARY KEY, callback TEXT NOT NULL, "
     "number INTEGER NOT NULL, seen INTEGER NOT NULL, full INTEGER NOT NULL, "
     "nonce TEXT NOT NULL)",
@@ -93,6 +93,12 @@ class RegistrarStore:
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('change', 0)")
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('seed', ?)",
                              (fiki.Key.generate().seed,))
+            held_kel = "kel" in {row[1] for row in self._db.execute("PRAGMA table_info(heads)")}
+            if held_kel:
+                # Every head used to carry its issuer's whole KEL, which nothing reads (@23vjzsf0).
+                self._db.execute("ALTER TABLE heads DROP COLUMN kel")
+        if held_kel:
+            self._db.execute("VACUUM")  # once, to give back what the dropped KEL held
 
     @contextmanager
     def _tx(self):
@@ -118,8 +124,7 @@ class RegistrarStore:
     def _change(self) -> int:
         return self._db.execute("SELECT value FROM meta WHERE name='change'").fetchone()[0]
 
-    def publish(self, *, registry: str, issuer: str, digest: str, chain: bytes,
-                kel: bytes) -> str:
+    def publish(self, *, registry: str, issuer: str, digest: str, chain: bytes) -> str:
         """Keep a snapshot only if its chain extends the head held; return the head's digest.
 
         An exact repeat is acknowledged again, because a publisher retries until it gets an exact
@@ -140,13 +145,13 @@ class RegistrarStore:
                                         args=[registry])
             change = self._change() + 1
             self._db.execute("UPDATE meta SET value=? WHERE name='change'", (change,))
-            self._db.execute("INSERT OR REPLACE INTO heads VALUES (?, ?, ?, ?, ?, ?)",
-                             (registry, issuer, digest, chain, kel, change))
+            self._db.execute("INSERT OR REPLACE INTO heads VALUES (?, ?, ?, ?, ?)",
+                             (registry, issuer, digest, chain, change))
         return digest
 
     def head(self, registry: str) -> dict | None:
         with self._lock:
-            row = self._db.execute("SELECT registry, issuer, digest, chain, kel FROM heads "
+            row = self._db.execute("SELECT registry, issuer, digest, chain FROM heads "
                                    "WHERE registry=?", (registry,)).fetchone()
         return None if row is None else _head(row)
 
@@ -265,7 +270,7 @@ class RegistrarStore:
             number, seen, full, nonce = row
             change = self._change()
             rows = self._db.execute(
-                "SELECT registry, issuer, digest, chain, kel FROM heads"
+                "SELECT registry, issuer, digest, chain FROM heads"
                 + ("" if full else " WHERE changed > ?") + " ORDER BY registry",
                 () if full else (seen,)).fetchall()
             self._db.execute("UPDATE subscribers SET number=?, seen=?, full=0 WHERE aid=?",
@@ -274,6 +279,5 @@ class RegistrarStore:
 
 
 def _head(row) -> dict:
-    registry, issuer, digest, chain, kel = row
-    return {"registry": registry, "issuer": issuer, "digest": digest,
-            "chain": bytes(chain), "kel": bytes(kel)}
+    registry, issuer, digest, chain = row
+    return {"registry": registry, "issuer": issuer, "digest": digest, "chain": bytes(chain)}

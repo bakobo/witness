@@ -24,13 +24,13 @@ Every request is RFC 9421-signed with [fiki](https://github.com/bakobo/fiki), wi
 
 | request | who | body | answer |
 |---|---|---|---|
-| `POST /v1/registrar/publication` | a configured `--publisher` | `{registry, issuer, digest, chain, kel}`, with `chain` and `kel` base64 | `{"digest": …}` |
+| `POST /v1/registrar/publication` | a configured `--publisher` | `{registry, issuer, digest, chain}`, with `chain` base64 | `{"digest": …}` |
 | `POST /v1/registrar/subscription` | any signer; its AID is the subscription | `{"callback": "http(s)://…", "nonce": "…"}` | `{"subscriber": …, "registrar": …}` |
 | `DELETE /v1/registrar/subscription` | the subscriber | none | 204 |
 
 The `nonce` is 16 to 64 base64url characters the Observer chooses at random for this subscription; every batch sent for it carries the nonce, and a subscription without one is refused. Subscribing again, with the same callback or a new one, continues the existing sequence rather than restarting it, and replaces the nonce. A signed subscribe or unsubscribe that has already been acted on is refused while it is still fresh (409 `e.state.conflict.registrar.replay.f`); requests are compared by signer, created time and signature bytes, so changing the unsigned label does not make a new request. A request is remembered only if it acted; a refused one can be retried. An exact copy of a request that is still being admitted is refused with 409 `e.state.conflict.registrar.pending.r`, which is retryable, because the original may yet be refused; neither a replay nor a copy causes the callback host to be resolved again. At most 32 requests per signer are remembered at a time. A new subscriber is refused with 429 `e.grant.quota.requests.r` once 4096 requests from signers without a live subscription are remembered; that is an admission threshold rather than a ceiling, since a subscriber's remembered requests join that count when it unsubscribes. A live subscriber is held only to its own 32, so subscribing and unsubscribing many throwaway AIDs can delay new subscriptions but never refuse an existing subscriber. In all, the store holds at most 4096 plus twice the subscription limit times 32 remembered requests (8192 at the defaults), and a callback host that does not resolve within five seconds is refused with 503 `e.env.resolver.timeout.r`. A resolver process that cannot start or fails for a reason of its own is refused with 503 `e.env.resolver.failed.r`, since it says nothing about the host; only a host the system resolver reports as unknown is the permanent 403 `e.grant.scope.callback.f`. Publications are exempt, because a replayed publication changes nothing.
 
-A publication is kept only if its `chain` extends the head already held, byte for byte. An exact repeat is acknowledged again. An older chain is refused with 409 `e.state.conflict.registrar.stale.f`, and a chain that neither extends nor repeats the head with 409 `e.state.conflict.registrar.fork.f`. The Registrar does not verify anchors against the issuer's KEL; the Observer does, and must not rely on the Registrar's word.
+A publication carries no issuer KEL, since nothing reads one: the Observer gathers the issuer's KEL itself (this.i @23vjzsf0). A `kel` field, which an imbu built before that change still sends, is accepted and discarded unread, and a store from before it drops the KEL it held the first time it opens, compacting the file once. A publication is kept only if its `chain` extends the head already held, byte for byte. An exact repeat is acknowledged again. An older chain is refused with 409 `e.state.conflict.registrar.stale.f`, and a chain that neither extends nor repeats the head with 409 `e.state.conflict.registrar.fork.f`. The Registrar does not verify anchors against the issuer's KEL; the Observer does, and must not rely on the Registrar's word.
 
 ## Batches
 
@@ -38,7 +38,7 @@ Every window, each subscriber is sent **one** batch, a JSON POST to its callback
 
 ```json
 {"registrar": "B…", "subscription": "<the subscription's nonce>", "number": 7, "full": false, "window_end": "2026-11-17T10:00:05+00:00",
- "heads": [{"registry": "E…", "issuer": "E…", "digest": "…", "chain": "<base64>", "kel": "<base64>"}]}
+ "heads": [{"registry": "E…", "issuer": "E…", "digest": "…", "chain": "<base64>"}]}
 ```
 
 - `number` starts at 1 for each subscription and increases by one per window. A batch that is not delivered still uses its number, so a subscriber sees a gap rather than a silently skipped window.
