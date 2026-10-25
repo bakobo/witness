@@ -93,6 +93,21 @@ def test_a_store_whose_compaction_failed_is_compacted_on_a_later_open(tmp_path):
     assert path.stat().st_size < len(kel)
 
 
+def test_dropping_a_kel_smaller_than_the_rest_still_compacts(tmp_path):
+    """The drop's own open compacts however small a share of the file the KEL was."""
+    path = tmp_path / "registrar.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE heads (registry TEXT PRIMARY KEY, issuer TEXT NOT NULL, "
+                   "digest TEXT NOT NULL, chain BLOB NOT NULL, kel BLOB NOT NULL, "
+                   "changed INTEGER NOT NULL)")
+        for index in range(16):
+            db.execute("INSERT INTO heads VALUES (?, 'EIssuer', ?, ?, ?, ?)",
+                       (f"r{index}", f"d{index}", b"c" * 16384, b"k" * 8192, index + 1))
+    RegistrarStore(path).close()
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA freelist_count").fetchone()[0] == 0
+
+
 def test_a_little_free_space_does_not_compact_the_store_on_every_open(tmp_path):
     path = tmp_path / "registrar.sqlite3"
     store = RegistrarStore(path)
