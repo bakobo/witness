@@ -69,8 +69,8 @@ def test_console_script_publishes_and_pushes_a_signed_batch(tmp_path):
                 threading.Event().wait(0.05)
         chain = base64.b64encode(b"rip+iss").decode()
         assert _post(f"{base}/v1/registrar/publication", publisher, {
-            "registry": "EReg", "issuer": "EIss", "digest": "d1", "chain": chain,
-            "kel": base64.b64encode(b"kel").decode()}) == {"digest": "d1"}
+            "registry": "EReg", "issuer": "EIss", "digest": "d1", "chain": chain}) == \
+            {"digest": "d1"}
         callback = f"http://127.0.0.1:{sink.server_address[1]}/batch"
         answer = _post(f"{base}/v1/registrar/subscription", observer,
                        {"callback": callback, "nonce": "nonce-00000000000000"})

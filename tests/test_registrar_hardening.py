@@ -635,18 +635,16 @@ def test_a_churned_aid_that_resubscribes_cannot_refuse_a_live_subscriber(store):
     assert answer.status_code == 200, answer.text
 
 
-def test_an_empty_chain_or_kel_is_not_a_publication(store):
+def test_an_empty_chain_is_not_a_publication(store):
     publisher = fiki.Key.generate()
     app = falcon.testing.TestClient(make_registrar_app(
         store, publishers=frozenset({publisher.aid}), max_age=60))
-    for field in ("chain", "kel"):
-        document = {"registry": "EReg", "issuer": "EIss", "digest": "d",
-                    "chain": "Y2hhaW4=", "kel": "a2Vs", field: ""}
-        body = json.dumps(document).encode()
-        headers = fiki.sign_request(key=publisher, method="POST",
-                                    url=BASE + "/v1/registrar/publication", body=body)
-        answer = app.simulate_post("/v1/registrar/publication", headers=headers, body=body)
-        assert (answer.status_code, answer.json["code"]) == (400, "e.input.format.registrar.f")
+    document = {"registry": "EReg", "issuer": "EIss", "digest": "d", "chain": ""}
+    body = json.dumps(document).encode()
+    headers = fiki.sign_request(key=publisher, method="POST",
+                                url=BASE + "/v1/registrar/publication", body=body)
+    answer = app.simulate_post("/v1/registrar/publication", headers=headers, body=body)
+    assert (answer.status_code, answer.json["code"]) == (400, "e.input.format.registrar.f")
     assert store.head("EReg") is None
 
 
