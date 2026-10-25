@@ -69,6 +69,48 @@ def test_opening_a_store_drops_the_kel_its_heads_held_and_gives_the_space_back(t
     RegistrarStore(path).close()  # nothing left to migrate
 
 
+def test_a_store_whose_compaction_failed_is_compacted_on_a_later_open(tmp_path):
+    """Dropping the KEL commits before the file is compacted. A compaction that failed then
+    (a full disk, a crash) leaves the column gone and the space still held, so a later open
+    compacts by what the file holds free rather than by whether a column was dropped."""
+    path = tmp_path / "registrar.sqlite3"
+    kel = b"k" * (256 * 1024)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE heads (registry TEXT PRIMARY KEY, issuer TEXT NOT NULL, "
+                   "digest TEXT NOT NULL, chain BLOB NOT NULL, kel BLOB NOT NULL, "
+                   "changed INTEGER NOT NULL)")
+        for index in range(16):
+            db.execute("INSERT INTO heads VALUES (?, 'EIssuer', ?, ?, ?, ?)",
+                       (f"r{index}", f"d{index}", b"rip", kel, index + 1))
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE heads DROP COLUMN kel")  # and no VACUUM after it
+    assert path.stat().st_size > 16 * len(kel)
+    store = RegistrarStore(path)
+    try:
+        assert store.head("r3")["chain"] == b"rip"
+    finally:
+        store.close()
+    assert path.stat().st_size < len(kel)
+
+
+def test_a_little_free_space_does_not_compact_the_store_on_every_open(tmp_path):
+    path = tmp_path / "registrar.sqlite3"
+    store = RegistrarStore(path)
+    try:
+        for index in range(64):
+            _publish(store, f"r{index}", bytes([index]) * 4096)
+    finally:
+        store.close()
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM heads WHERE registry='r0'")
+    with sqlite3.connect(path) as db:
+        free = db.execute("PRAGMA freelist_count").fetchone()[0]
+    assert free > 0
+    RegistrarStore(path).close()
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA freelist_count").fetchone()[0] == free
+
+
 def test_a_subscription_starts_full_then_carries_only_changes(store):
     _publish(store, "r1", b"a")
     _publish(store, "r2", b"b")
