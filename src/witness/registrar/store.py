@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import logging
 import os
 import sqlite3
 import threading
@@ -14,6 +15,8 @@ import fiki
 
 from ..errors import (RegistrarFork, RegistrarFull, RegistrarInstance, RegistrarNoSubscription,
                       RegistrarQuota, RegistrarReplay, RegistrarStale)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -93,12 +96,28 @@ class RegistrarStore:
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('change', 0)")
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('seed', ?)",
                              (fiki.Key.generate().seed,))
-            held_kel = "kel" in {row[1] for row in self._db.execute("PRAGMA table_info(heads)")}
-            if held_kel:
+            dropped = "kel" in {row[1] for row in self._db.execute("PRAGMA table_info(heads)")}
+            if dropped:
                 # Every head used to carry its issuer's whole KEL, which nothing reads (@23vjzsf0).
                 self._db.execute("ALTER TABLE heads DROP COLUMN kel")
-        if held_kel:
-            self._db.execute("VACUUM")  # once, to give back what the dropped KEL held
+        self._compact(real, dropped)
+
+    def _compact(self, path: Path, dropped: bool) -> None:
+        """Give back the space a dropped KEL held, never at the cost of opening.
+
+        The drop commits before the compaction runs, so one that failed then is retried at a
+        later open once the file is at least half free; a smaller remainder stays held. A
+        compaction only returns space, so a full disk is logged, not raised.
+        """
+        free, = self._db.execute("PRAGMA freelist_count").fetchone()
+        pages, = self._db.execute("PRAGMA page_count").fetchone()
+        if not (dropped or 2 * free >= pages):
+            return
+        try:
+            self._db.execute("VACUUM")
+        except sqlite3.OperationalError as failure:
+            logger.warning("The Registrar store %s was not compacted (%s); a later open tries "
+                           "again.", path, failure)
 
     @contextmanager
     def _tx(self):
