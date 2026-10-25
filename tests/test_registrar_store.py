@@ -108,6 +108,40 @@ def test_dropping_a_kel_smaller_than_the_rest_still_compacts(tmp_path):
         assert db.execute("PRAGMA freelist_count").fetchone()[0] == 0
 
 
+class _VacuumFails(sqlite3.Connection):
+    def execute(self, sql, *args):
+        if sql == "VACUUM":
+            raise sqlite3.OperationalError("database or disk is full")
+        return super().execute(sql, *args)
+
+
+def test_a_compaction_that_fails_does_not_stop_the_store_opening(tmp_path, monkeypatch, caplog):
+    """Compaction only gives space back. A full disk must not keep the Registrar from starting
+    over heads that are intact; the next open tries again."""
+    path = tmp_path / "registrar.sqlite3"
+    kel = b"k" * (256 * 1024)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE heads (registry TEXT PRIMARY KEY, issuer TEXT NOT NULL, "
+                   "digest TEXT NOT NULL, chain BLOB NOT NULL, kel BLOB NOT NULL, "
+                   "changed INTEGER NOT NULL)")
+        for index in range(16):
+            db.execute("INSERT INTO heads VALUES (?, 'EIssuer', ?, ?, ?, ?)",
+                       (f"r{index}", f"d{index}", b"rip", kel, index + 1))
+    connect = sqlite3.connect
+    with monkeypatch.context() as patch:
+        patch.setattr("witness.registrar.store.sqlite3.connect",
+                      lambda *args, **kw: connect(*args, factory=_VacuumFails, **kw))
+        store = RegistrarStore(path)
+        try:
+            assert store.head("r3")["chain"] == b"rip"
+        finally:
+            store.close()
+    assert "not compacted" in caplog.text
+    assert path.stat().st_size > 16 * len(kel)
+    RegistrarStore(path).close()
+    assert path.stat().st_size < len(kel)
+
+
 def test_a_little_free_space_does_not_compact_the_store_on_every_open(tmp_path):
     path = tmp_path / "registrar.sqlite3"
     store = RegistrarStore(path)
