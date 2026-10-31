@@ -352,3 +352,54 @@ def test_the_pinned_keripy_carries_the_decl_stores():
         assert hasattr(db, "dans"), "the decl authorization index is gone"
     finally:
         db.close(clear=True)
+
+
+@pytest.mark.fork_only_keripy
+def test_a_witness_receipt_reads_the_same_whatever_the_kel_length(monkeypatch):
+    """Processing one witness receipt reads as many key events at sn 50 as at sn 10.
+
+    keripy's Kevery.fetchWitnessState walked back from the receipted sn to the last
+    establishment event, and processReceipt calls it for every receipt couple, so an
+    identifier that anchors with interaction events cost its witnesses more per receipt the
+    longer it went without rotating (imbu-kel-growth measured 0.41 s rising to 0.74 s of
+    witness CPU per issuance). The pin carries bakobo/keripy bf19d1c3, which reads the
+    witness list off key state instead.
+
+    Marked fork_only_keripy (@enyp5khx): against upstream keripy this is EXPECTED to fail
+    until WebOfTrust takes the change, and the drift canary reads that as "still unmerged".
+    """
+    from keri.app import habbing
+    from keri.core import Salter, receipt
+
+    signers = Salter(raw=b"0123456789abcdef").signers(
+        count=2, path="wit", transferable=False, temp=True)
+    with habbing.openHby(name="rctbound" + os.urandom(4).hex(), base="test",
+                         salt=Salter(raw=b"0123456789abcdef").qb64) as hby:
+        hab = hby.makeHab(name="controller", wits=[s.verfer.qb64 for s in signers])
+        count = [0]
+        original = hby.db.evts.get
+
+        def counting(*pa, **kwa):
+            count[0] += 1
+            return original(*pa, **kwa)
+
+        monkeypatch.setattr(hby.db.evts, "get", counting)
+
+        def receiptNewest():
+            hab.interact()
+            serder = hab.kever.serder
+            rct = receipt(pre=hab.pre, sn=serder.sn, said=serder.said)
+            count[0] = 0
+            hab.kvy.processReceipt(serder=rct, cigars=[signers[0].sign(ser=serder.raw)],
+                                   wigers=[], tsgs=[])
+            assert len(hby.db.wigs.get(keys=(hab.pre, serder.said))) == 1
+            return count[0]
+
+        for _ in range(9):
+            receiptNewest()
+        early = receiptNewest()
+        for _ in range(39):
+            receiptNewest()
+        late = receiptNewest()
+        assert hab.kever.sn == 50
+        assert late == early, f"a receipt read {early} key events at sn 10 and {late} at sn 50"
