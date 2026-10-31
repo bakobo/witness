@@ -362,7 +362,7 @@ def test_a_witness_receipt_reads_the_same_whatever_the_kel_length(monkeypatch):
     establishment event, and processReceipt calls it for every receipt couple, so an
     identifier that anchors with interaction events cost its witnesses more per receipt the
     longer it went without rotating (imbu-kel-growth measured 0.41 s rising to 0.74 s of
-    witness CPU per issuance). The pin carries bakobo/keripy aab12091, which reads the
+    witness CPU per issuance). The pin carries bakobo/keripy f891ea3f, which reads the
     witness list off key state instead.
 
     Marked fork_only_keripy (@enyp5khx): against upstream keripy this is EXPECTED to fail
