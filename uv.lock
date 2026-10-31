@@ -467,7 +467,7 @@ wheels = [
 [[package]]
 name = "keri"
 version = "2.1.0.dev1"
-source = { git = "https://github.com/bakobo/keripy?rev=bf19d1c39550f18b9381216ea1e15efff1ba569a#bf19d1c39550f18b9381216ea1e15efff1ba569a" }
+source = { git = "https://github.com/bakobo/keripy?rev=aab120910ac4145e2485f3c5d7dac6654207ae85#aab120910ac4145e2485f3c5d7dac6654207ae85" }
 dependencies = [
     { name = "apispec" },
     { name = "blake3" },
@@ -1094,7 +1094,7 @@ requires-dist = [
     { name = "falcon" },
     { name = "fiki", git = "https://github.com/bakobo/fiki?subdirectory=py&rev=c2a9cd6fd7979092650f3196a70fcfbbcf4da74d" },
     { name = "http-sfv", specifier = ">=0.9" },
-    { name = "keri", git = "https://github.com/bakobo/keripy?rev=bf19d1c39550f18b9381216ea1e15efff1ba569a" },
+    { name = "keri", git = "https://github.com/bakobo/keripy?rev=aab120910ac4145e2485f3c5d7dac6654207ae85" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
     { name = "waitress" },
