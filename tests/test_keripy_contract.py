@@ -403,3 +403,38 @@ def test_a_witness_receipt_reads_the_same_whatever_the_kel_length(monkeypatch):
         late = receiptNewest()
         assert hab.kever.sn == 50
         assert late == early, f"a receipt read {early} key events at sn 10 and {late} at sn 50"
+
+
+@pytest.mark.fork_only_keripy
+def test_a_kel_query_serves_the_log_from_a_first_seen_ordinal():
+    """GET /query?typ=kel&fn=<n> answers with the events first seen at ordinal n or later.
+
+    heti refreshes a contact it holds by asking each witness only for what it first saw since
+    (heti @6nwugfvw), because a witness building the whole KEL for every refresh grew to 8.4 GB
+    past 22,000 events in keri-bench's bench-targets-2. A witness whose keripy ignores fn
+    answers with the whole KEL, which heti still accepts, so this pins the cheap path and not
+    correctness. The pin carries bakobo/keripy f84dd768 (feat/query-kel-fn on witness-stack).
+
+    Marked fork_only_keripy (@enyp5khx): against upstream keripy this is EXPECTED to fail
+    until WebOfTrust takes the change, and the drift canary reads that as "still unmerged".
+    """
+    import falcon
+    from falcon import testing
+    from keri.app import habbing, indirecting
+    from keri.core import Salter
+
+    with habbing.openHby(name="kelfn" + os.urandom(4).hex(), base="test",
+                         salt=Salter(raw=b"0123456789abcdef").qb64) as hby:
+        hab = hby.makeHab(name="controller", transferable=True)
+        for _ in range(3):
+            hab.interact()
+        app = falcon.App()
+        app.add_route("/query", indirecting.QueryEnd(hab, reger=None))
+        client = testing.TestClient(app)
+        expected = b"".join(bytes(message) for message in hby.db.clonePreIter(
+            pre=hab.pre, fn=2, version=hab.kever.serder.pvrsn))
+
+        answer = client.simulate_get("/query", params={"typ": "kel", "pre": hab.pre, "fn": 2})
+
+        assert answer.status_code == 200
+        assert answer.content == expected
