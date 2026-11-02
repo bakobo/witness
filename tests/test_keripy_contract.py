@@ -362,7 +362,7 @@ def test_a_witness_receipt_reads_the_same_whatever_the_kel_length(monkeypatch):
     establishment event, and processReceipt calls it for every receipt couple, so an
     identifier that anchors with interaction events cost its witnesses more per receipt the
     longer it went without rotating (imbu-kel-growth measured 0.41 s rising to 0.74 s of
-    witness CPU per issuance). The pin carries bakobo/keripy f891ea3f, which reads the
+    witness CPU per issuance). The pin carries bakobo/keripy f84dd768, which reads the
     witness list off key state instead.
 
     Marked fork_only_keripy (@enyp5khx): against upstream keripy this is EXPECTED to fail
@@ -403,3 +403,94 @@ def test_a_witness_receipt_reads_the_same_whatever_the_kel_length(monkeypatch):
         late = receiptNewest()
         assert hab.kever.sn == 50
         assert late == early, f"a receipt read {early} key events at sn 10 and {late} at sn 50"
+
+
+@pytest.mark.fork_only_keripy
+def test_a_kel_query_serves_the_log_from_a_first_seen_ordinal():
+    """GET /query?typ=kel&fn=<n> answers with the events first seen at ordinal n or later.
+
+    heti refreshes a contact it holds by asking each witness only for what it first saw since
+    (heti @6nwugfvw), because a witness building the whole KEL for every refresh grew to 8.4 GB
+    past 22,000 events in keri-bench's bench-targets-2. A witness whose keripy ignores fn
+    answers with the whole KEL, which heti still accepts, so this pins the cheap path and not
+    correctness. The pin carries bakobo/keripy f84dd768 (feat/query-kel-fn on witness-stack).
+
+    Marked fork_only_keripy (@enyp5khx): against upstream keripy this is EXPECTED to fail
+    until WebOfTrust takes the change, and the drift canary reads that as "still unmerged".
+    """
+    import falcon
+    from falcon import testing
+    from keri.app import habbing, indirecting
+    from keri.core import Salter
+
+    with habbing.openHby(name="kelfn" + os.urandom(4).hex(), base="test",
+                         salt=Salter(raw=b"0123456789abcdef").qb64) as hby:
+        hab = hby.makeHab(name="controller", transferable=True)
+        for _ in range(3):
+            hab.interact()
+        app = falcon.App()
+        app.add_route("/query", indirecting.QueryEnd(hab, reger=None))
+        client = testing.TestClient(app)
+        expected = b"".join(bytes(message) for message in hby.db.clonePreIter(
+            pre=hab.pre, fn=2, version=hab.kever.serder.pvrsn))
+
+        answer = client.simulate_get("/query", params={"typ": "kel", "pre": hab.pre, "fn": 2})
+
+        assert answer.status_code == 200
+        assert answer.content == expected
+
+
+@pytest.mark.fork_only_keripy
+def test_a_kel_query_from_a_first_seen_ordinal_delivers_a_recovery_below_the_head():
+    """fn follows first-seen order, which is not sequence order once a recovery supersedes.
+
+    Three interactions are first seen at ordinals 1-3; a recovery rotation at sn 2 is first
+    seen at ordinal 4. Asked from ordinal 4 the answer is that rotation alone, which a query
+    by sequence number from the old head (sn 3) never returns. That difference is why heti
+    asks by fn (@6nwugfvw), and asking by both is refused.
+    """
+    import falcon
+    from falcon import testing
+    from keri.app import habbing, indirecting
+    from keri.core import Salter, eventing, serdering
+    from keri.kering import Kinds
+
+    with habbing.openHby(name="kelrec" + os.urandom(4).hex(), base="test",
+                         salt=Salter(raw=b"0123456789abcdef").qb64) as hby:
+        hab = hby.makeHab(name="controller", transferable=True)
+        for _ in range(3):
+            hab.interact()
+        prior = hby.db.kels.getLast(keys=hab.pre, on=1)
+        kever = hab.kever
+        verfers, digers = hab.mgr.rotate(pre=hab.pre, ncount=len(kever.ndigers), temp=hab.temp,
+                                         erase=False)
+        recovery = eventing.rotate(pre=hab.pre, keys=[v.qb64 for v in verfers], dig=prior, sn=2,
+                                   isith=kever.ntholder.sith, nsith=kever.ntholder.sith,
+                                   ndigs=[d.qb64 for d in digers], toad=0, wits=[],
+                                   kind=Kinds.json)
+        hab.kvy.processEvent(serder=recovery,
+                             sigers=hab.sign(ser=recovery.raw, verfers=verfers, rotated=True))
+        assert (hab.kever.sn, hab.kever.serder.said) == (2, recovery.said), "the recovery took"
+
+        app = falcon.App()
+        app.add_route("/query", indirecting.QueryEnd(hab, reger=None))
+        client = testing.TestClient(app)
+
+        def events(answer):
+            stream, said = bytearray(answer.content), []
+            while stream:
+                serder = serdering.SerderKERI(raw=stream)
+                said.append((serder.sn, serder.said))
+                del stream[:serder.size]
+                while stream and stream[0] != 0x7b:
+                    del stream[:1]
+            return said
+
+        from_fn = client.simulate_get("/query", params={"typ": "kel", "pre": hab.pre, "fn": 4})
+        from_sn = client.simulate_get("/query", params={"typ": "kel", "pre": hab.pre, "sn": 3})
+        both = client.simulate_get("/query",
+                                   params={"typ": "kel", "pre": hab.pre, "fn": 4, "sn": 3})
+
+        assert events(from_fn) == [(2, recovery.said)]
+        assert recovery.said not in [said for _, said in events(from_sn)]
+        assert both.status_code == 400
