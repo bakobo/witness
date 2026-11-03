@@ -14,10 +14,11 @@ import fiki
 import pytest
 
 from witness.registrar import batcher as batching
-from witness.registrar.batcher import Batcher
+from witness.registrar.batcher import Batcher, HttpTransport
 from witness.registrar.store import Batch, RegistrarStore
 
 from test_registrar_app import NONCE, SUBSCRIPTION, _signed, client, publisher  # noqa: F401
+from test_registrar_batcher import LOOPBACK, _Sink, sink  # noqa: F401
 
 
 class Recorder:
@@ -222,6 +223,9 @@ def test_pages_are_sent_only_while_the_delivery_deadline_lasts(store):
     class Slow(Recorder):
         timeout = 0.0
 
+        def send(self, url, body, headers, *, deadline=None):
+            super().send(url, body, headers)
+
     _fill(store, 300)
     store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000", pages=65536)
     transport = Slow()
@@ -266,3 +270,42 @@ def test_a_page_size_past_the_largest_storable_is_refused_by_code(client, pages)
                      {"callback": "http://127.0.0.1:9000/batch", "nonce": NONCE,
                       "pages": pages})
     assert (answer.status_code, answer.json["code"]) == (400, "e.input.format.registrar.f")
+
+
+def test_every_page_of_a_delivery_is_sent_under_the_one_deadline(store):
+    """Copilot on #45: the transport started a fresh timeout for every page, so K pages could each
+    run a whole timeout. The batch's one deadline is passed to every send instead."""
+
+    class Timed(Recorder):
+        timeout = 30.0
+
+        def __init__(self):
+            super().__init__()
+            self.deadlines = []
+
+        def send(self, url, body, headers, *, deadline=None):
+            self.deadlines.append(deadline)
+            super().send(url, body, headers)
+
+    _fill(store, 300)
+    store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000", pages=65536)
+    transport = Timed()
+    assert Batcher(store=store, transport=transport, window=60, clock=lambda: 0.0).tick() == 1
+    assert len(transport.deadlines) > 1
+    assert len(set(transport.deadlines)) == 1 and transport.deadlines[0] is not None
+
+
+def test_the_http_transport_gives_up_at_a_deadline_it_is_handed(sink):
+    """A send handed a deadline already past does not start a fresh timeout of its own."""
+    import time as clock
+
+    started = clock.monotonic()
+    with pytest.raises(TimeoutError):
+        HttpTransport(timeout=5, policy=LOOPBACK).send(sink, b"{}", {},
+                                                       deadline=clock.monotonic() - 1)
+    assert clock.monotonic() - started < 1
+
+
+def test_without_a_deadline_the_http_transport_keeps_its_own_timeout(sink):
+    HttpTransport(timeout=5, policy=LOOPBACK).send(sink, b"{}", {})
+    assert _Sink.received
