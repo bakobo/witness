@@ -41,13 +41,17 @@ class Batch:
     subscription: str
     """The nonce the subscriber chose, which it checks every batch against (@jpag4sof)."""
 
+    pages: int | None = None
+    """The largest body the subscriber reads, if it declared one: a larger batch is sent to it in
+    pages under this number (@9665wt3d). ``None`` is a subscriber that predates pages."""
+
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS heads (registry TEXT PRIMARY KEY, issuer TEXT NOT NULL, "
     "digest TEXT NOT NULL, chain BLOB NOT NULL, changed INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS subscribers (aid TEXT PRIMARY KEY, callback TEXT NOT NULL, "
     "number INTEGER NOT NULL, seen INTEGER NOT NULL, full INTEGER NOT NULL, "
-    "nonce TEXT NOT NULL)",
+    "nonce TEXT NOT NULL, pages INTEGER)",
     "CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value BLOB NOT NULL)",
     "CREATE TABLE IF NOT EXISTS sightings (aid TEXT NOT NULL, created INTEGER NOT NULL, "
     "signature BLOB NOT NULL, PRIMARY KEY (aid, created, signature))",
@@ -96,6 +100,10 @@ class RegistrarStore:
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('change', 0)")
             self._db.execute("INSERT OR IGNORE INTO meta VALUES ('seed', ?)",
                              (fiki.Key.generate().seed,))
+            if "pages" not in {row[1] for row in self._db.execute(
+                    "PRAGMA table_info(subscribers)")}:
+                # A store from before @9665wt3d: its subscribers declared no page size.
+                self._db.execute("ALTER TABLE subscribers ADD COLUMN pages INTEGER")
             dropped = "kel" in {row[1] for row in self._db.execute("PRAGMA table_info(heads)")}
             if dropped:
                 # Every head used to carry its issuer's whole KEL, which nothing reads (@23vjzsf0).
@@ -216,8 +224,8 @@ class RegistrarStore:
                 "AND created >= ?", (aid, sighting.created, sighting.signature,
                                      sighting.now - sighting.keep)).fetchone() is not None
 
-    def subscribe(self, aid: str, callback: str, nonce: str, *, limit: int | None = None,
-                  sighting: Sighting | None = None) -> None:
+    def subscribe(self, aid: str, callback: str, nonce: str, *, pages: int | None = None,
+                  limit: int | None = None, sighting: Sighting | None = None) -> None:
         """Subscribe ``aid`` under ``nonce``, or update its callback and nonce without disturbing
         its sequence. Every batch composed for the subscription carries the nonce.
 
@@ -225,19 +233,21 @@ class RegistrarStore:
         moving it to a new callback, continues the sequence, so a replayed or retried request
         cannot make a subscriber's numbering go backwards. A subscription's identity is its AID,
         so each AID has at most one; ``limit`` caps how many AIDs may subscribe at all.
+        ``pages`` is the largest body the subscriber reads, if it declared one (@9665wt3d); a
+        repeat states it afresh, so a subscriber that stops declaring it is sent whole batches.
         """
         with self._tx():
             self._record(aid, sighting)
             if self._db.execute("SELECT 1 FROM subscribers WHERE aid=?", (aid,)).fetchone():
-                self._db.execute("UPDATE subscribers SET callback=?, nonce=? WHERE aid=?",
-                                 (callback, nonce, aid))
+                self._db.execute("UPDATE subscribers SET callback=?, nonce=?, pages=? "
+                                 "WHERE aid=?", (callback, nonce, pages, aid))
                 return
             count, = self._db.execute("SELECT COUNT(*) FROM subscribers").fetchone()
             if limit is not None and count >= limit:
                 raise RegistrarFull(f"This Registrar already has {count} subscriptions, its "
                                     "limit.", args=[count])
-            self._db.execute("INSERT INTO subscribers VALUES (?, ?, 0, 0, 1, ?)",
-                             (aid, callback, nonce))
+            self._db.execute("INSERT INTO subscribers VALUES (?, ?, 0, 0, 1, ?, ?)",
+                             (aid, callback, nonce, pages))
 
     def unsubscribe(self, aid: str, *, sighting: Sighting | None = None) -> bool:
         """End ``aid``'s subscription. With a ``sighting``, a missing subscription is refused
@@ -282,11 +292,11 @@ class RegistrarStore:
         a batch sees a gap rather than a silently skipped window (@3m2eys6w).
         """
         with self._tx():
-            row = self._db.execute("SELECT number, seen, full, nonce FROM subscribers "
+            row = self._db.execute("SELECT number, seen, full, nonce, pages FROM subscribers "
                                    "WHERE aid=?", (aid,)).fetchone()
             if row is None:
                 raise RegistrarNoSubscription(f"{aid} has no subscription here.", args=[aid])
-            number, seen, full, nonce = row
+            number, seen, full, nonce, pages = row
             change = self._change()
             rows = self._db.execute(
                 "SELECT registry, issuer, digest, chain FROM heads"
@@ -294,7 +304,7 @@ class RegistrarStore:
                 () if full else (seen,)).fetchall()
             self._db.execute("UPDATE subscribers SET number=?, seen=?, full=0 WHERE aid=?",
                              (number + 1, change, aid))
-        return Batch(number + 1, bool(full), tuple(_head(row) for row in rows), nonce)
+        return Batch(number + 1, bool(full), tuple(_head(row) for row in rows), nonce, pages)
 
 
 def _head(row) -> dict:

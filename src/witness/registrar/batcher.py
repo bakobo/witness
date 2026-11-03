@@ -215,16 +215,21 @@ class HttpTransport:
         with self._threads_lock:
             self._threads.setdefault(url, []).append(thread)
 
-    def send(self, url: str, body: bytes, headers: dict) -> None:
+    def send(self, url: str, body: bytes, headers: dict, *,
+             deadline: float | None = None) -> None:
+        """POST one body; by ``deadline`` (a ``time.monotonic`` instant) when one is given, as
+        for every page of one paged batch, else within this transport's own timeout."""
         self._reserve(url)
         try:
-            self._send(url, body, headers)
+            self._send(url, body, headers, deadline)
         finally:
             with self._threads_lock:  # any thread it left behind is tracked by now
                 self._sending.discard(url)
 
-    def _send(self, url: str, body: bytes, headers: dict) -> None:
-        deadline = time.monotonic() + self.timeout
+    def _send(self, url: str, body: bytes, headers: dict, deadline: float | None) -> None:
+        deadline = time.monotonic() + self.timeout if deadline is None else deadline
+        if deadline <= time.monotonic():
+            raise TimeoutError(f"The delivery deadline passed before {url} was asked.")
         address = _within(deadline, lambda: self.policy.check(url), f"resolving {url}",
                           track=lambda thread: self._track(url, thread))
         parts = urlsplit(url)
@@ -283,18 +288,76 @@ def _within(deadline: float, work, what: str, abandon=lambda: None, track=lambda
     return outcome["value"]
 
 
-def encode(batch, *, registrar: str, window_end: float) -> bytes:
-    """A batch as JSON bytes: the Registrar's AID, the subscription's nonce, the number, the
-    window end and every head it carries."""
-    return json.dumps({
+PAGE_CEILING = 4 * 1024 * 1024
+"""The largest page this Registrar sends, whatever a subscriber declared (@9665wt3d)."""
+
+PAGE_FLOOR = 4096
+"""The smallest page size a subscription may declare: room for a batch's envelope and a head."""
+
+PAGE_LARGEST = 2**31 - 1
+"""The largest page size a subscription may declare, well inside what the store can hold."""
+
+_ROOM = len(json.dumps({"page": 10**9, "pages": 10**9}))
+"""Bytes a page's own two fields can add to its envelope, reserved before heads are placed."""
+
+
+def _document(batch, registrar: str, window_end: float, heads, **page) -> dict:
+    return {
         "registrar": registrar,
         "subscription": batch.subscription,
         "number": batch.number,
         "full": batch.full,
         "window_end": datetime.fromtimestamp(window_end, timezone.utc).isoformat(),
-        "heads": [{**head, "chain": base64.b64encode(head["chain"]).decode()}
-                  for head in batch.heads],
-    }, sort_keys=True).encode()
+        "heads": heads,
+        **page,
+    }
+
+
+def _wire(head: dict) -> dict:
+    return {**head, "chain": base64.b64encode(head["chain"]).decode()}
+
+
+def encode(batch, *, registrar: str, window_end: float) -> bytes:
+    """A batch as JSON bytes: the Registrar's AID, the subscription's nonce, the number, the
+    window end and every head it carries."""
+    return json.dumps(_document(batch, registrar, window_end,
+                                [_wire(head) for head in batch.heads]), sort_keys=True).encode()
+
+
+def encode_pages(batch, *, registrar: str, window_end: float) -> list[bytes]:
+    """A batch as the bodies it is sent in: one, unless its subscriber declared a page size and
+    the batch is larger than it (@9665wt3d).
+
+    Then its heads, in registry order, are split into pages of at most the declared size, or
+    :data:`PAGE_CEILING` if that is smaller, each carrying the batch's own fields plus ``page``
+    (1..K) and ``pages`` (K). A page holds at least one head, so a head larger than a page
+    travels alone on its own page.
+    """
+    whole = encode(batch, registrar=registrar, window_end=window_end)
+    if batch.pages is None:
+        return [whole]
+    limit = min(batch.pages, PAGE_CEILING)
+    if len(whole) <= limit:
+        return [whole]
+    empty = len(json.dumps(_document(batch, registrar, window_end, []), sort_keys=True)) + _ROOM
+    groups, current, size = [], [], empty
+    for head in (_wire(head) for head in batch.heads):
+        cost = len(json.dumps(head, sort_keys=True)) + 2  # its separator in the list
+        if current and size + cost > limit:
+            groups.append(current)
+            current, size = [], empty
+        current.append(head)
+        size += cost
+    groups.append(current)
+    for heads in groups:
+        if len(heads) == 1 and empty + len(json.dumps(heads[0], sort_keys=True)) > batch.pages:
+            # Sent as it was before pages, alone; the subscriber cannot read it (codex on #45).
+            logger.warning("The head of registry %s is larger than the %d bytes its subscriber "
+                           "reads, so that page cannot be read.", heads[0]["registry"],
+                           batch.pages)
+    return [json.dumps(_document(batch, registrar, window_end, heads, page=index,
+                                 pages=len(groups)), sort_keys=True).encode()
+            for index, heads in enumerate(groups, start=1)]
 
 
 class Batcher:
@@ -311,22 +374,42 @@ class Batcher:
         self.store, self.transport, self.window, self.clock = store, transport, window, clock
         self.key = store.key()
 
-    def _prepare(self, now: float) -> list[tuple[str, bytes, dict]]:
+    def _prepare(self, now: float) -> list[tuple[str, list[tuple[bytes, dict]]]]:
         prepared = []
         for aid, callback in self.store.subscribers():
             try:
-                body = encode(self.store.compose(aid), registrar=self.key.aid, window_end=now)
+                bodies = encode_pages(self.store.compose(aid), registrar=self.key.aid,
+                                      window_end=now)
             except Exception as failure:  # e.g. unsubscribed since the list was read
                 logger.warning("No batch for %s this window: %s", aid, failure)
                 continue
-            headers = fiki.sign_request(key=self.key, method="POST", url=callback, body=body)
-            prepared.append((callback, body, headers))
+            # Each page is signed on its own, as a batch is (@9665wt3d).
+            prepared.append((callback, [
+                (body, fiki.sign_request(key=self.key, method="POST", url=callback, body=body))
+                for body in bodies]))
         return prepared
 
     def _deliver(self, delivery) -> bool:
-        callback, body, headers = delivery
+        """Send one batch's pages in order while its delivery deadline lasts; the first that fails
+        ends it, and the number is spent, so the Observer sees a gap (@9665wt3d).
+
+        A batch sent whole calls ``transport.send(url, body, headers)``, the seam as it was. Only
+        a delivery of several pages also passes ``deadline=``, so a transport that serves a
+        subscriber declaring a page size must accept it, as :class:`HttpTransport` does.
+        """
+        callback, pages = delivery
+        timeout = getattr(self.transport, "timeout", None)
+        deadline = None if timeout is None else time.monotonic() + timeout
         try:
-            self.transport.send(callback, body, headers)
+            for index, (body, headers) in enumerate(pages):
+                if index and deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(f"the delivery deadline passed after {index} of "
+                                       f"{len(pages)} pages")
+                if deadline is None or len(pages) == 1:
+                    # A batch sent whole uses the seam exactly as before pages (codex on #45).
+                    self.transport.send(callback, body, headers)
+                else:  # every page under the batch's one deadline (Copilot on #45)
+                    self.transport.send(callback, body, headers, deadline=deadline)
         except Exception as failure:  # the number is spent; the Observer will see a gap
             logger.warning("Batch to %s was not delivered: %s", callback, failure)
             return False
