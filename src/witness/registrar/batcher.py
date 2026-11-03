@@ -215,16 +215,21 @@ class HttpTransport:
         with self._threads_lock:
             self._threads.setdefault(url, []).append(thread)
 
-    def send(self, url: str, body: bytes, headers: dict) -> None:
+    def send(self, url: str, body: bytes, headers: dict, *,
+             deadline: float | None = None) -> None:
+        """POST one body; by ``deadline`` (a ``time.monotonic`` instant) when one is given, as
+        for every page of one paged batch, else within this transport's own timeout."""
         self._reserve(url)
         try:
-            self._send(url, body, headers)
+            self._send(url, body, headers, deadline)
         finally:
             with self._threads_lock:  # any thread it left behind is tracked by now
                 self._sending.discard(url)
 
-    def _send(self, url: str, body: bytes, headers: dict) -> None:
-        deadline = time.monotonic() + self.timeout
+    def _send(self, url: str, body: bytes, headers: dict, deadline: float | None) -> None:
+        deadline = time.monotonic() + self.timeout if deadline is None else deadline
+        if deadline <= time.monotonic():
+            raise TimeoutError(f"The delivery deadline passed before {url} was asked.")
         address = _within(deadline, lambda: self.policy.check(url), f"resolving {url}",
                           track=lambda thread: self._track(url, thread))
         parts = urlsplit(url)
@@ -395,7 +400,10 @@ class Batcher:
                 if index and deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError(f"the delivery deadline passed after {index} of "
                                        f"{len(pages)} pages")
-                self.transport.send(callback, body, headers)
+                if deadline is None:
+                    self.transport.send(callback, body, headers)
+                else:  # every page under the batch's one deadline (Copilot on #45)
+                    self.transport.send(callback, body, headers, deadline=deadline)
         except Exception as failure:  # the number is spent; the Observer will see a gap
             logger.warning("Batch to %s was not delivered: %s", callback, failure)
             return False
