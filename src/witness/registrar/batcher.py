@@ -289,6 +289,9 @@ PAGE_CEILING = 4 * 1024 * 1024
 PAGE_FLOOR = 4096
 """The smallest page size a subscription may declare: room for a batch's envelope and a head."""
 
+PAGE_LARGEST = 2**31 - 1
+"""The largest page size a subscription may declare, well inside what the store can hold."""
+
 _ROOM = len(json.dumps({"page": 10**9, "pages": 10**9}))
 """Bytes a page's own two fields can add to its envelope, reserved before heads are placed."""
 
@@ -341,6 +344,12 @@ def encode_pages(batch, *, registrar: str, window_end: float) -> list[bytes]:
         current.append(head)
         size += cost
     groups.append(current)
+    for heads in groups:
+        if len(heads) == 1 and empty + len(json.dumps(heads[0], sort_keys=True)) > batch.pages:
+            # Sent as it was before pages, alone; the subscriber cannot read it (codex on #45).
+            logger.warning("The head of registry %s is larger than the %d bytes its subscriber "
+                           "reads, so that page cannot be read.", heads[0]["registry"],
+                           batch.pages)
     return [json.dumps(_document(batch, registrar, window_end, heads, page=index,
                                  pages=len(groups)), sort_keys=True).encode()
             for index, heads in enumerate(groups, start=1)]

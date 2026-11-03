@@ -26,7 +26,7 @@ from ..app import PROBLEM_JSON, RequestIdMiddleware
 from ..errors import (RegistrarDenied, RegistrarInput, RegistrarPending, RegistrarReplay,
                       RegistrarResolverTimeout, RegistrarTooLarge, RegistrarUnauthenticated,
                       WitnessError)
-from .batcher import PAGE_FLOOR, CallbackPolicy, _within
+from .batcher import PAGE_FLOOR, PAGE_LARGEST, CallbackPolicy, _within
 from .store import Sighting
 
 MAX_BODY = 8 * 1024 * 1024
@@ -140,9 +140,9 @@ def _subscription(document: dict) -> tuple[str, str, int | None]:
         raise RegistrarInput(f"A subscription names one http(s) callback of at most {MAX_URL} "
                              "characters and a nonce of 16 to 64 base64url characters.")
     if "pages" in document and (isinstance(pages, bool) or not isinstance(pages, int)
-                                or pages < PAGE_FLOOR):
-        raise RegistrarInput(f"A subscription's page size is a whole number of bytes, at least "
-                             f"{PAGE_FLOOR}.")
+                                or not PAGE_FLOOR <= pages <= PAGE_LARGEST):
+        raise RegistrarInput(f"A subscription's page size is a whole number of bytes, from "
+                             f"{PAGE_FLOOR} to {PAGE_LARGEST}.")
     return callback, nonce, pages
 
 
