@@ -227,3 +227,42 @@ def test_pages_are_sent_only_while_the_delivery_deadline_lasts(store):
     transport = Slow()
     assert Batcher(store=store, transport=transport, window=5, clock=lambda: 0.0).tick() == 0
     assert len(transport.sent) == 1
+
+
+def test_a_head_past_the_ceiling_but_within_the_declared_size_travels_alone(store, monkeypatch):
+    """Codex on #45: the Registrar's ceiling is its own preference for page size, not a bound the
+    subscriber set, so a head larger than the ceiling but within what the subscriber reads goes
+    out alone rather than in a page the subscriber also could read but the Registrar would not."""
+    monkeypatch.setattr(batching, "PAGE_CEILING", 8192)
+    store.publish(registry="E00000", issuer="EIssuer", digest="d0", chain=b"x" * 20000)
+    store.publish(registry="E00001", issuer="EIssuer", digest="d1", chain=b"y" * 100)
+    store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000", pages=65536)
+    transport = Recorder()
+    Batcher(store=store, transport=transport, window=5, clock=lambda: 0.0).tick()
+    pages = [_verify(store, *sent) for sent in transport.sent]
+    assert [[head["registry"] for head in page["heads"]] for page in pages] == \
+        [["E00000"], ["E00001"]]
+    assert all(len(body) <= 65536 for _, body, _ in transport.sent)
+
+
+def test_a_head_larger_than_the_declared_size_is_sent_alone_and_named_in_the_log(
+        store, caplog):
+    """Nothing the Registrar can send lets that subscriber read it, so it is sent as it was before
+    pages, alone, and the log says which registry and how large."""
+    store.publish(registry="E00000", issuer="EIssuer", digest="d0", chain=b"x" * 100000)
+    store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000", pages=65536)
+    transport = Recorder()
+    with caplog.at_level("WARNING"):
+        Batcher(store=store, transport=transport, window=5, clock=lambda: 0.0).tick()
+    assert len(transport.sent) == 1
+    assert "E00000" in caplog.text and "65536" in caplog.text
+
+
+@pytest.mark.parametrize("pages", [2**31, 2**63, 10**30])
+def test_a_page_size_past_the_largest_storable_is_refused_by_code(client, pages):  # noqa: F811
+    """Codex on #45: an integer past SQLite's range reached the store and answered 500."""
+    app, store = client
+    answer = _signed(app, fiki.Key.generate(), "POST", SUBSCRIPTION,
+                     {"callback": "http://127.0.0.1:9000/batch", "nonce": NONCE,
+                      "pages": pages})
+    assert (answer.status_code, answer.json["code"]) == (400, "e.input.format.registrar.f")
