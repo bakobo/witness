@@ -26,7 +26,7 @@ from ..app import PROBLEM_JSON, RequestIdMiddleware
 from ..errors import (RegistrarDenied, RegistrarInput, RegistrarPending, RegistrarReplay,
                       RegistrarResolverTimeout, RegistrarTooLarge, RegistrarUnauthenticated,
                       WitnessError)
-from .batcher import CallbackPolicy, _within
+from .batcher import PAGE_FLOOR, CallbackPolicy, _within
 from .store import Sighting
 
 MAX_BODY = 8 * 1024 * 1024
@@ -129,16 +129,21 @@ def _is_http_url(text: str) -> bool:
 _NONCE = re.compile(r"[A-Za-z0-9_-]{16,64}")
 
 
-def _subscription(document: dict) -> tuple[str, str]:
-    """A subscription's callback and nonce; every batch for it will carry the nonce
-    (@jpag4sof)."""
-    callback, nonce = document.get("callback"), document.get("nonce")
-    if set(document) != {"callback", "nonce"} or not isinstance(callback, str) or \
+def _subscription(document: dict) -> tuple[str, str, int | None]:
+    """A subscription's callback, nonce and declared page size; every batch for it will carry
+    the nonce (@jpag4sof), and one larger than the page size is sent in pages (@9665wt3d)."""
+    callback, nonce, pages = (document.get("callback"), document.get("nonce"),
+                              document.get("pages"))
+    if set(document) - {"pages"} != {"callback", "nonce"} or not isinstance(callback, str) or \
             len(callback) > MAX_URL or not _is_http_url(callback) or \
             not isinstance(nonce, str) or not _NONCE.fullmatch(nonce):
         raise RegistrarInput(f"A subscription names one http(s) callback of at most {MAX_URL} "
                              "characters and a nonce of 16 to 64 base64url characters.")
-    return callback, nonce
+    if "pages" in document and (isinstance(pages, bool) or not isinstance(pages, int)
+                                or pages < PAGE_FLOOR):
+        raise RegistrarInput(f"A subscription's page size is a whole number of bytes, at least "
+                             f"{PAGE_FLOOR}.")
+    return callback, nonce, pages
 
 
 class _Resource:
@@ -250,13 +255,14 @@ class Subscription(_Resource):
         def act():
             body = _body(req)
             signer, now = _signer(req, body, self.max_age, clock=self.clock)
-            callback, nonce = _subscription(_object(body))
+            callback, nonce, pages = _subscription(_object(body))
             sighting = self._sighting(req, now)
             with self._only_copy(signer, sighting):
                 self._admit(callback)  # refused here too, not only at delivery
                 # The replay record and the subscription commit together, so a refused request
                 # leaves nothing behind and its retry is not mistaken for a replay.
-                self.store.subscribe(signer, callback, nonce, limit=self.max_subscriptions,
+                self.store.subscribe(signer, callback, nonce, pages=pages,
+                                     limit=self.max_subscriptions,
                                      sighting=sighting)
             return 200, {"subscriber": signer, "registrar": self.store.key().aid}
         self._answer(req, resp, act)

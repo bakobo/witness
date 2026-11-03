@@ -214,3 +214,16 @@ def test_the_chain_bytes_survive_paging(store):
     Batcher(store=store, transport=transport, window=5, clock=lambda: 0.0).tick()
     head, = _verify(store, *transport.sent[0])["heads"]
     assert base64.b64decode(head["chain"]) == b"\x00\xffrip"
+
+
+def test_pages_are_sent_only_while_the_delivery_deadline_lasts(store):
+    """The pages of one batch share its one delivery deadline rather than one each."""
+
+    class Slow(Recorder):
+        timeout = 0.0
+
+    _fill(store, 300)
+    store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000", pages=65536)
+    transport = Slow()
+    assert Batcher(store=store, transport=transport, window=5, clock=lambda: 0.0).tick() == 0
+    assert len(transport.sent) == 1
