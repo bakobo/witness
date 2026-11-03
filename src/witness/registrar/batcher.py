@@ -391,7 +391,12 @@ class Batcher:
 
     def _deliver(self, delivery) -> bool:
         """Send one batch's pages in order while its delivery deadline lasts; the first that fails
-        ends it, and the number is spent, so the Observer sees a gap (@9665wt3d)."""
+        ends it, and the number is spent, so the Observer sees a gap (@9665wt3d).
+
+        A batch sent whole calls ``transport.send(url, body, headers)``, the seam as it was. Only
+        a delivery of several pages also passes ``deadline=``, so a transport that serves a
+        subscriber declaring a page size must accept it, as :class:`HttpTransport` does.
+        """
         callback, pages = delivery
         timeout = getattr(self.transport, "timeout", None)
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -400,7 +405,8 @@ class Batcher:
                 if index and deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError(f"the delivery deadline passed after {index} of "
                                        f"{len(pages)} pages")
-                if deadline is None:
+                if deadline is None or len(pages) == 1:
+                    # A batch sent whole uses the seam exactly as before pages (codex on #45).
                     self.transport.send(callback, body, headers)
                 else:  # every page under the batch's one deadline (Copilot on #45)
                     self.transport.send(callback, body, headers, deadline=deadline)
