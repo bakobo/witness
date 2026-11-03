@@ -309,3 +309,23 @@ def test_the_http_transport_gives_up_at_a_deadline_it_is_handed(sink):
 def test_without_a_deadline_the_http_transport_keeps_its_own_timeout(sink):
     HttpTransport(timeout=5, policy=LOOPBACK).send(sink, b"{}", {})
     assert _Sink.received
+
+
+def test_a_single_body_delivery_keeps_the_three_argument_transport_seam(store):
+    """Codex on #45's fix pass: a transport written to the seam before pages, send(url, body,
+    headers), must keep working for every batch sent whole, which is every batch of a subscriber
+    that declared no page size; only a delivery of several pages needs the deadline."""
+
+    class Older:
+        timeout = 30.0
+
+        def __init__(self):
+            self.sent = []
+
+        def send(self, url, body, headers):
+            self.sent.append(body)
+
+    store.subscribe("EObserver", "http://127.0.0.1:1/a", "nonce-00000000000000")
+    transport = Older()
+    assert Batcher(store=store, transport=transport, window=60, clock=lambda: 0.0).tick() == 1
+    assert len(transport.sent) == 1
