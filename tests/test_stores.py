@@ -32,15 +32,24 @@ def test_the_variable_overrides_the_default():
 
 
 @pytest.mark.parametrize("value", ["", "big", "0", "-5", "1.5", "1e9", "٣", "9" * 19,
-                                   str(2 ** 63), "1" * 20])
+                                   str(2 ** 63), "1" * 20, str(2 ** 63 - 1),
+                                   str(stores.MAX_MAP_SIZE + 1)])
 def test_a_variable_that_is_not_a_usable_byte_count_is_refused(value):
     with pytest.raises(InvalidArguments) as caught:
         stores.map_size({stores.MAP_SIZE_ENV: value})
     assert stores.MAP_SIZE_ENV in str(caught.value)
 
 
-def test_the_largest_size_py_lmdb_takes_is_accepted():
-    assert stores.map_size({stores.MAP_SIZE_ENV: str(2 ** 63 - 1)}) == 2 ** 63 - 1
+def test_the_largest_size_accepted_is_one_lmdb_can_map(keripy_map_restored, tmp_path):
+    """py-lmdb takes up to 2**63 - 1, and LMDB then fails to map it with an uncoded MemoryError
+    (codex's hostile pass on #46). The bound is one a process can actually open."""
+    assert stores.map_size({stores.MAP_SIZE_ENV: str(stores.MAX_MAP_SIZE)}) == stores.MAX_MAP_SIZE
+    stores.apply(stores.MAX_MAP_SIZE)
+    store = dbing.LMDBer(name="probe", temp=False, headDirPath=str(tmp_path), reopen=True)
+    try:
+        assert store.env.info()["map_size"] == stores.MAX_MAP_SIZE
+    finally:
+        store.close(clear=True)
 
 
 def test_an_absurdly_long_variable_is_not_echoed_whole():
