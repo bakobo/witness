@@ -21,10 +21,13 @@ DEFAULT_MAP_SIZE = 16 * 1024 ** 3
 """16 GiB, heti's choice for an issuer's stores. On Linux a map is reserved address space and the
 file grows only as pages are written, so an idle witness pays nothing for it."""
 
-_LARGEST = 2 ** 63 - 1
-"""The largest map py-lmdb accepts; a larger one overflows before LMDB sees it."""
+MAX_MAP_SIZE = 2 ** 40
+"""1 TiB, the largest map accepted. py-lmdb takes up to 2**63 - 1, but LMDB reserves the whole map
+as address space when a store opens, and a size near that fails there with an uncoded MemoryError
+(codex on #46). A witness opens a handful of stores, so a terabyte each stays far inside the
+128 TiB a 64-bit Linux process can address, and far above what one witness will hold."""
 
-_DIGITS = len(str(_LARGEST))
+_DIGITS = len(str(MAX_MAP_SIZE))
 """So a longer value is refused here, by length, rather than converted first."""
 
 
@@ -35,11 +38,11 @@ def map_size(environ=os.environ) -> int:
         return DEFAULT_MAP_SIZE
     text = raw.strip()
     if (len(text) > _DIGITS or not text.isascii() or not text.isdigit()
-            or not 0 < int(text) <= _LARGEST):
+            or not 0 < int(text) <= MAX_MAP_SIZE):
         shown = raw if len(raw) <= 40 else raw[:40] + "…"
         raise InvalidArguments(
             f"{MAP_SIZE_ENV} is {shown!r}, which is not a byte count. Set it to a whole number of "
-            f"bytes from 1 to {_LARGEST}, or unset it for {DEFAULT_MAP_SIZE} (16 GiB).",
+            f"bytes from 1 to {MAX_MAP_SIZE} (1 TiB), or unset it for {DEFAULT_MAP_SIZE} (16 GiB).",
             args=[MAP_SIZE_ENV],
         )
     return int(text)

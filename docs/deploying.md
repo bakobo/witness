@@ -55,7 +55,7 @@ docker run -d --name witness $HARDENED \
     ghcr.io/bakobo/witness@sha256:<digest>
 ```
 
-`WITNESS_LMDB_MAP_SIZE`, in bytes, sets the ceiling every keripy store in the container is mapped at; it defaults to 16 GiB, where keripy's own is 100 MiB, which a witness for one busy issuer fills at about 40,000 events (`@8mzxgpds`). The map is reserved address space, not disk, and the file grows only as it is written. A witness that filled restarts with room once the variable is larger, since LMDB keeps nothing of the old ceiling. A value that is not a positive whole number refuses the start with `e.input.format.f`.
+`WITNESS_LMDB_MAP_SIZE`, in bytes, sets the ceiling every keripy store in the container is mapped at; it defaults to 16 GiB, where keripy's own is 100 MiB, which a witness for one busy issuer fills at about 40,000 events (`@8mzxgpds`). The map is reserved address space, not disk, and the file grows only as it is written. A witness that filled restarts with room once the variable is larger, since LMDB keeps nothing of the old ceiling. A value that is not a whole number from 1 to 1 TiB refuses the start with `e.input.format.f`.
 
 `WITNESS_OPERATORS` names who may read the six signed control-plane nouns; `witness get --key <key> --aid` prints an operator's AID. Leave it out and those nouns refuse everyone while health and identity keep answering. [Authentication](control-plane.md#authentication) has the rest.
 
