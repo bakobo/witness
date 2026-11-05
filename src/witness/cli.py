@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 
-from . import backup, config, get, landing, metrics, pool, runner, server, supervisor
+from . import backup, config, get, landing, metrics, pool, runner, server, stores, supervisor
 from .app import RequestCounter, make_app
 from .change import ChangeFeed
 from .changelog import change_path
@@ -30,6 +30,9 @@ def main(argv=None, *, stdin=None) -> int:
     ``stdin`` is a seam for ``landing``, the one subcommand that reads standard input.
     """
     subcommand, cfg = config.parse_args(argv)
+    # @8mzxgpds. Before any verb opens a keripy store, and in every process, so the runner, the
+    # control plane reading beside it and a backup all agree on the map.
+    stores.apply(stores.map_size())
     if subcommand == "landing":
         return landing.run(cfg, stdin=stdin)
     if subcommand == "get":
