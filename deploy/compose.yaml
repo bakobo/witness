@@ -38,7 +38,8 @@ services:
 
     # The LMDB mapping is file-backed and shared, so size for the database rather than the
     # interpreter, with headroom: a limit tight enough to force reclaim during a write burst
-    # throttles the witness instead of killing it. keripy's map ceiling is 100 MB.
+    # throttles the witness instead of killing it. The map ceiling is WITNESS_LMDB_MAP_SIZE, 16 GiB
+    # by default; it is reserved address space, and the file grows only as the witness writes.
     mem_limit: 512m
 
     # Loopback only, both of them. 5631 is the witness, reached by Caddy. 5633 is the control
@@ -63,6 +64,7 @@ services:
     # environment:
     #   - WITNESS_OPERATORS=<operator AID>[,<operator AID>...]
     #   - WITNESS_WATCHERS=<watcher AID>[,<watcher AID>...]
+    #   - WITNESS_LMDB_MAP_SIZE=<bytes>   # 16 GiB unset (@8mzxgpds)
 
 volumes:
   witness-data:

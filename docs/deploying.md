@@ -55,6 +55,8 @@ docker run -d --name witness $HARDENED \
     ghcr.io/bakobo/witness@sha256:<digest>
 ```
 
+`WITNESS_LMDB_MAP_SIZE`, in bytes, sets the ceiling every keripy store in the container is mapped at; it defaults to 16 GiB, where keripy's own is 100 MiB, which a witness for one busy issuer fills at about 40,000 events (`@8mzxgpds`). The map is reserved address space, not disk, and the file grows only as it is written. A witness that filled restarts with room once the variable is larger, since LMDB keeps nothing of the old ceiling. A value that is not a whole number from 1 to 1 TiB refuses the start with `e.input.format.f`.
+
 `WITNESS_OPERATORS` names who may read the six signed control-plane nouns; `witness get --key <key> --aid` prints an operator's AID. Leave it out and those nouns refuse everyone while health and identity keep answering. [Authentication](control-plane.md#authentication) has the rest.
 
 Set `WITNESS_WATCHERS=<watcher AID>[,<watcher AID>...]` to grant the separate change feed. Leave it unset to refuse all feed reads. The runner writes accepted events and stored receipts to a separate LMDB change log under the witness volume's `change/` directory. Keep that directory across ordinary restarts: a clean runner restart preserves the log generation and its response signing key, so watchers can continue polling. An unclean exit or failed log write starts a new generation, which makes watchers begin an initial sync. The cursor's hash chain also detects a restored log whose entries diverge from what a watcher previously read. `witness backup` omits the change log; restoring that backup creates a new log and response key that watchers must pin again.
@@ -95,7 +97,7 @@ Metrics leave over OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and are silen
 | `witness.up` | 0 while degraded, absent while unreachable — an alert can tell those apart |
 | `witness.loop.lag` | Direct measure of the harm in a single-threaded cooperative loop |
 | `witness.escrow.depth{store="query_not_found"}` | The one observable for a query flood; see below |
-| `witness.database.used_fraction` | keripy's map ceiling is fixed at 100 MB and a witness that reaches it stops accepting events |
+| `witness.database.used_fraction` | A witness that reaches its map ceiling stops accepting events; raise `WITNESS_LMDB_MAP_SIZE` and restart |
 | `witness.loop.doer.max_seconds{doer=…}` | Names the doer when the loop is slow |
 | `witness.controlplane.requests{route,status}` | Sets a rate limit from evidence rather than a guess |
 

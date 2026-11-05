@@ -151,3 +151,16 @@ def fully_witnessed_db(tmp_path_factory):
     wit2_hby.close()
     wit1_hby.close()
     return facts
+
+
+@pytest.fixture(autouse=True)
+def keripy_map_restored(monkeypatch):
+    """Undo what witness.stores.apply does to keripy's class and environment (@8mzxgpds), which
+    a real witness process does once for its lifetime and a test must not leak to its siblings.
+    Autouse, because every test that drives cli.main applies it."""
+    from keri.db import basing, dbing
+
+    monkeypatch.setattr(dbing.LMDBer, "MapSize", dbing.LMDBer.MapSize)
+    monkeypatch.delenv(basing.KERIBaserMapSizeKey, raising=False)
+    yield
+    monkeypatch.delenv(basing.KERIBaserMapSizeKey, raising=False)

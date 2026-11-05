@@ -74,6 +74,15 @@ ACCOUNTED = {
         "their flags are absent, and pass the same count bound and AID check as those flags, "
         "so neither environment variable admits anything its flag would refuse."
     ),
+    "stores.py::map_size": (
+        "door: stores.map_size. WITNESS_LMDB_MAP_SIZE is bounded by length before it is "
+        "converted, then by range, and anything else refuses the start with InvalidArguments "
+        "before a store opens (@8mzxgpds)."
+    ),
+    "stores.py::apply": (
+        "exempt: output, not input. This writes keripy's KERI_BASER_MAP_SIZE for the process; "
+        "nothing is read."
+    ),
     "metrics.py::configured_endpoint": (
         "exempt: the OTLP endpoint is read once at startup and handed to the OpenTelemetry SDK, "
         "which owns its validation. Bounding it here would mean this repo forming an opinion "

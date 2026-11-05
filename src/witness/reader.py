@@ -239,7 +239,7 @@ class WitnessReader:
             rdb.close()
 
     def database(self) -> dict:
-        """Size against keripy's fixed map ceiling — the wall a busy witness eventually hits."""
+        """Size against the map ceiling (@8mzxgpds) — the wall a busy witness eventually hits."""
         rdb = self._open()
         try:
             info = rdb.env.info()

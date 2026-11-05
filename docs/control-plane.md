@@ -24,7 +24,7 @@ Every path is `/v1/witness/<noun>`, and all are `GET`. Five answer anyone, six r
 | `/v1/witness/version` | This package and the keripy it wraps. | No |
 | `/v1/witness/loop` | Loop ticks, lag against the tock, the doer currently executing, and per-doer timings. | Yes |
 | `/v1/witness/escrow` | Depth of every escrow store, query-not-found first. | Yes |
-| `/v1/witness/database` | Size against keripy's fixed 100 MB map ceiling, and the registered reader count. | Yes |
+| `/v1/witness/database` | Size against the map ceiling, 16 GiB unless `WITNESS_LMDB_MAP_SIZE` says otherwise (`@8mzxgpds`), and the registered reader count. | Yes |
 | `/v1/witness/process` | CPU, memory, threads and descriptors for the witness process. | Yes |
 | `/v1/witness/tags` | What this witness claims about itself — `testnet`, and any vendor-prefixed tag its operator set. | No |
 | `/v1/witness/attribs` | Key/value facts its operator publishes for a person to read: `operator`, `contact`, `pool`, and `terms` and `registration`, which must be https URLs. | No |
